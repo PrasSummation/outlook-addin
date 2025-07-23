@@ -6,73 +6,81 @@
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <style>
     body {
-      font-family: sans-serif;
+      font-family: Arial, sans-serif;
       padding: 20px;
     }
-    input, select, button {
+    #mailboxList {
       width: 100%;
-      padding: 10px;
-      margin: 10px 0;
+      height: 150px;
+    }
+    input, button, select {
+      margin-top: 10px;
+      width: 100%;
     }
   </style>
 </head>
 <body>
-  <h2>File Email to Project</h2>
-  <label for="projectSearch">Search Project Mailbox:</label>
-  <input type="text" id="projectSearch" placeholder="Type project name...">
+  <h2>File Email</h2>
+  <label for="search">Search Project Mailboxes:</label>
+  <input type="text" id="search" placeholder="Type project name...">
 
-  <label for="projectList">Select Mailbox:</label>
-  <select id="projectList"></select>
+  <label for="mailboxList">Select Mailbox:</label>
+  <select id="mailboxList" size="10"></select>
 
-  <button id="fileEmail">Move Email</button>
-
-  <p id="status"></p>
+  <button id="fileButton">File Email</button>
 
   <script>
+    // Dummy data for mailbox names
+    const mailboxes = [
+      "Design - Sydney",
+      "Design - Melbourne",
+      "Engineering - Civil",
+      "Engineering - Electrical",
+      "Construction - Site A",
+      "Construction - Site B",
+      "Finance - Projects",
+      "Admin - General",
+      "Legal - Contracts",
+      "Marketing - Campaigns",
+      "Research - Development",
+      "HR - Recruitment",
+      "Support - Helpdesk"
+    ];
+
+    const searchInput = document.getElementById("search");
+    const mailboxList = document.getElementById("mailboxList");
+
+    function updateMailboxList(filter) {
+      const matches = mailboxes.filter(name =>
+        name.toLowerCase().includes(filter.toLowerCase())
+      ).slice(0, 10); // Limit to top 10 results
+
+      mailboxList.innerHTML = "";
+      matches.forEach(name => {
+        const option = document.createElement("option");
+        option.value = name;
+        option.text = name;
+        mailboxList.appendChild(option);
+      });
+    }
+
+    searchInput.addEventListener("input", () => {
+      updateMailboxList(searchInput.value);
+    });
+
+    document.getElementById("fileButton").addEventListener("click", () => {
+      const selectedMailbox = mailboxList.value;
+      if (!selectedMailbox) {
+        alert("Please select a mailbox.");
+        return;
+      }
+      // Placeholder for actual email moving logic
+      alert(`Filing email to: ${selectedMailbox}`);
+      // Office.context.mailbox.item.moveAsync(...) or Graph API integration here
+    });
+
     Office.onReady(() => {
-      const mailboxList = [
-        { name: "Alpha Engineering", email: "alpha@summation.au" },
-        { name: "Beta Planning", email: "beta@summation.au" },
-        { name: "Gamma Construction", email: "gamma@summation.au" },
-      ];
-
-      const projectSearch = document.getElementById("projectSearch");
-      const projectList = document.getElementById("projectList");
-      const status = document.getElementById("status");
-
-      const populateDropdown = (filter = "") => {
-        projectList.innerHTML = "";
-        const filtered = mailboxList.filter(p => p.name.toLowerCase().includes(filter.toLowerCase()));
-        filtered.forEach(p => {
-          const option = document.createElement("option");
-          option.value = p.email;
-          option.textContent = `${p.name} (${p.email})`;
-          projectList.appendChild(option);
-        });
-      };
-
-      projectSearch.addEventListener("input", () => {
-        populateDropdown(projectSearch.value);
-      });
-
-      populateDropdown(); // initial load
-
-      document.getElementById("fileEmail").addEventListener("click", async () => {
-        try {
-          const emailTo = projectList.value;
-
-          await Office.context.mailbox.item.moveAsync(emailTo, result => {
-            if (result.status === Office.AsyncResultStatus.Succeeded) {
-              status.textContent = "Email moved successfully.";
-            } else {
-              status.textContent = `Failed to move email: ${result.error.message}`;
-            }
-          });
-
-        } catch (err) {
-          status.textContent = `Error: ${err.message}`;
-        }
-      });
+      updateMailboxList(""); // Initialize with full list
     });
   </script>
 </body>
