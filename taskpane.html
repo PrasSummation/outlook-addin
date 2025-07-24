@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <title>File Email</title>
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+  <script src="https://alcdn.msauth.net/browser/2.40.0/js/msal-browser.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -45,22 +46,58 @@
   <button onclick="fileEmail()">File to Selected Mailbox</button>
 
   <script>
-    // Dummy data – replace with Graph API call later
-    const mailboxList = [
-      "Accounting-Projects@summation.au",
-      "Legal-Cases@summation.au",
-      "IT-Deployments@summation.au",
-      "Marketing-Campaigns@summation.au",
-      "Engineering-Designs@summation.au",
-      "Finance-Forecasts@summation.au",
-      "Research-Reports@summation.au",
-      "Customer-Support@summation.au",
-      "HR-Recruitment@summation.au",
-      "Operations-Planning@summation.au",
-      "Development-Sprints@summation.au",
-      "Procurement@summation.au",
-      "QA-Testing@summation.au"
-    ];
+    const mailboxList = []; // Will be populated via Microsoft Graph
+
+    const msalConfig = {
+      auth: {
+        clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c", // Replace with your Azure App's client ID
+        authority: "https://login.microsoftonline.com/common",
+        redirectUri: window.location.href
+      }
+    };
+
+    const msalInstance = new msal.PublicClientApplication(msalConfig);
+
+    async function signInAndGetToken() {
+      try {
+        const loginResponse = await msalInstance.loginPopup({
+          scopes: ["User.Read", "Directory.Read.All"]
+        });
+        const account = loginResponse.account;
+        msalInstance.setActiveAccount(account);
+
+        const tokenResponse = await msalInstance.acquireTokenSilent({
+          scopes: ["User.Read", "Directory.Read.All"],
+          account
+        });
+
+        return tokenResponse.accessToken;
+      } catch (error) {
+        console.error("MSAL login failed", error);
+        alert("Authentication failed. See console for details.");
+        return null;
+      }
+    }
+
+    async function fetchSharedMailboxes() {
+      const token = await signInAndGetToken();
+      if (!token) return;
+
+      try {
+        const response = await fetch("https://graph.microsoft.com/v1.0/users?$filter=userType eq 'SharedMailbox'", {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+
+        const data = await response.json();
+        const results = data.value.map(user => user.mail).filter(Boolean);
+        mailboxList.splice(0, mailboxList.length, ...results);
+        updateMailboxList("");
+      } catch (err) {
+        console.error("Failed to fetch mailboxes", err);
+      }
+    }
 
     const searchBox = document.getElementById("searchBox");
     const mailboxSelect = document.getElementById("mailboxSelect");
@@ -94,12 +131,13 @@
     }
 
     Office.onReady(() => {
-      updateMailboxList("");
-      searchBox.focus(); // Auto-focus the search box
+      fetchSharedMailboxes();
+      searchBox.focus();
     });
   </script>
 </body>
 </html>
+
 
 
 
