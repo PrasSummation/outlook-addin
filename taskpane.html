@@ -38,7 +38,7 @@
   </div>
 
   <label for="searchBox">Search Project Mailbox:</label>
-  <input type="text" id="searchBox" placeholder="Type to search..." />
+  <input type="text" id="searchBox" placeholder="Type to search..." autofocus />
 
   <label for="mailboxSelect">Select Mailbox:</label>
   <select id="mailboxSelect" size="10"></select>
@@ -46,101 +46,107 @@
   <button onclick="fileEmail()">File to Selected Mailbox</button>
 
   <script>
-    const mailboxList = [];
+    window.onload = () => {
+      const mailboxList = [];
 
-    const msalConfig = {
-      auth: {
-        clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c",
-        authority: "https://login.microsoftonline.com/common",
-        redirectUri: window.location.href
+      const msalConfig = {
+        auth: {
+          clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c",
+          authority: "https://login.microsoftonline.com/common",
+          redirectUri: window.location.href
+        }
+      };
+
+      const msalInstance = new msal.PublicClientApplication(msalConfig);
+
+      async function signInAndGetToken() {
+        try {
+          const loginResponse = await msalInstance.loginPopup({
+            scopes: ["User.Read", "Directory.Read.All"]
+          });
+          const account = loginResponse.account;
+          msalInstance.setActiveAccount(account);
+
+          const tokenResponse = await msalInstance.acquireTokenSilent({
+            scopes: ["User.Read", "Directory.Read.All"],
+            account
+          });
+
+          return tokenResponse.accessToken;
+        } catch (error) {
+          console.error("MSAL login failed", error);
+          alert("Authentication failed. See console for details.");
+          return null;
+        }
       }
-    };
 
-    const msalInstance = new msal.PublicClientApplication(msalConfig);
+      async function fetchSharedMailboxes() {
+        const token = await signInAndGetToken();
+        if (!token) return;
 
-    async function signInAndGetToken() {
-      try {
-        const loginResponse = await msalInstance.loginPopup({
-          scopes: ["User.Read", "Directory.Read.All"]
-        });
-        const account = loginResponse.account;
-        msalInstance.setActiveAccount(account);
+        try {
+          const response = await fetch("https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName", {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          });
 
-        const tokenResponse = await msalInstance.acquireTokenSilent({
-          scopes: ["User.Read", "Directory.Read.All"],
-          account
-        });
+          const data = await response.json();
+          console.log("Raw Graph response:", data);
 
-        return tokenResponse.accessToken;
-      } catch (error) {
-        console.error("MSAL login failed", error);
-        alert("Authentication failed. See console for details.");
-        return null;
+          const results = data.value
+            .filter(user => user.mail && user.userPrincipalName.includes("@summation.au"))
+            .map(user => user.mail);
+
+          mailboxList.splice(0, mailboxList.length, ...results);
+          updateMailboxList("");
+        } catch (err) {
+          console.error("Failed to fetch mailboxes", err);
+        }
       }
-    }
 
-    async function fetchSharedMailboxes() {
-      const token = await signInAndGetToken();
-      if (!token) return;
+      const searchBox = document.getElementById("searchBox");
+      const mailboxSelect = document.getElementById("mailboxSelect");
 
-      try {
-        const response = await fetch("https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName", {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
+      function updateMailboxList(filter) {
+        const filtered = mailboxList.filter(m =>
+          m.toLowerCase().includes(filter.toLowerCase())
+        ).slice(0, 10);
+
+        mailboxSelect.innerHTML = "";
+        filtered.forEach(mailbox => {
+          const option = document.createElement("option");
+          option.value = mailbox;
+          option.textContent = mailbox;
+          mailboxSelect.appendChild(option);
         });
-
-        const data = await response.json();
-
-        const results = data.value
-          .filter(user => user.mail && user.userPrincipalName.includes("@summation.au"))
-          .map(user => user.mail);
-
-        mailboxList.splice(0, mailboxList.length, ...results);
-        updateMailboxList("");
-      } catch (err) {
-        console.error("Failed to fetch mailboxes", err);
       }
-    }
 
-    const searchBox = document.getElementById("searchBox");
-    const mailboxSelect = document.getElementById("mailboxSelect");
-
-    function updateMailboxList(filter) {
-      const filtered = mailboxList.filter(m =>
-        m.toLowerCase().includes(filter.toLowerCase())
-      ).slice(0, 10);
-
-      mailboxSelect.innerHTML = "";
-      filtered.forEach(mailbox => {
-        const option = document.createElement("option");
-        option.value = mailbox;
-        option.textContent = mailbox;
-        mailboxSelect.appendChild(option);
+      searchBox.addEventListener("input", () => {
+        updateMailboxList(searchBox.value);
       });
-    }
 
-    searchBox.addEventListener("input", () => {
-      updateMailboxList(searchBox.value);
-    });
-
-    function fileEmail() {
-      const selectedMailbox = mailboxSelect.value;
-      if (!selectedMailbox) {
-        alert("Please select a mailbox to file the email.");
-        return;
+      function fileEmail() {
+        const selectedMailbox = mailboxSelect.value;
+        if (!selectedMailbox) {
+          alert("Please select a mailbox to file the email.");
+          return;
+        }
+        console.log("Would file to:", selectedMailbox);
+        alert(`Email would be moved to: ${selectedMailbox}`);
       }
-      console.log("Would file to:", selectedMailbox);
-      alert(`Email would be moved to: ${selectedMailbox}`);
-    }
 
-    Office.onReady(() => {
-      fetchSharedMailboxes();
-      setTimeout(() => searchBox.focus(), 100); // ensure DOM is fully ready
-    });
+      window.fileEmail = fileEmail;
+
+      Office.onReady(() => {
+        fetchSharedMailboxes();
+        setTimeout(() => searchBox.focus(), 100); // ensure DOM is fully ready
+      });
+    };
   </script>
 </body>
 </html>
+
 
 
 
