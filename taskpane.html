@@ -46,11 +46,11 @@
   <button onclick="fileEmail()">File to Selected Mailbox</button>
 
   <script>
-    const mailboxList = []; // Will be populated via Microsoft Graph
+    const mailboxList = [];
 
     const msalConfig = {
       auth: {
-        clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c", // Replace with your Azure App's client ID
+        clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c",
         authority: "https://login.microsoftonline.com/common",
         redirectUri: window.location.href
       }
@@ -84,14 +84,18 @@
       if (!token) return;
 
       try {
-        const response = await fetch("https://graph.microsoft.com/v1.0/users?$filter=userType eq 'SharedMailbox'", {
+        const response = await fetch("https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName", {
           headers: {
             Authorization: `Bearer ${token}`
           }
         });
 
         const data = await response.json();
-        const results = data.value.map(user => user.mail).filter(Boolean);
+
+        const results = data.value
+          .filter(user => user.mail && user.userPrincipalName.includes("@summation.au"))
+          .map(user => user.mail);
+
         mailboxList.splice(0, mailboxList.length, ...results);
         updateMailboxList("");
       } catch (err) {
@@ -132,11 +136,12 @@
 
     Office.onReady(() => {
       fetchSharedMailboxes();
-      searchBox.focus();
+      setTimeout(() => searchBox.focus(), 100); // ensure DOM is fully ready
     });
   </script>
 </body>
 </html>
+
 
 
 
