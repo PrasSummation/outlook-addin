@@ -46,23 +46,39 @@
   <button onclick="fileEmail()">File to Selected Mailbox</button>
 
   <script>
-    const mailboxList = [];
+    let mailboxList = [];
+    let msalInstance;
 
-    const msalConfig = {
-      auth: {
-        clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c",
-        authority: "https://login.microsoftonline.com/common",
-        redirectUri: window.location.href
-      }
-    };
+    Office.onReady(() => {
+      const searchBox = document.getElementById("searchBox");
+      searchBox.addEventListener("input", () => {
+        updateMailboxList(searchBox.value);
+      });
 
-    const msalInstance = new msal.PublicClientApplication(msalConfig);
+      initializeMsal();
+      fetchSharedMailboxes();
+
+      setTimeout(() => searchBox.focus(), 100);
+    });
+
+    function initializeMsal() {
+      const msalConfig = {
+        auth: {
+          clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c",
+          authority: "https://login.microsoftonline.com/common",
+          redirectUri: window.location.href
+        }
+      };
+
+      msalInstance = new msal.PublicClientApplication(msalConfig);
+    }
 
     async function signInAndGetToken() {
       try {
         const loginResponse = await msalInstance.loginPopup({
           scopes: ["User.Read", "Directory.Read.All"]
         });
+
         const account = loginResponse.account;
         msalInstance.setActiveAccount(account);
 
@@ -97,7 +113,7 @@
           .filter(user => user.mail && user.userPrincipalName.includes("@summation.au"))
           .map(user => user.mail);
 
-        mailboxList.splice(0, mailboxList.length, ...results);
+        mailboxList = results;
         updateMailboxList("");
       } catch (err) {
         console.error("Failed to fetch mailboxes", err);
@@ -131,18 +147,10 @@
     }
 
     window.fileEmail = fileEmail;
-
-    Office.onReady(() => {
-      const searchBox = document.getElementById("searchBox");
-      searchBox.addEventListener("input", () => {
-        updateMailboxList(searchBox.value);
-      });
-      fetchSharedMailboxes();
-      setTimeout(() => searchBox.focus(), 100);
-    });
   </script>
 </body>
 </html>
+
 
 
 
