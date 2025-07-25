@@ -4,20 +4,7 @@
   <meta charset="utf-8" />
   <title>File Email</title>
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
-  <script>
-    // Dynamically load MSAL if not already available
-    if (typeof msal === 'undefined') {
-      const script = document.createElement('script');
-      script.src = 'https://alcdn.msauth.net/browser/2.40.0/js/msal-browser.min.js';
-      script.onload = () => {
-        initializeMsal();
-        Office.onReady(() => {
-          setupUI();
-        });
-      };
-      document.head.appendChild(script);
-    }
-  </script>
+  <script src="https://alcdn.msauth.net/browser/2.40.0/js/msal-browser.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -62,22 +49,18 @@
     let mailboxList = [];
     let msalInstance;
 
-    function initializeMsal() {
-      if (typeof msal === 'undefined') {
-        console.error("MSAL is not loaded correctly.");
-        return;
+    const msalConfig = {
+      auth: {
+        clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c",
+        authority: "https://login.microsoftonline.com/common",
+        redirectUri: window.location.href
       }
+    };
 
-      const msalConfig = {
-        auth: {
-          clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c",
-          authority: "https://login.microsoftonline.com/common",
-          redirectUri: window.location.href
-        }
-      };
-
+    Office.onReady(() => {
       msalInstance = new msal.PublicClientApplication(msalConfig);
-    }
+      setupUI();
+    });
 
     async function signInAndGetToken() {
       try {
@@ -96,7 +79,9 @@
         return tokenResponse.accessToken;
       } catch (error) {
         console.error("MSAL login failed", error);
-        alert("Authentication failed. See console for details.");
+        Office.context.ui.displayDialogAsync('', { height: 30, width: 20 }, () => {
+          console.error("Fallback alert dialog because 'alert' is not supported in this context.");
+        });
         return null;
       }
     }
@@ -146,11 +131,10 @@
       const mailboxSelect = document.getElementById("mailboxSelect");
       const selectedMailbox = mailboxSelect.value;
       if (!selectedMailbox) {
-        alert("Please select a mailbox to file the email.");
+        console.warn("Please select a mailbox to file the email.");
         return;
       }
       console.log("Would file to:", selectedMailbox);
-      alert(`Email would be moved to: ${selectedMailbox}`);
     }
 
     function setupUI() {
