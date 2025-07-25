@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>File Email</title>
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
-  <script src="https://alcdn.msauth.net/browser/2.40.0/js/msal-browser.min.js"></script>
+  <script src="https://alcdn.msauth.net/browser/2.40.0/lib/msal-browser.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -53,11 +53,14 @@
       auth: {
         clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c",
         authority: "https://login.microsoftonline.com/common",
+        // redirectUri should ideally be a fixed URL, matching your Azure AD app registration
+        // For development, window.location.href might work, but be mindful of redirects
         redirectUri: window.location.href
       }
     };
 
     Office.onReady(() => {
+      // msal is now expected to be defined here due to the corrected CDN path
       msalInstance = new msal.PublicClientApplication(msalConfig);
       setupUI();
     });
@@ -79,8 +82,12 @@
         return tokenResponse.accessToken;
       } catch (error) {
         console.error("MSAL login failed", error);
+        // Using displayDialogAsync for a simple message is incorrect.
+        // It expects a URL to an HTML page.
+        // For simple errors, consider updating a div in your task pane or using Office.context.mailbox.item.notificationMessages.
+        // For now, this line is kept as-is from your original code but be aware of its limitation.
         Office.context.ui.displayDialogAsync('', { height: 30, width: 20 }, () => {
-          console.error("Fallback alert dialog because 'alert' is not supported in this context.");
+          console.error("Fallback dialog for error message. 'alert' is not supported.");
         });
         return null;
       }
@@ -109,13 +116,14 @@
         updateMailboxList("");
       } catch (err) {
         console.error("Failed to fetch mailboxes", err);
+        // More robust error display for the user would be beneficial here
       }
     }
 
     function updateMailboxList(filter) {
       const filtered = mailboxList.filter(m =>
         m.toLowerCase().includes(filter.toLowerCase())
-      ).slice(0, 10);
+      ).slice(0, 10); // Limit to top 10 results for performance/UI
 
       const mailboxSelect = document.getElementById("mailboxSelect");
       mailboxSelect.innerHTML = "";
@@ -132,9 +140,11 @@
       const selectedMailbox = mailboxSelect.value;
       if (!selectedMailbox) {
         console.warn("Please select a mailbox to file the email.");
+        // Consider adding a user-visible message here
         return;
       }
       console.log("Would file to:", selectedMailbox);
+      // Implement actual email filing logic here using Office.js EWS/REST APIs or Graph API
     }
 
     function setupUI() {
