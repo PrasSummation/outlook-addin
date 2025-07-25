@@ -49,19 +49,12 @@
     let mailboxList = [];
     let msalInstance;
 
-    Office.onReady(() => {
-      const searchBox = document.getElementById("searchBox");
-      searchBox.addEventListener("input", () => {
-        updateMailboxList(searchBox.value);
-      });
-
-      initializeMsal();
-      fetchSharedMailboxes();
-
-      setTimeout(() => searchBox.focus(), 100);
-    });
-
     function initializeMsal() {
+      if (typeof msal === 'undefined') {
+        console.error("MSAL is not loaded correctly.");
+        return;
+      }
+
       const msalConfig = {
         auth: {
           clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c",
@@ -110,10 +103,11 @@
         console.log("Raw Graph response:", data);
 
         const results = data.value
-          .filter(user => user.mail && user.userPrincipalName.includes("@summation.au"))
-          .map(user => user.mail);
+          .filter(user => user.userPrincipalName && user.userPrincipalName.includes("@summation.au"))
+          .map(user => user.userPrincipalName);
 
         mailboxList = results;
+        console.log("Filtered shared mailboxes:", mailboxList);
         updateMailboxList("");
       } catch (err) {
         console.error("Failed to fetch mailboxes", err);
@@ -147,14 +141,16 @@
     }
 
     window.fileEmail = fileEmail;
+
+    Office.onReady(() => {
+      initializeMsal();
+      const searchBox = document.getElementById("searchBox");
+      searchBox.addEventListener("input", () => {
+        updateMailboxList(searchBox.value);
+      });
+      fetchSharedMailboxes();
+      setTimeout(() => searchBox.focus(), 100);
+    });
   </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
