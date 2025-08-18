@@ -53,16 +53,29 @@
       auth: {
         clientId: "df97ea7f-ead5-451a-9ecb-1776e429bc6c",
         authority: "https://login.microsoftonline.com/common",
-        // redirectUri should ideally be a fixed URL, matching your Azure AD app registration
-        // For development, window.location.href might work, but be mindful of redirects
         redirectUri: window.location.href
       }
     };
 
-    Office.onReady(() => {
-      // msal is now expected to be defined here due to the corrected CDN path
+    function initializeMsalAndUI() {
+      // This function will only run once 'msal' is available
       msalInstance = new msal.PublicClientApplication(msalConfig);
       setupUI();
+    }
+
+    function checkMsalReady() {
+      if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
+        // MSAL is ready, proceed with initialization
+        initializeMsalAndUI();
+      } else {
+        // MSAL is not ready, check again in a short time
+        setTimeout(checkMsalReady, 100);
+      }
+    }
+
+    Office.onReady(() => {
+      // When Office is ready, start checking for the MSAL library
+      checkMsalReady();
     });
 
     async function signInAndGetToken() {
@@ -82,10 +95,6 @@
         return tokenResponse.accessToken;
       } catch (error) {
         console.error("MSAL login failed", error);
-        // Using displayDialogAsync for a simple message is incorrect.
-        // It expects a URL to an HTML page.
-        // For simple errors, consider updating a div in your task pane or using Office.context.mailbox.item.notificationMessages.
-        // For now, this line is kept as-is from your original code but be aware of its limitation.
         Office.context.ui.displayDialogAsync('', { height: 30, width: 20 }, () => {
           console.error("Fallback dialog for error message. 'alert' is not supported.");
         });
@@ -116,14 +125,13 @@
         updateMailboxList("");
       } catch (err) {
         console.error("Failed to fetch mailboxes", err);
-        // More robust error display for the user would be beneficial here
       }
     }
 
     function updateMailboxList(filter) {
       const filtered = mailboxList.filter(m =>
         m.toLowerCase().includes(filter.toLowerCase())
-      ).slice(0, 10); // Limit to top 10 results for performance/UI
+      ).slice(0, 10);
 
       const mailboxSelect = document.getElementById("mailboxSelect");
       mailboxSelect.innerHTML = "";
@@ -140,11 +148,9 @@
       const selectedMailbox = mailboxSelect.value;
       if (!selectedMailbox) {
         console.warn("Please select a mailbox to file the email.");
-        // Consider adding a user-visible message here
         return;
       }
       console.log("Would file to:", selectedMailbox);
-      // Implement actual email filing logic here using Office.js EWS/REST APIs or Graph API
     }
 
     function setupUI() {
