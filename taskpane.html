@@ -112,6 +112,14 @@
             Authorization: `Bearer ${token}`
           }
         });
+        
+        // This is the new debugging code to log the response
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("Graph API response not OK:", response.status, response.statusText);
+            console.error("Response body:", errorText);
+            return;
+        }
 
         const data = await response.json();
         console.log("Raw Graph response:", data);
