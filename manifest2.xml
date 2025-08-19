@@ -2,20 +2,19 @@
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
            xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
-           xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
+           xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides"
            xsi:type="MailApp">
 
   <Id>9ba1dca2-4d38-489e-bc6e-aaa839b22a89</Id>
-  <Version>1.0.0.1</Version>
+  <Version>1.0.0.0</Version>
   <ProviderName>Summation</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Summation File Email"/>
+  <DisplayName DefaultValue="Summation File Email V0.0"/>
   <Description DefaultValue="File an email into the correct shared mailbox project folder."/>
+  <SupportUrl DefaultValue="https://prassummation.github.io/outlook-addin/support.html"/>
 
   <IconUrl DefaultValue="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png"/>
   <HighResolutionIconUrl DefaultValue="https://prassummation.github.io/outlook-addin/logo-symbol-80x80.png"/>
-
-  <SupportUrl DefaultValue="https://prassummation.github.io/outlook-addin/support.html"/>
 
   <Hosts>
     <Host Name="Mailbox"/>
@@ -38,13 +37,9 @@
 
   <Permissions>ReadWriteItem</Permissions>
 
-  <Rule xsi:type="RuleCollection" Mode="Or">
-    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
-  </Rule>
+  <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
 
-  <DisableEntityHighlighting>false</DisableEntityHighlighting>
-
-  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" Version="1.0">
     <Requirements>
       <bt:Sets DefaultMinVersion="1.5">
         <bt:Set Name="Mailbox"/>
@@ -52,32 +47,29 @@
     </Requirements>
 
     <Hosts>
-      <Host xsi:type="MailHost">
-        <DesktopFormFactor>
-          <FunctionFile resid="Commands.Url"/>
-          <ExtensionPoint xsi:type="MessageReadCommandSurface">
-            <OfficeTab id="TabDefault">
-              <Group id="msgReadGroup">
-                <Label resid="GroupLabel"/>
-                <Control xsi:type="Button" id="FileEmailButton">
-                  <Label resid="FileEmail.Label"/>
-                  <Supertip>
-                    <Title resid="FileEmail.Label"/>
-                    <Description resid="FileEmail.Tooltip"/>
-                  </Supertip>
-                  <Icon>
-                    <bt:Image size="16" resid="FileEmail.Icon.16x16"/>
-                    <bt:Image size="32" resid="FileEmail.Icon.32x32"/>
-                    <bt:Image size="80" resid="FileEmail.Icon.80x80"/>
-                  </Icon>
-                  <Action xsi:type="ShowTaskpane">
-                    <SourceLocation resid="Taskpane.Url"/>
-                  </Action>
-                </Control>
-              </Group>
-            </OfficeTab>
-          </ExtensionPoint>
-        </DesktopFormFactor>
+      <Host xsi:type="Mailbox">
+        <ExtensionPoint xsi:type="MessageReadCommandSurface">
+          <OfficeTab id="TabDefault">
+            <Group id="msgReadGroup">
+              <Label resid="GroupLabel"/>
+              <Control xsi:type="Button" id="FileEmailButton">
+                <Label resid="FileEmail.Label"/>
+                <Supertip>
+                  <Title resid="FileEmail.Label"/>
+                  <Description resid="FileEmail.Tooltip"/>
+                </Supertip>
+                <Icon>
+                  <bt:Image size="16" resid="FileEmail.Icon.16x16"/>
+                  <bt:Image size="32" resid="FileEmail.Icon.32x32"/>
+                  <bt:Image size="80" resid="FileEmail.Icon.80x80"/>
+                </Icon>
+                <Action xsi:type="ShowTaskpane">
+                  <SourceLocation resid="Taskpane.Url"/>
+                </Action>
+              </Control>
+            </Group>
+          </OfficeTab>
+        </ExtensionPoint>
       </Host>
     </Hosts>
 
@@ -89,7 +81,6 @@
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Taskpane.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html"/>
-        <bt:Url id="Commands.Url" DefaultValue="https://prassummation.github.io/outlook-addin/commands.html"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabel" DefaultValue="Summation Tools"/>
@@ -100,5 +91,4 @@
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
-
 </OfficeApp>
