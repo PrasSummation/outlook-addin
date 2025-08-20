@@ -51,6 +51,7 @@
 
     const msalConfig = {
       auth: {
+        // CORRECTED: This Client ID now matches your Azure AD app registration
         clientId: "2b33ec30-61c1-4e0e-878d-935ebcb8d85c",
         authority: "https://login.microsoftonline.com/common",
         redirectUri: window.location.href
@@ -113,7 +114,6 @@
           }
         });
         
-        // This is the new debugging code to log the response
         if (!response.ok) {
             const errorText = await response.text();
             console.error("Graph API response not OK:", response.status, response.statusText);
@@ -125,8 +125,9 @@
         console.log("Raw Graph response:", data);
 
         const results = data.value
-          .filter(user => user.userPrincipalName && user.userPrincipalName.includes("@summation.au"))
-          .map(user => user.userPrincipalName);
+          // CORRECTED: Now filtering by the 'mail' property, which is more reliable for shared mailboxes
+          .filter(user => user.mail && user.mail.includes("@summation.au"))
+          .map(user => user.mail);
 
         mailboxList = results;
         console.log("Filtered shared mailboxes:", mailboxList);
