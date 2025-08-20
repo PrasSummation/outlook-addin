@@ -51,7 +51,6 @@
 
     const msalConfig = {
       auth: {
-        // CORRECTED: This Client ID now matches your Azure AD app registration
         clientId: "2b33ec30-61c1-4e0e-878d-935ebcb8d85c",
         authority: "https://login.microsoftonline.com/common",
         redirectUri: window.location.href
@@ -59,23 +58,19 @@
     };
 
     function initializeMsalAndUI() {
-      // This function will only run once 'msal' is available
       msalInstance = new msal.PublicClientApplication(msalConfig);
       setupUI();
     }
 
     function checkMsalReady() {
       if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
-        // MSAL is ready, proceed with initialization
         initializeMsalAndUI();
       } else {
-        // MSAL is not ready, check again in a short time
         setTimeout(checkMsalReady, 100);
       }
     }
 
     Office.onReady(() => {
-      // When Office is ready, start checking for the MSAL library
       checkMsalReady();
     });
 
@@ -124,13 +119,11 @@
         const data = await response.json();
         console.log("Raw Graph response:", data);
 
-        const results = data.value
-          // CORRECTED: Now filtering by the 'mail' property, which is more reliable for shared mailboxes
-          .filter(user => user.mail && user.mail.includes("@summation.au"))
-          .map(user => user.mail);
+        // REMOVED FILTERING: The 'results' array now contains all users and mailboxes
+        const results = data.value.map(user => user.mail);
 
         mailboxList = results;
-        console.log("Filtered shared mailboxes:", mailboxList);
+        console.log("All mailboxes found:", mailboxList);
         updateMailboxList("");
       } catch (err) {
         console.error("Failed to fetch mailboxes", err);
@@ -138,13 +131,10 @@
     }
 
     function updateMailboxList(filter) {
-      const filtered = mailboxList.filter(m =>
-        m.toLowerCase().includes(filter.toLowerCase())
-      ).slice(0, 10);
-
+      // REMOVED FILTERING LOGIC: All mailboxes are now displayed
       const mailboxSelect = document.getElementById("mailboxSelect");
       mailboxSelect.innerHTML = "";
-      filtered.forEach(mailbox => {
+      mailboxList.forEach(mailbox => {
         const option = document.createElement("option");
         option.value = mailbox;
         option.textContent = mailbox;
@@ -165,6 +155,7 @@
     function setupUI() {
       const searchBox = document.getElementById("searchBox");
       searchBox.addEventListener("input", () => {
+        // The search box still works, but it will search through the entire list of all mailboxes.
         updateMailboxList(searchBox.value);
       });
       fetchSharedMailboxes();
