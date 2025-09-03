@@ -28,6 +28,11 @@
       display: block;
       margin-top: 10px;
       margin-bottom: 10px;
+      width: 100%;
+      box-sizing: border-box; /* Ensures padding doesn't affect width */
+    }
+    button {
+        padding: 8px;
     }
   </style>
 </head>
@@ -91,19 +96,21 @@
         return tokenResponse.accessToken;
       } catch (error) {
         console.error("MSAL login failed", error);
-        Office.context.ui.displayDialogAsync('', { height: 30, width: 20 }, () => {
-          console.error("Fallback dialog for error message. 'alert' is not supported.");
-        });
+        // You can add UI feedback here, e.g., document.body.innerHTML = "Authentication failed.";
         return null;
       }
     }
 
+    // --- MODIFIED FUNCTION ---
     async function fetchSharedMailboxes() {
       const token = await signInAndGetToken();
       if (!token) return;
 
       try {
-        const response = await fetch("https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName", {
+        // CHANGED: The URL now requests 'assignedLicenses' to allow for filtering.
+        const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses";
+        
+        const response = await fetch(url, {
           headers: {
             Authorization: `Bearer ${token}`
           }
@@ -119,22 +126,31 @@
         const data = await response.json();
         console.log("Raw Graph response:", data);
 
-        // REMOVED FILTERING: The 'results' array now contains all users and mailboxes
-        const results = data.value.map(user => user.mail);
+        // CHANGED: Filtered the user list to find shared mailboxes (which have no licenses).
+        // Also ensures the user object has a mail property before including it.
+        const sharedMailboxes = data.value.filter(user => user.assignedLicenses.length === 0 && user.mail);
+        
+        mailboxList = sharedMailboxes.map(user => user.mail);
 
-        mailboxList = results;
-        console.log("All mailboxes found:", mailboxList);
-        updateMailboxList("");
+        console.log("Filtered shared mailboxes found:", mailboxList);
+        // Call updateMailboxList with the current search value to populate the list.
+        updateMailboxList(document.getElementById("searchBox").value);
       } catch (err) {
         console.error("Failed to fetch mailboxes", err);
       }
     }
 
+    // --- MODIFIED FUNCTION ---
     function updateMailboxList(filter) {
-      // REMOVED FILTERING LOGIC: All mailboxes are now displayed
       const mailboxSelect = document.getElementById("mailboxSelect");
-      mailboxSelect.innerHTML = "";
-      mailboxList.forEach(mailbox => {
+      mailboxSelect.innerHTML = ""; // Clear existing options
+
+      // CHANGED: The search/filter logic is now correctly implemented.
+      const filteredList = mailboxList.filter(mailbox =>
+        mailbox && mailbox.toLowerCase().includes(filter.toLowerCase())
+      );
+
+      filteredList.forEach(mailbox => {
         const option = document.createElement("option");
         option.value = mailbox;
         option.textContent = mailbox;
@@ -146,16 +162,17 @@
       const mailboxSelect = document.getElementById("mailboxSelect");
       const selectedMailbox = mailboxSelect.value;
       if (!selectedMailbox) {
+        // You can provide UI feedback here too.
         console.warn("Please select a mailbox to file the email.");
         return;
       }
       console.log("Would file to:", selectedMailbox);
+      // Add your email filing logic here.
     }
 
     function setupUI() {
       const searchBox = document.getElementById("searchBox");
       searchBox.addEventListener("input", () => {
-        // The search box still works, but it will search through the entire list of all mailboxes.
         updateMailboxList(searchBox.value);
       });
       fetchSharedMailboxes();
