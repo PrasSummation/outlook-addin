@@ -6,10 +6,13 @@
            xsi:type="MailApp">
 
   <Id>9ba1dca2-4d38-489e-bc6e-aaa839b22a89</Id>
-  <Version>1.0.0.1</Version>
-  <ProviderName>Summation</ProviderName>
+  
+  <Version>0.1</Version>
+  
+  <ProviderName>Summation Pty Ltd</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Summation File Email V0.0"/>
+  
+  <DisplayName DefaultValue="Summation File Email"/>
   <Description DefaultValue="File an email into the correct shared mailbox project folder."/>
 
   <IconUrl DefaultValue="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png"/>
@@ -18,6 +21,7 @@
 
   <AppDomains>
     <AppDomain>https://prassummation.github.io</AppDomain>
+    <AppDomain>https://login.microsoftonline.com</AppDomain>
   </AppDomains>
 
   <Hosts>
@@ -93,11 +97,11 @@
         <bt:Url id="Taskpane.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html"/>
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="GroupLabel" DefaultValue="Contoso Add-in"/>
-        <bt:String id="TaskpaneButton.Label" DefaultValue="Show Task Pane"/>
+        <bt:String id="GroupLabel" DefaultValue="Summation"/>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="File Email"/>
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Opens a pane displaying all available properties."/>
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Opens the task pane to file this email into a project mailbox."/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
