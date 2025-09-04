@@ -7,7 +7,7 @@
 
   <Id>9ba1dca2-4d38-489e-bc6e-aaa839b22a89</Id>
   
-  <Version>0.1</Version>
+  <Version>0.2</Version>
   
   <ProviderName>Summation Pty Ltd</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
@@ -94,7 +94,7 @@
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Commands.Url" DefaultValue="https://prassummation.github.io/outlook-addin/commands.html"/>
-        <bt:Url id="Taskpane.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://prJustasummation.github.io/outlook-addin/taskpane.html"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabel" DefaultValue="Summation"/>
