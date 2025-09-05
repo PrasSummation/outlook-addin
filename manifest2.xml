@@ -7,7 +7,7 @@
 
   <Id>9ba1dca2-4d38-489e-bc6e-aaa839b22a89</Id>
   
-  <Version>0.2</Version>
+  <Version>0.3</Version>
   
   <ProviderName>Summation Pty Ltd</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
@@ -22,6 +22,7 @@
   <AppDomains>
     <AppDomain>https://prassummation.github.io</AppDomain>
     <AppDomain>https://login.microsoftonline.com</AppDomain>
+    <AppDomain>https://alcdn.msauth.net</AppDomain>
   </AppDomains>
 
   <Hosts>
@@ -94,7 +95,7 @@
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Commands.Url" DefaultValue="https://prassummation.github.io/outlook-addin/commands.html"/>
-        <bt:Url id="Taskpane.Url" DefaultValue="https://prJustasummation.github.io/outlook-addin/taskpane.html"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabel" DefaultValue="Summation"/>
