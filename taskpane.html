@@ -50,7 +50,6 @@
         font-size: 10px;
         color: #888;
     }
-    /* New styles for the refresh button */
     #refreshButton {
         position: absolute;
         bottom: 5px;
@@ -73,7 +72,7 @@
   </div>
 
   <label for="searchBox">Search Project Mailbox:</label>
-  <input type="text" id="searchBox" placeholder="Type to search..." autofocus />
+  <input type="text" id="searchBox" placeholder="Type to search..." />
 
   <label for="mailboxSelect">Select Mailbox:</label>
   <select id="mailboxSelect" size="10"></select>
@@ -86,7 +85,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "1.4"; // Incremented version
+    const APP_VERSION = "1.5"; // Incremented version
     let mailboxList = [];
     let msalInstance;
 
@@ -107,79 +106,4 @@
     function appInit() {
         document.getElementById("versionDisplay").innerText = `Version: ${APP_VERSION}`;
 
-        // Add event listener for the new refresh button
         document.getElementById("refreshButton").addEventListener("click", () => {
-            // The 'true' parameter forces a reload from the server, bypassing the cache
-            window.location.reload(true);
-        });
-
-        if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
-            msalInstance = new msal.PublicClientApplication(msalConfig);
-            setupUI();
-        } else {
-            updateStatus("Error: Could not load authentication library.", true);
-        }
-    }
-
-    function updateStatus(message, isError = false) {
-        const statusEl = document.getElementById("statusMessage");
-        statusEl.innerText = message;
-        statusEl.style.color = isError ? "red" : "#333";
-    }
-
-    async function signInAndGetToken(request) {
-        try {
-            const account = msalInstance.getAllAccounts()[0];
-            if (account) {
-                const silentRequest = { scopes: request.scopes, account: account };
-                const silentResponse = await msalInstance.acquireTokenSilent(silentRequest);
-                return silentResponse.accessToken;
-            }
-        } catch (error) {
-            if (!(error instanceof msal.InteractionRequiredAuthError)) {
-                throw error;
-            }
-        }
-        
-        const loginResponse = await msalInstance.loginPopup(request);
-        msalInstance.setActiveAccount(loginResponse.account);
-        return loginResponse.accessToken;
-    }
-
-    async function fetchSharedMailboxes() {
-        updateStatus("Loading mailboxes...");
-        try {
-            const token = await signInAndGetToken(loginRequest);
-            if (!token) return;
-
-            const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses";
-            const response = await fetch(url, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
-            }
-
-            const data = await response.json();
-            const sharedMailboxes = data.value.filter(user => user.assignedLicenses.length === 0 && user.mail);
-            
-            mailboxList = sharedMailboxes.map(user => user.mail);
-            updateMailboxList(document.getElementById("searchBox").value);
-            updateStatus("");
-        } catch (err) {
-            console.error("Failed to fetch mailboxes", err);
-            updateStatus("Failed to load mailboxes.", true);
-        }
-    }
-
-    function updateMailboxList(filter) {
-        const mailboxSelect = document.getElementById("mailboxSelect");
-        mailboxSelect.innerHTML = "";
-
-        const filteredList = mailboxList.filter(mailbox =>
-            mailbox && mailbox.toLowerCase().includes(filter.toLowerCase())
-        );
-
-        if (filteredList.length === 0) {
