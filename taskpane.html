@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>File Email</title>
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
-  <script src="msal-browser.js?v=2"></script>
+  <script type="text/javascript" src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -75,13 +75,11 @@
       }
     };
 
-    // Define the permissions your app needs
     const loginRequest = {
         scopes: ["User.Read", "Directory.Read.All", "Mail.ReadWrite.Shared"]
     };
 
     Office.onReady(() => {
-        // Check if MSAL is loaded before initializing
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
             setupUI();
@@ -90,7 +88,6 @@
         }
     });
 
-    // Helper function to update the status message
     function updateStatus(message, isError = false) {
         const statusEl = document.getElementById("statusMessage");
         statusEl.innerText = message;
@@ -98,7 +95,7 @@
     }
 
     async function signInAndGetToken() {
-        if (graphToken) return graphToken; // Return stored token if available
+        if (graphToken) return graphToken;
 
         try {
             const loginResponse = await msalInstance.loginPopup(loginRequest);
@@ -109,7 +106,7 @@
                 account: loginResponse.account
             });
             
-            graphToken = tokenResponse.accessToken; // Store the token
+            graphToken = tokenResponse.accessToken;
             return graphToken;
         } catch (error) {
             console.error("MSAL authentication failed", error);
@@ -130,7 +127,8 @@
             });
 
             if (!response.ok) {
-                throw new Error(`Graph API error: ${response.statusText}`);
+                const errorText = await response.text();
+                throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
             }
 
             const data = await response.json();
@@ -138,7 +136,7 @@
             
             mailboxList = sharedMailboxes.map(user => user.mail);
             updateMailboxList(document.getElementById("searchBox").value);
-            updateStatus(""); // Clear status on success
+            updateStatus("");
         } catch (err) {
             console.error("Failed to fetch mailboxes", err);
             updateStatus("Failed to load mailboxes.", true);
@@ -147,7 +145,7 @@
 
     function updateMailboxList(filter) {
         const mailboxSelect = document.getElementById("mailboxSelect");
-        mailboxSelect.innerHTML = ""; // Clear existing options
+        mailboxSelect.innerHTML = "";
 
         const filteredList = mailboxList.filter(mailbox =>
             mailbox && mailbox.toLowerCase().includes(filter.toLowerCase())
@@ -181,7 +179,6 @@
             const token = await signInAndGetToken();
             if (!token) return;
 
-            // Get the current email's ID in a Graph-compatible format
             const ewsItemId = Office.context.mailbox.item.itemId;
             const restId = await new Promise((resolve, reject) => {
                 Office.context.mailbox.convertToRestId(ewsItemId, Office.MailboxEnums.RestVersion.v2_0, (result) => {
@@ -193,7 +190,6 @@
                 });
             });
 
-            // Prepare and send the Graph API request to move the email
             const moveUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages/${restId}/move`;
             const response = await fetch(moveUrl, {
                 method: 'POST',
@@ -202,7 +198,7 @@
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    'destinationId': 'inbox' // Moves to the standard Inbox folder
+                    'destinationId': 'inbox'
                 })
             });
 
