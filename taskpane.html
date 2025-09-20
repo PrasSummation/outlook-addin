@@ -69,7 +69,6 @@
     const msalConfig = {
       auth: {
         clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
-        // IMPORTANT: Replace 'common' with your Tenant ID for better security
         authority: "https://login.microsoftonline.com/ecb5f458-9548-4e8b-96f3-904f1828f931", 
         redirectUri: window.location.origin + window.location.pathname
       }
@@ -182,6 +181,7 @@
             const ewsItemId = Office.context.mailbox.item.itemId;
             const restId = await new Promise((resolve, reject) => {
                 Office.context.mailbox.convertToRestId(ewsItemId, Office.MailboxEnums.RestVersion.v2_0, (result) => {
+                    // This line has been corrected
                     if (result.status === Office.AsyncResultStatus.Succeeded) {
                         resolve(result.value);
                     } else {
