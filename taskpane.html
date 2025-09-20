@@ -70,10 +70,10 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "1.1";
+    const APP_VERSION = "1.2";
     let mailboxList = [];
     let msalInstance;
-    let graphToken; 
+    let currentAccount;
 
     const msalConfig = {
       auth: {
@@ -106,20 +106,33 @@
         statusEl.style.color = isError ? "red" : "#333";
     }
 
+    // UPDATED: More robust authentication function
     async function signInAndGetToken() {
-        if (graphToken) return graphToken;
+        // First, attempt to get a token silently
+        try {
+            const silentRequest = {
+                scopes: loginRequest.scopes,
+                account: msalInstance.getAllAccounts()[0] // Use first account if available
+            };
 
+            if (silentRequest.account) {
+                const silentResponse = await msalInstance.acquireTokenSilent(silentRequest);
+                return silentResponse.accessToken;
+            }
+        } catch (error) {
+            // If silent fails with an error that requires interaction, we'll fall back to popup
+            if (!(error instanceof msal.InteractionRequiredAuthError)) {
+                console.error("Silent token acquisition failed.", error);
+                updateStatus("Authentication failed. Please try again.", true);
+                return null;
+            }
+        }
+
+        // Fallback to interactive popup login
         try {
             const loginResponse = await msalInstance.loginPopup(loginRequest);
             msalInstance.setActiveAccount(loginResponse.account);
-
-            const tokenResponse = await msalInstance.acquireTokenSilent({
-                ...loginRequest,
-                account: loginResponse.account
-            });
-            
-            graphToken = tokenResponse.accessToken;
-            return graphToken;
+            return loginResponse.accessToken;
         } catch (error) {
             console.error("MSAL authentication failed", error);
             updateStatus("Authentication failed. Please try again.", true);
@@ -179,7 +192,6 @@
     }
 
     async function fileEmail() {
-        console.log("--- Starting fileEmail function ---");
         const selectedMailbox = document.getElementById("mailboxSelect").value;
         if (!selectedMailbox) {
             updateStatus("Please select a mailbox first.", true);
@@ -190,31 +202,20 @@
 
         try {
             const token = await signInAndGetToken();
-            if (!token) {
-                console.log("Token could not be acquired. Stopping.");
-                return;
-            }
-            console.log("Step 1: Token acquired successfully.");
+            if (!token) return;
 
             const ewsItemId = Office.context.mailbox.item.itemId;
-            console.log("Step 2: Got EWS Item ID:", ewsItemId);
-
             const restId = await new Promise((resolve, reject) => {
-                console.log("Step 3: Attempting to convert EWS ID to REST ID...");
                 Office.context.mailbox.convertToRestId(ewsItemId, Office.MailboxEnums.RestVersion.v2_0, (result) => {
                     if (result.status === Office.AsyncResultStatus.Succeeded) {
-                        console.log("Step 4: ID conversion successful. REST ID:", result.value);
                         resolve(result.value);
                     } else {
-                        console.error("Step 4 FAILED: ID conversion failed.", result.error);
                         reject(result.error);
                     }
                 });
             });
 
             const moveUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages/${restId}/move`;
-            console.log("Step 5: Preparing to move email. URL:", moveUrl);
-
             const response = await fetch(moveUrl, {
                 method: 'POST',
                 headers: {
@@ -225,20 +226,16 @@
                     'destinationId': 'inbox'
                 })
             });
-            
-            console.log("Step 6: Received response from server. Status:", response.status);
 
             if (!response.ok) {
                 const errorData = await response.json();
-                console.error("Step 7 FAILED: Server responded with an error.", errorData);
                 throw new Error(errorData.error.message || "Failed to move the email.");
             }
 
-            console.log("Step 7: Email move successful!");
             updateStatus("Email filed successfully!");
 
         } catch (err) {
-            console.error("--- Error in fileEmail function ---", err);
+            console.error("Failed to file email:", err);
             updateStatus(`Error: ${err.message}`, true);
         }
     }
