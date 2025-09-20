@@ -50,6 +50,20 @@
         font-size: 10px;
         color: #888;
     }
+    /* New styles for the refresh button */
+    #refreshButton {
+        position: absolute;
+        bottom: 5px;
+        left: 20px;
+        background: none;
+        border: none;
+        font-size: 16px;
+        color: #888;
+        cursor: pointer;
+    }
+    #refreshButton:hover {
+        color: #000;
+    }
   </style>
 </head>
 <body>
@@ -67,13 +81,14 @@
   <button onclick="fileEmail()">File to Selected Mailbox</button>
 
   <div id="statusMessage"></div>
+  
+  <button id="refreshButton" title="Refresh Add-in">&#x21bb;</button>
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "1.2";
+    const APP_VERSION = "1.4"; // Incremented version
     let mailboxList = [];
     let msalInstance;
-    let currentAccount;
 
     const msalConfig = {
       auth: {
@@ -84,13 +99,19 @@
     };
 
     const loginRequest = {
-        scopes: ["User.Read", "Directory.Read.All", "Mail.ReadWrite.Shared"]
+        scopes: ["User.Read", "Directory.Read.All", "Mail.ReadWrite.Shared", "Mail.Read"]
     };
     
     Office.onReady(appInit);
 
     function appInit() {
         document.getElementById("versionDisplay").innerText = `Version: ${APP_VERSION}`;
+
+        // Add event listener for the new refresh button
+        document.getElementById("refreshButton").addEventListener("click", () => {
+            // The 'true' parameter forces a reload from the server, bypassing the cache
+            window.location.reload(true);
+        });
 
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
@@ -106,46 +127,31 @@
         statusEl.style.color = isError ? "red" : "#333";
     }
 
-    // UPDATED: More robust authentication function
-    async function signInAndGetToken() {
-        // First, attempt to get a token silently
+    async function signInAndGetToken(request) {
         try {
-            const silentRequest = {
-                scopes: loginRequest.scopes,
-                account: msalInstance.getAllAccounts()[0] // Use first account if available
-            };
-
-            if (silentRequest.account) {
+            const account = msalInstance.getAllAccounts()[0];
+            if (account) {
+                const silentRequest = { scopes: request.scopes, account: account };
                 const silentResponse = await msalInstance.acquireTokenSilent(silentRequest);
                 return silentResponse.accessToken;
             }
         } catch (error) {
-            // If silent fails with an error that requires interaction, we'll fall back to popup
             if (!(error instanceof msal.InteractionRequiredAuthError)) {
-                console.error("Silent token acquisition failed.", error);
-                updateStatus("Authentication failed. Please try again.", true);
-                return null;
+                throw error;
             }
         }
-
-        // Fallback to interactive popup login
-        try {
-            const loginResponse = await msalInstance.loginPopup(loginRequest);
-            msalInstance.setActiveAccount(loginResponse.account);
-            return loginResponse.accessToken;
-        } catch (error) {
-            console.error("MSAL authentication failed", error);
-            updateStatus("Authentication failed. Please try again.", true);
-            return null;
-        }
+        
+        const loginResponse = await msalInstance.loginPopup(request);
+        msalInstance.setActiveAccount(loginResponse.account);
+        return loginResponse.accessToken;
     }
 
     async function fetchSharedMailboxes() {
         updateStatus("Loading mailboxes...");
-        const token = await signInAndGetToken();
-        if (!token) return;
-
         try {
+            const token = await signInAndGetToken(loginRequest);
+            if (!token) return;
+
             const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses";
             const response = await fetch(url, {
                 headers: { Authorization: `Bearer ${token}` }
@@ -177,76 +183,3 @@
         );
 
         if (filteredList.length === 0) {
-            const option = document.createElement("option");
-            option.textContent = "No mailboxes found.";
-            option.disabled = true;
-            mailboxSelect.appendChild(option);
-        } else {
-            filteredList.forEach(mailbox => {
-                const option = document.createElement("option");
-                option.value = mailbox;
-                option.textContent = mailbox;
-                mailboxSelect.appendChild(option);
-            });
-        }
-    }
-
-    async function fileEmail() {
-        const selectedMailbox = document.getElementById("mailboxSelect").value;
-        if (!selectedMailbox) {
-            updateStatus("Please select a mailbox first.", true);
-            return;
-        }
-
-        updateStatus(`Filing email to ${selectedMailbox}...`);
-
-        try {
-            const token = await signInAndGetToken();
-            if (!token) return;
-
-            const ewsItemId = Office.context.mailbox.item.itemId;
-            const restId = await new Promise((resolve, reject) => {
-                Office.context.mailbox.convertToRestId(ewsItemId, Office.MailboxEnums.RestVersion.v2_0, (result) => {
-                    if (result.status === Office.AsyncResultStatus.Succeeded) {
-                        resolve(result.value);
-                    } else {
-                        reject(result.error);
-                    }
-                });
-            });
-
-            const moveUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages/${restId}/move`;
-            const response = await fetch(moveUrl, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    'destinationId': 'inbox'
-                })
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error.message || "Failed to move the email.");
-            }
-
-            updateStatus("Email filed successfully!");
-
-        } catch (err) {
-            console.error("Failed to file email:", err);
-            updateStatus(`Error: ${err.message}`, true);
-        }
-    }
-
-    function setupUI() {
-        const searchBox = document.getElementById("searchBox");
-        searchBox.addEventListener("input", () => {
-            updateMailboxList(searchBox.value);
-        });
-        fetchSharedMailboxes();
-    }
-  </script>
-</body>
-</html>
