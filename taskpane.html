@@ -43,7 +43,6 @@
         font-style: italic;
         color: #333;
     }
-    /* Style for the new version display */
     #versionDisplay {
         position: absolute;
         bottom: 10px;
@@ -68,8 +67,175 @@
   <button onclick="fileEmail()">File to Selected Mailbox</button>
 
   <div id="statusMessage"></div>
-
   <div id="versionDisplay"></div>
 
   <script>
-    // New constant for the app
+    const APP_VERSION = "1.0";
+    let mailboxList = [];
+    let msalInstance;
+    let graphToken; 
+
+    const msalConfig = {
+      auth: {
+        clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
+        authority: "https://login.microsoftonline.com/ecb5f458-9548-4e8b-96f3-904f1828f931", 
+        redirectUri: window.location.origin + window.location.pathname
+      }
+    };
+
+    const loginRequest = {
+        scopes: ["User.Read", "Directory.Read.All", "Mail.ReadWrite.Shared"]
+    };
+    
+    // Call the appInit function only when Office is ready
+    Office.onReady(appInit);
+
+    // Wrap all logic in an initialization function
+    function appInit() {
+        document.getElementById("versionDisplay").innerText = `Version: ${APP_VERSION}`;
+
+        if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
+            msalInstance = new msal.PublicClientApplication(msalConfig);
+            setupUI();
+        } else {
+            updateStatus("Error: Could not load authentication library.", true);
+        }
+    }
+
+    function updateStatus(message, isError = false) {
+        const statusEl = document.getElementById("statusMessage");
+        statusEl.innerText = message;
+        statusEl.style.color = isError ? "red" : "#333";
+    }
+
+    async function signInAndGetToken() {
+        if (graphToken) return graphToken;
+
+        try {
+            const loginResponse = await msalInstance.loginPopup(loginRequest);
+            msalInstance.setActiveAccount(loginResponse.account);
+
+            const tokenResponse = await msalInstance.acquireTokenSilent({
+                ...loginRequest,
+                account: loginResponse.account
+            });
+            
+            graphToken = tokenResponse.accessToken;
+            return graphToken;
+        } catch (error) {
+            console.error("MSAL authentication failed", error);
+            updateStatus("Authentication failed. Please try again.", true);
+            return null;
+        }
+    }
+
+    async function fetchSharedMailboxes() {
+        updateStatus("Loading mailboxes...");
+        const token = await signInAndGetToken();
+        if (!token) return;
+
+        try {
+            const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses";
+            const response = await fetch(url, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
+            }
+
+            const data = await response.json();
+            const sharedMailboxes = data.value.filter(user => user.assignedLicenses.length === 0 && user.mail);
+            
+            mailboxList = sharedMailboxes.map(user => user.mail);
+            updateMailboxList(document.getElementById("searchBox").value);
+            updateStatus("");
+        } catch (err) {
+            console.error("Failed to fetch mailboxes", err);
+            updateStatus("Failed to load mailboxes.", true);
+        }
+    }
+
+    function updateMailboxList(filter) {
+        const mailboxSelect = document.getElementById("mailboxSelect");
+        mailboxSelect.innerHTML = "";
+
+        const filteredList = mailboxList.filter(mailbox =>
+            mailbox && mailbox.toLowerCase().includes(filter.toLowerCase())
+        );
+
+        if (filteredList.length === 0) {
+            const option = document.createElement("option");
+            option.textContent = "No mailboxes found.";
+            option.disabled = true;
+            mailboxSelect.appendChild(option);
+        } else {
+            filteredList.forEach(mailbox => {
+                const option = document.createElement("option");
+                option.value = mailbox;
+                option.textContent = mailbox;
+                mailboxSelect.appendChild(option);
+            });
+        }
+    }
+
+    async function fileEmail() {
+        const selectedMailbox = document.getElementById("mailboxSelect").value;
+        if (!selectedMailbox) {
+            updateStatus("Please select a mailbox first.", true);
+            return;
+        }
+
+        updateStatus(`Filing email to ${selectedMailbox}...`);
+
+        try {
+            const token = await signInAndGetToken();
+            if (!token) return;
+
+            const ewsItemId = Office.context.mailbox.item.itemId;
+            const restId = await new Promise((resolve, reject) => {
+                Office.context.mailbox.convertToRestId(ewsItemId, Office.MailboxEnums.RestVersion.v2_0, (result) => {
+                    if (result.status === Office.AsyncResultStatus.Succeeded) {
+                        resolve(result.value);
+                    } else {
+                        reject(result.error);
+                    }
+                });
+            });
+
+            const moveUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages/${restId}/move`;
+            const response = await fetch(moveUrl, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    'destinationId': 'inbox'
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error.message || "Failed to move the email.");
+            }
+
+            updateStatus("Email filed successfully!");
+
+        } catch (err) {
+            console.error("Failed to file email:", err);
+            updateStatus(`Error: ${err.message}`, true);
+        }
+    }
+
+    function setupUI() {
+        const searchBox = document.getElementById("searchBox");
+        searchBox.addEventListener("input", () => {
+            updateMailboxList(searchBox.value);
+        });
+        fetchSharedMailboxes();
+    }
+  </script>
+</body>
+</html>
