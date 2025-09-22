@@ -103,7 +103,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "3.4";
+    const APP_VERSION = "3.5";
     let mailboxList = [];
     let msalInstance;
 
@@ -270,7 +270,6 @@
             if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located.");
             const graphMessageId = findData.value[0].id;
             
-            // UPDATED: Get MIME content as raw bytes and Base64-encode it
             const mimeUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}/$value`;
             const mimeResponse = await fetch(mimeUrl, { headers: { 'Authorization': `Bearer ${token}` } });
             if (!mimeResponse.ok) throw new Error("Could not retrieve original message content.");
@@ -282,15 +281,11 @@
             });
             const base64Content = btoa(binaryString);
 
-            // Create a draft message in the destination mailbox using the Base64 content
             const createUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages`;
             const createResponse = await fetch(createUrl, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'text/plain' // Use text/plain as per MS Support
-                },
-                body: base64Content // Send the Base64 encoded string
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'text/plain' },
+                body: base64Content
             });
 
             if (!createResponse.ok) {
@@ -300,14 +295,12 @@
             const newMsgData = await createResponse.json();
             const newMsgId = newMsgData.id;
 
-            // Get the ID of the destination Inbox
             const folderInfoUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/mailFolders/inbox?$select=id`;
             const folderResponse = await fetch(folderInfoUrl, { headers: { 'Authorization': `Bearer ${token}` } });
             if (!folderResponse.ok) throw new Error(`Could not get inbox folder for ${selectedMailbox}.`);
             const folderData = await folderResponse.json();
             const destinationFolderId = folderData.id;
 
-            // Move the newly created draft to the Inbox
             const moveUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages/${newMsgId}/move`;
             const moveResponse = await fetch(moveUrl, {
                 method: 'POST',
@@ -316,7 +309,19 @@
             });
             if (!moveResponse.ok) throw new Error("Failed to move new message to Inbox.");
             
-            // Delete the original message from your mailbox
+            // NEW: Finalize the message by marking it as not a draft
+            const updateUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages/${newMsgId}`;
+            const updateResponse = await fetch(updateUrl, {
+                method: 'PATCH',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ "isDraft": false })
+            });
+
+            if (!updateResponse.ok) {
+                // This is a non-critical error, the email is filed but just looks like a draft.
+                console.error("Failed to update draft status, but email was filed.");
+            }
+
             const deleteUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}`;
             await fetch(deleteUrl, {
                 method: 'DELETE',
@@ -332,7 +337,50 @@
     }
 
     async function createNewProject() {
-        // ... createNewProject function remains the same ...
+        const projectName = document.getElementById("newProjectName").value;
+        if (!projectName || projectName.trim().length === 0) {
+            updateCreateStatus("Please enter a project name.", true);
+            return;
+        }
+        updateCreateStatus(`Creating mailbox for "${projectName}"...`);
+        try {
+            const token = await signInAndGetToken(loginRequest, true);
+            if (!token) return;
+
+            const mailNickname = projectName.replace(/[^a-zA-Z0-9_]/g, '');
+            if (mailNickname.length === 0) {
+                updateCreateStatus("Project name contains invalid characters.", true);
+                return;
+            }
+
+            const tempPassword = "TempP@ssword" + Math.floor(Math.random() * 1000);
+            const userDetails = {
+                accountEnabled: true,
+                displayName: projectName,
+                mailNickname: mailNickname,
+                userPrincipalName: `${mailNickname}@summation.au`,
+                passwordProfile: { forceChangePasswordNextSignIn: false, password: tempPassword }
+            };
+
+            const createUrl = "https://graph.microsoft.com/v1.0/users";
+            const response = await fetch(createUrl, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(userDetails)
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error.message || "Failed to create user.");
+            }
+
+            updateCreateStatus("Mailbox created successfully! Refreshing list...");
+            document.getElementById("newProjectName").value = "";
+            setTimeout(fetchSharedMailboxes, 2000);
+        } catch (err) {
+            console.error("Failed to create project:", err);
+            updateCreateStatus(`Error: ${err.message}`, true);
+        }
     }
 
     function setupUI() {
