@@ -85,7 +85,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "2.1"; // Incremented version
+    const APP_VERSION = "2.2"; // Incremented version
     let mailboxList = [];
     let msalInstance;
 
@@ -221,33 +221,19 @@
             const mimeUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}/$value`;
             const mimeResponse = await fetch(mimeUrl, { headers: { 'Authorization': `Bearer ${token}` } });
             if (!mimeResponse.ok) throw new Error("Could not retrieve original message content.");
-            const arrayBuffer = await mimeResponse.arrayBuffer();
-            const uint8Array = new Uint8Array(arrayBuffer);
-            let binaryString = '';
-            uint8Array.forEach((byte) => {
-                binaryString += String.fromCharCode(byte);
-            });
-            const base64Content = btoa(binaryString);
+            
+            // Get the content as a raw Blob to preserve its integrity
+            const mimeContent = await mimeResponse.blob();
 
-            const folderInfoUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/mailFolders/inbox?$select=id`;
-            const folderResponse = await fetch(folderInfoUrl, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!folderResponse.ok) {
-                throw new Error(`Could not get inbox folder for ${selectedMailbox}`);
-            }
-            const folderData = await folderResponse.json();
-            const destinationFolderId = folderData.id;
-
-            // UPDATED: This URL now posts the message directly to the destination inbox
-            const createUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/mailFolders/${destinationFolderId}/messages`;
+            const createUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages`;
             const createResponse = await fetch(createUrl, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'text/plain'
+                    // UPDATED: Use the correct, official MIME type for email messages
+                    'Content-Type': 'message/rfc822'
                 },
-                body: base64Content
+                body: mimeContent
             });
 
             if (!createResponse.ok) {
