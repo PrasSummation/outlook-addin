@@ -85,17 +85,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    // --- DEEP DIAGNOSTICS START ---
-    console.log(`--- Taskpane script started at ${new Date().toLocaleTimeString()} ---`);
-    console.log("Checking for Office object immediately:", typeof Office);
-
-    let officeReadyFired = false;
-    const heartbeat = setInterval(() => {
-        console.log(`Heartbeat at ${new Date().toLocaleTimeString()}: Office.onReady has ${officeReadyFired ? 'fired' : 'NOT fired yet'}.`);
-    }, 2000); // Logs a message every 2 seconds
-    // --- DEEP DIAGNOSTICS END ---
-
-    const APP_VERSION = "1.6";
+    const APP_VERSION = "1.7"; // Incremented version
     let mailboxList = [];
     let msalInstance;
 
@@ -108,15 +98,11 @@
     };
 
     const loginRequest = {
-        scopes: ["User.Read", "Directory.Read.All", "Mail.ReadWrite.Shared", "Mail.Read"]
+        // Added Mail.ReadWrite for the delete operation
+        scopes: ["User.Read", "Directory.Read.All", "Mail.ReadWrite.Shared", "Mail.Read", "Mail.ReadWrite"]
     };
     
-    Office.onReady(() => {
-        console.log(`--- Office.onReady FIRED at ${new Date().toLocaleTimeString()} ---`);
-        officeReadyFired = true;
-        clearInterval(heartbeat); // Stop the heartbeat timer
-        appInit();
-    });
+    Office.onReady(appInit);
 
     function appInit() {
         document.getElementById("versionDisplay").innerText = `Version: ${APP_VERSION}`;
@@ -134,8 +120,7 @@
 
         setTimeout(() => document.getElementById("searchBox").focus(), 100);
     }
-    
-    // ... (rest of the functions: updateStatus, signInAndGetToken, etc. remain the same) ...
+
     function updateStatus(message, isError = false) {
         const statusEl = document.getElementById("statusMessage");
         statusEl.innerText = message;
@@ -225,47 +210,48 @@
             const token = await signInAndGetToken(loginRequest);
             if (!token) return;
 
+            // Step 1: Get the Graph ID of the message to be moved
             const internetMessageId = Office.context.mailbox.item.internetMessageId;
             const encodedInternetMessageId = encodeURIComponent(internetMessageId);
-
             const findUrl = `https://graph.microsoft.com/v1.0/me/messages?$filter=internetMessageId eq '${encodedInternetMessageId}'&$select=id`;
-            const findResponse = await fetch(findUrl, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!findResponse.ok) {
-                throw new Error("Could not find the original message.");
-            }
+            const findResponse = await fetch(findUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (!findResponse.ok) throw new Error("Could not find the original message.");
             const findData = await findResponse.json();
-            if (!findData.value || findData.value.length === 0) {
-                throw new Error("Message could not be located via Graph API.");
-            }
+            if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located via Graph API.");
             const graphMessageId = findData.value[0].id;
 
+            // Step 2: Get the folder ID for the Inbox of the DESTINATION mailbox
             const folderInfoUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/mailFolders/inbox?$select=id`;
-            const folderResponse = await fetch(folderInfoUrl, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!folderResponse.ok) {
-                throw new Error(`Could not get inbox folder for ${selectedMailbox}`);
-            }
+            const folderResponse = await fetch(folderInfoUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (!folderResponse.ok) throw new Error(`Could not get inbox folder for ${selectedMailbox}.`);
             const folderData = await folderResponse.json();
             const destinationFolderId = folderData.id;
 
-            const moveUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}/move`;
-            const moveResponse = await fetch(moveUrl, {
+            // Step 3: COPY the message from your mailbox to the destination
+            const copyUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}/copy`;
+            const copyResponse = await fetch(copyUrl, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    'destinationId': destinationFolderId
-                })
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 'destinationId': destinationFolderId })
             });
 
-            if (!moveResponse.ok) {
-                const errorData = await moveResponse.json();
-                throw new Error(errorData.error.message || "Failed to move the email.");
+            if (!copyResponse.ok) {
+                const errorData = await copyResponse.json();
+                throw new Error(`Failed to copy the email: ${errorData.error.message}`);
+            }
+            
+            // Step 4: DELETE the original message from your mailbox
+            const deleteUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}`;
+            const deleteResponse = await fetch(deleteUrl, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!deleteResponse.ok) {
+                // If delete fails, the copy succeeded. We should still report success but log the error.
+                console.error("Failed to delete the original email after copying.");
+                updateStatus("Email filed, but failed to delete original.");
+                return;
             }
 
             updateStatus("Email filed successfully!");
