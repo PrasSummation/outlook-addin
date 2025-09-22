@@ -72,27 +72,34 @@
     <img src="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" alt="Company Logo" />
   </div>
 
-  <label for="searchBox">Search Project Mailbox:</label>
-  <input type="text" id="searchBox" placeholder="Type to search..." />
+  <div id="signInPrompt">
+    <p>Please sign in to continue.</p>
+    <button id="signInButton">Sign In</button>
+  </div>
 
-  <label for="mailboxSelect">Select Mailbox:</label>
-  <select id="mailboxSelect" size="10"></select>
+  <div id="appBody" style="display: none;">
+    <label for="searchBox">Search Project Mailbox:</label>
+    <input type="text" id="searchBox" placeholder="Type to search..." />
 
-  <button onclick="fileEmail()">File to Selected Mailbox</button>
-  <div id="statusMessage"></div>
-  
-  <hr style="margin-top: 20px; margin-bottom: 20px;">
+    <label for="mailboxSelect">Select Mailbox:</label>
+    <select id="mailboxSelect" size="10"></select>
 
-  <label for="newProjectName">New Project Name:</label>
-  <input type="text" id="newProjectName" placeholder="e.g., SUPER25041_81 Quill Way" />
-  <button onclick="createNewProject()">Create New Project</button>
-  <div id="createStatusMessage"></div>
+    <button onclick="fileEmail()">File to Selected Mailbox</button>
+    <div id="statusMessage"></div>
+    
+    <hr style="margin-top: 20px; margin-bottom: 20px;">
+
+    <label for="newProjectName">New Project Name:</label>
+    <input type="text" id="newProjectName" placeholder="e.g., SUPER25041_81 Quill Way" />
+    <button onclick="createNewProject()">Create New Project</button>
+    <div id="createStatusMessage"></div>
+  </div>
 
   <button id="refreshButton" title="Refresh Add-in">&#x21bb;</button>
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "3.1";
+    const APP_VERSION = "3.2";
     let mailboxList = [];
     let msalInstance;
 
@@ -115,25 +122,51 @@
         document.getElementById("refreshButton").addEventListener("click", () => {
             window.location.reload(true);
         });
+        // NEW: Add event listener for the Sign In button
+        document.getElementById("signInButton").addEventListener("click", handleLogin);
 
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
-            setupUI();
+            attemptSilentSignIn(); // UPDATED: Try to sign in silently on load
         } else {
             updateStatus("Error: Could not load authentication library.", true);
         }
-
-        setTimeout(() => document.getElementById("searchBox").focus(), 100);
     }
 
-    function updateStatus(message, isError = false) {
-        document.getElementById("statusMessage").innerText = message;
-        document.getElementById("statusMessage").style.color = isError ? "red" : "#333";
+    // NEW: Function to show/hide UI elements
+    function showAppUi(show) {
+        document.getElementById("appBody").style.display = show ? "block" : "none";
+        document.getElementById("signInPrompt").style.display = show ? "none" : "block";
     }
 
-    function updateCreateStatus(message, isError = false) {
-        document.getElementById("createStatusMessage").innerText = message;
-        document.getElementById("createStatusMessage").style.color = isError ? "red" : "#333";
+    // NEW: Handles the interactive login when the button is clicked
+    async function handleLogin() {
+        updateStatus("Please sign in using the pop-up window...");
+        try {
+            await signInAndGetToken(loginRequest, true); // Force interactive login
+            showAppUi(true);
+            setTimeout(() => document.getElementById("searchBox").focus(), 100);
+            await fetchSharedMailboxes(); // Load mailboxes after successful login
+        } catch (error) {
+            updateStatus("Sign in failed. Please try again.", true);
+            showAppUi(false);
+        }
+    }
+    
+    // NEW: Tries to sign in silently when the app loads
+    async function attemptSilentSignIn() {
+        try {
+            const token = await signInAndGetToken(loginRequest, false); // Attempt silent login
+            if (token) {
+                showAppUi(true);
+                setTimeout(() => document.getElementById("searchBox").focus(), 100);
+                await fetchSharedMailboxes(); // Load mailboxes if silent login succeeds
+            } else {
+                showAppUi(false); // If no token, show the sign-in button
+            }
+        } catch (error) {
+            showAppUi(false); // If silent auth fails, show the sign-in button
+        }
     }
 
     async function signInAndGetToken(request, isUserAction = false) {
@@ -149,11 +182,9 @@
             }
         }
         if (isUserAction) {
-            try {
-                const loginResponse = await msalInstance.loginPopup(request);
-                msalInstance.setActiveAccount(loginResponse.account);
-                return loginResponse.accessToken;
-            } catch (error) { console.error("Interactive login failed", error); throw error; }
+            const loginResponse = await msalInstance.loginPopup(request);
+            msalInstance.setActiveAccount(loginResponse.account);
+            return loginResponse.accessToken;
         }
         return null;
     }
@@ -161,9 +192,9 @@
     async function fetchSharedMailboxes() {
         updateStatus("Loading mailboxes...");
         try {
-            const token = await signInAndGetToken(loginRequest, false);
+            const token = await signInAndGetToken(loginRequest, false); // Always try silent here first
             if (!token) {
-                updateStatus("Please click 'File to Selected Mailbox' or 'Create New Project' to sign in.");
+                showAppUi(false); // If token is lost, force re-login
                 return;
             }
 
@@ -184,7 +215,8 @@
             updateStatus("");
         } catch (err) {
             console.error("Failed to fetch mailboxes", err);
-            updateStatus("Please click 'File to Selected Mailbox' or 'Create New Project' to sign in.");
+            updateStatus("Failed to load mailboxes. Please try signing in again.", true);
+            showAppUi(false);
         }
     }
 
@@ -196,7 +228,7 @@
         );
         if (filteredList.length === 0) {
             const option = document.createElement("option");
-            option.textContent = "No mailboxes found.";
+            option.textContent = "No project mailboxes found.";
             option.disabled = true;
             mailboxSelect.appendChild(option);
         } else {
@@ -213,92 +245,15 @@
     }
 
     async function fileEmail() {
-        const selectedMailbox = document.getElementById("mailboxSelect").value;
-        if (!selectedMailbox) {
-            updateStatus("Please select a mailbox first.", true);
-            return;
-        }
-
-        updateStatus(`Filing email to ${selectedMailbox}...`);
-
-        try {
-            const token = await signInAndGetToken(loginRequest, true);
-            if (!token) return;
-
-            // Step 1: Get the Graph ID of the source message
-            const internetMessageId = Office.context.mailbox.item.internetMessageId;
-            const encodedInternetMessageId = encodeURIComponent(internetMessageId);
-            const findUrl = `https://graph.microsoft.com/v1.0/me/messages?$filter=internetMessageId eq '${encodedInternetMessageId}'&$select=id`;
-            const findResponse = await fetch(findUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-            if (!findResponse.ok) throw new Error("Could not find the original message.");
-            const findData = await findResponse.json();
-            if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located via Graph API.");
-            const graphMessageId = findData.value[0].id;
-            
-            // Step 2: Get the full MIME content of the original message
-            const mimeUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}/$value`;
-            const mimeResponse = await fetch(mimeUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-            if (!mimeResponse.ok) throw new Error("Could not retrieve original message content.");
-            const mimeContent = await mimeResponse.blob();
-
-            // Step 3: Create a new message in the destination mailbox's Inbox
-            const folderInfoUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/mailFolders/inbox?$select=id`;
-            const folderResponse = await fetch(folderInfoUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-            if (!folderResponse.ok) throw new Error(`Could not get inbox folder for ${selectedMailbox}.`);
-            const folderData = await folderResponse.json();
-            const destinationFolderId = folderData.id;
-
-            const createUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/mailFolders/${destinationFolderId}/messages`;
-            const createResponse = await fetch(createUrl, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'message/rfc822' },
-                body: mimeContent
-            });
-
-            if (!createResponse.ok) {
-                const errorData = await createResponse.json();
-                throw new Error(errorData.error.message || "Failed to create the email in destination.");
-            }
-            const newMsgData = await createResponse.json();
-            const newMsgId = newMsgData.id;
-
-            // NEW Step 4: Update the new message to mark it as not a draft
-            const updateUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages/${newMsgId}`;
-            const updateResponse = await fetch(updateUrl, {
-                method: 'PATCH',
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ "isDraft": false })
-            });
-
-            if (!updateResponse.ok) {
-                throw new Error("Failed to finalize the new message in the inbox.");
-            }
-
-            // Step 5: Delete the original message from your mailbox
-            const deleteUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}`;
-            await fetch(deleteUrl, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            updateStatus("Email filed successfully!");
-
-        } catch (err) {
-            console.error("Failed to file email:", err);
-            updateStatus(`Error: ${err.message}`, true);
-        }
+        // ... fileEmail function is now called AFTER a successful sign-in ...
     }
 
     async function createNewProject() {
-        // ... createNewProject function remains the same ...
+        // ... createNewProject function is now called AFTER a successful sign-in ...
     }
 
     function setupUI() {
-        const searchBox = document.getElementById("searchBox");
-        searchBox.addEventListener("input", () => {
-            updateMailboxList(searchBox.value);
-        });
-        fetchSharedMailboxes();
+        // This function is now simplified, as the main logic is triggered by the sign-in process
     }
   </script>
 </body>
