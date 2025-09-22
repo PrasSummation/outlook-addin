@@ -85,7 +85,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "1.9"; // Incremented version
+    const APP_VERSION = "2.0"; // Incremented version
     let mailboxList = [];
     let msalInstance;
 
@@ -218,13 +218,21 @@
             if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located via Graph API.");
             const graphMessageId = findData.value[0].id;
             
+            // Step 2: Get the full MIME content of the original message as raw bytes
             const mimeUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}/$value`;
             const mimeResponse = await fetch(mimeUrl, { headers: { 'Authorization': `Bearer ${token}` } });
             if (!mimeResponse.ok) throw new Error("Could not retrieve original message content.");
             
-            // UPDATED: Treat the content as a raw Blob, not text
-            const mimeContent = await mimeResponse.blob();
+            // UPDATED: Convert the raw bytes to a Base64 string
+            const arrayBuffer = await mimeResponse.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+            let binaryString = '';
+            uint8Array.forEach((byte) => {
+                binaryString += String.fromCharCode(byte);
+            });
+            const base64Content = btoa(binaryString);
 
+            // Step 3: Create a new message in the destination mailbox using the Base64 content
             const createUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages`;
             const createResponse = await fetch(createUrl, {
                 method: 'POST',
@@ -232,8 +240,7 @@
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'text/plain' 
                 },
-                // UPDATED: Send the raw Blob data
-                body: mimeContent
+                body: base64Content // Send the Base64 encoded string
             });
 
             if (!createResponse.ok) {
@@ -241,6 +248,7 @@
                 throw new Error(`Failed to create the email in destination: ${errorData.error.message}`);
             }
 
+            // Step 4: Delete the original message from your mailbox
             const deleteUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}`;
             const deleteResponse = await fetch(deleteUrl, {
                 method: 'DELETE',
