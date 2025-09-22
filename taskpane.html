@@ -42,6 +42,7 @@
         margin-top: 15px;
         font-style: italic;
         color: #333;
+        white-space: pre-wrap; /* Allows line breaks in the error message */
     }
     #versionDisplay {
         position: absolute;
@@ -85,7 +86,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "2.2"; // Incremented version
+    const APP_VERSION = "2.3 (Diagnostic)"; // Incremented version
     let mailboxList = [];
     let msalInstance;
 
@@ -205,6 +206,7 @@
 
         updateStatus(`Filing email to ${selectedMailbox}...`);
 
+        let createResponse; // Define here to access in catch block
         try {
             const token = await signInAndGetToken(loginRequest);
             if (!token) return;
@@ -221,16 +223,13 @@
             const mimeUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}/$value`;
             const mimeResponse = await fetch(mimeUrl, { headers: { 'Authorization': `Bearer ${token}` } });
             if (!mimeResponse.ok) throw new Error("Could not retrieve original message content.");
-            
-            // Get the content as a raw Blob to preserve its integrity
             const mimeContent = await mimeResponse.blob();
 
             const createUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages`;
-            const createResponse = await fetch(createUrl, {
+            createResponse = await fetch(createUrl, { // Assign to outer variable
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
-                    // UPDATED: Use the correct, official MIME type for email messages
                     'Content-Type': 'message/rfc822'
                 },
                 body: mimeContent
@@ -238,26 +237,31 @@
 
             if (!createResponse.ok) {
                 const errorData = await createResponse.json();
-                throw new Error(`Failed to create the email in destination: ${errorData.error.message}`);
+                // This will be caught by the catch block below
+                throw new Error(errorData.error.message || "Failed to create the email in destination.");
             }
 
             const deleteUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}`;
-            const deleteResponse = await fetch(deleteUrl, {
+            await fetch(deleteUrl, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-
-            if (!deleteResponse.ok) {
-                console.error("Failed to delete the original email after copying.");
-                updateStatus("Email filed, but failed to delete original.");
-                return;
-            }
 
             updateStatus("Email filed successfully!");
 
         } catch (err) {
             console.error("Failed to file email:", err);
-            updateStatus(`Error: ${err.message}`, true);
+            
+            // --- NEW DIAGNOSTIC ERROR REPORTING ---
+            let detailedError = `Error: ${err.message}\n\n--- Diagnostic Info for Support ---\n`;
+            if (createResponse) {
+                detailedError += `Timestamp: ${createResponse.headers.get("Date")}\n`;
+                detailedError += `Request ID: ${createResponse.headers.get("request-id")}\n`;
+                detailedError += `Client Request ID: ${createResponse.headers.get("client-request-id")}\n`;
+            } else {
+                detailedError += "The error occurred before the final API call was made.";
+            }
+            updateStatus(detailedError, true);
         }
     }
 
