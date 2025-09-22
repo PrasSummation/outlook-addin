@@ -42,7 +42,7 @@
         margin-top: 15px;
         font-style: italic;
         color: #333;
-        white-space: pre-wrap; /* Allows line breaks in the error message */
+        white-space: pre-wrap;
     }
     #versionDisplay {
         position: absolute;
@@ -86,7 +86,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "2.3 (Diagnostic)"; // Incremented version
+    const APP_VERSION = "2.4"; // Incremented version
     let mailboxList = [];
     let msalInstance;
 
@@ -163,7 +163,15 @@
             }
 
             const data = await response.json();
-            const sharedMailboxes = data.value.filter(user => user.assignedLicenses.length === 0 && user.mail);
+
+            // NEW: Regular expression to match the project mailbox format
+            const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}_.*@summation\.au$/i;
+            
+            const sharedMailboxes = data.value.filter(user => 
+                user.assignedLicenses.length === 0 && 
+                user.mail &&
+                projectMailboxRegex.test(user.mail) // Filter by the regex pattern
+            );
             
             mailboxList = sharedMailboxes.map(user => user.mail);
             updateMailboxList(document.getElementById("searchBox").value);
@@ -190,8 +198,10 @@
         } else {
             filteredList.forEach(mailbox => {
                 const option = document.createElement("option");
-                option.value = mailbox;
-                option.textContent = mailbox;
+                // The value remains the full email address for the fileEmail function
+                option.value = mailbox; 
+                // NEW: The displayed text is formatted to hide the domain
+                option.textContent = mailbox.split('@')[0];
                 mailboxSelect.appendChild(option);
             });
         }
@@ -206,7 +216,7 @@
 
         updateStatus(`Filing email to ${selectedMailbox}...`);
 
-        let createResponse; // Define here to access in catch block
+        let createResponse;
         try {
             const token = await signInAndGetToken(loginRequest);
             if (!token) return;
@@ -226,7 +236,7 @@
             const mimeContent = await mimeResponse.blob();
 
             const createUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages`;
-            createResponse = await fetch(createUrl, { // Assign to outer variable
+            createResponse = await fetch(createUrl, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -237,9 +247,24 @@
 
             if (!createResponse.ok) {
                 const errorData = await createResponse.json();
-                // This will be caught by the catch block below
                 throw new Error(errorData.error.message || "Failed to create the email in destination.");
             }
+
+            // Move the new message from Drafts to Inbox
+            const newMsgData = await createResponse.json();
+            const newMsgId = newMsgData.id;
+            const folderInfoUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/mailFolders/inbox?$select=id`;
+            const folderResponse = await fetch(folderInfoUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (!folderResponse.ok) throw new Error(`Could not get inbox folder for ${selectedMailbox}.`);
+            const folderData = await folderResponse.json();
+            const destinationFolderId = folderData.id;
+
+            const moveUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages/${newMsgId}/move`;
+            await fetch(moveUrl, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 'destinationId': destinationFolderId })
+            });
 
             const deleteUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}`;
             await fetch(deleteUrl, {
@@ -251,8 +276,6 @@
 
         } catch (err) {
             console.error("Failed to file email:", err);
-            
-            // --- NEW DIAGNOSTIC ERROR REPORTING ---
             let detailedError = `Error: ${err.message}\n\n--- Diagnostic Info for Support ---\n`;
             if (createResponse) {
                 detailedError += `Timestamp: ${createResponse.headers.get("Date")}\n`;
