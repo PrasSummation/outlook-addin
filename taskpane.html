@@ -48,7 +48,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "6.7";
+    const APP_VERSION = "6.8";
     const POWER_AUTOMATE_URL = "https://defaultecb5f45895484e8b96f3904f1828f9.31.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/9b842424d6f24507ad254c8e94c614c0/triggers/manual/paths/invoke?api-version=1";
     
     let mailboxList = [];
@@ -144,8 +144,13 @@
                 const silentResponse = await msalInstance.acquireTokenSilent(silentRequest);
                 return silentResponse.accessToken;
             } catch (error) {
-                if (!(error instanceof msal.InteractionRequiredAuthError)) { throw error; }
-                if (!isUserAction) { throw error; }
+                if (error instanceof msal.InteractionRequiredAuthError) {
+                    if (isUserAction) {
+                        const interactiveResponse = await msalInstance.acquireTokenPopup(request);
+                        return interactiveResponse.accessToken;
+                    }
+                }
+                throw error;
             }
         }
         if (isUserAction) {
@@ -218,14 +223,14 @@
         }
         updateStatus(`Filing email to ${selectedMailbox}...`);
         try {
-            // FIX: Use a more robust way to get the account. Fall back to getAllAccounts() 
-            // if getActiveAccount() returns null.
-            const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
-            if (!account) { throw new Error("No active account. Please sign in again."); }
+            // FIX: This function now calls signInAndGetToken with isUserAction = true,
+            // which will handle the consent pop-up automatically if needed.
+            const graphToken = await signInAndGetToken(graphRequest, true);
+            const flowToken = await signInAndGetToken(flowRequest, true);
 
-            // Get Graph token silently
-            const graphTokenResponse = await msalInstance.acquireTokenSilent({ ...graphRequest, account });
-            const graphToken = graphTokenResponse.accessToken;
+            if (!graphToken || !flowToken) {
+                 throw new Error("Could not acquire necessary tokens. Please try again.");
+            }
 
             const internetMessageId = Office.context.mailbox.item.internetMessageId;
             const encodedInternetMessageId = encodeURIComponent(internetMessageId);
@@ -236,10 +241,6 @@
             if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located via Graph API.");
             const graphMessageId = findData.value[0].id;
             
-            // Get Power Automate token silently
-            const flowTokenResponse = await msalInstance.acquireTokenSilent({ ...flowRequest, account });
-            const flowToken = flowTokenResponse.accessToken;
-
             const flowResponse = await fetch(POWER_AUTOMATE_URL, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${flowToken}`, 'Content-Type': 'application/json' },
