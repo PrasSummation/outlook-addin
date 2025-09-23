@@ -254,7 +254,8 @@
             if (!flowResponse.ok) {
                 throw new Error(`The Power Automate flow failed with status: ${flowResponse.status}`);
             }
-
+            
+            // This version does not delete the email after copying.
             updateStatus("Email copied successfully!");
 
         } catch (err) {
@@ -305,8 +306,8 @@
             updateCreateStatus("Mailbox created successfully! Refreshing list...");
             document.getElementById("newProjectName").value = "";
             setTimeout(fetchSharedMailboxes, 2000);
-        } catch (err) { // <<< SYNTAX ERROR WAS HERE
-            // FIX: Added curly braces {} to the catch block
+        } catch (err) { 
+            // FIX: Added the missing curly braces {} around the catch block
             console.error("Failed to create project:", err);
             updateCreateStatus(`Error: ${err.message}`, true);
         }
