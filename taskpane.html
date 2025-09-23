@@ -33,19 +33,22 @@
   <div id="appBody" style="display: none;">
     <label for="searchBox">Search Project Mailbox:</label>
     <input type="text" id="searchBox" placeholder="Type to search..." />
-
     <label for="mailboxSelect">Select Mailbox:</label>
     <select id="mailboxSelect" size="10"></select>
-
     <button onclick="fileEmail()">File to Selected Mailbox</button>
     <div id="statusMessage"></div>
+    <hr style="margin-top: 20px; margin-bottom: 20px;">
+    <label for="newProjectName">New Project Name:</label>
+    <input type="text" id="newProjectName" placeholder="e.g., SUPER25041_81 Quill Way" />
+    <button onclick="createNewProject()">Create New Project</button>
+    <div id="createStatusMessage"></div>
   </div>
 
   <button id="refreshButton" title="Refresh Add-in">&#x21bb;</button>
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "6.3";
+    const APP_VERSION = "6.4";
     const POWER_AUTOMATE_URL = "https://defaultecb5f45895484e8b96f3904f1828f9.31.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/9b842424d6f24507ad254c8e94c614c0/triggers/manual/paths/invoke?api-version=1";
     
     let mailboxList = [];
@@ -59,9 +62,9 @@
       }
     };
 
-    // The full list of scopes for the one-time interactive login
-    const loginRequest = {
-        scopes: ["User.Read", "Directory.Read.All", "Mail.Read", "Mail.ReadWrite", "https://service.flow.microsoft.com//.default"]
+    // The full list of ALL permissions the app will ever need.
+    const allScopesRequest = {
+        scopes: ["User.Read", "Directory.ReadWrite.All", "Mail.Read", "Mail.ReadWrite", "https://service.flow.microsoft.com//.default"]
     };
     
     Office.onReady(appInit);
@@ -87,8 +90,8 @@
     async function handleLogin() {
         updateStatus("Please sign in using the pop-up window...");
         try {
-            // The interactive login requests all scopes to get consent upfront
-            await signInAndGetToken(loginRequest, true);
+            // UPDATED: The interactive login ALWAYS requests all scopes to ensure consent is granted.
+            await signInAndGetToken(allScopesRequest, true);
             showAppUi(true);
             setTimeout(() => document.getElementById("searchBox").focus(), 100);
             await fetchSharedMailboxes();
@@ -100,7 +103,7 @@
     
     async function attemptSilentSignIn() {
         try {
-            // A minimal request to check for an existing session
+            // A minimal request just to check for an active session.
             const token = await signInAndGetToken({ scopes: ["User.Read"] }, false);
             if (token) {
                 showAppUi(true);
@@ -110,6 +113,7 @@
                 showAppUi(false);
             }
         } catch (error) {
+            // This will fail if consent is missing, correctly showing the sign-in button.
             showAppUi(false);
         }
     }
@@ -117,6 +121,11 @@
     function updateStatus(message, isError = false) {
         document.getElementById("statusMessage").innerText = message;
         document.getElementById("statusMessage").style.color = isError ? "red" : "#333";
+    }
+
+    function updateCreateStatus(message, isError = false) {
+        document.getElementById("createStatusMessage").innerText = message;
+        document.getElementById("createStatusMessage").style.color = isError ? "red" : "#333";
     }
 
     async function signInAndGetToken(request, isUserAction = false) {
@@ -142,7 +151,6 @@
     async function fetchSharedMailboxes() {
         updateStatus("Loading mailboxes...");
         try {
-            // Request a token for just the Graph scopes needed
             const token = await signInAndGetToken({ scopes: ["Directory.Read.All"] }, false);
             if (!token) {
                 showAppUi(false);
@@ -164,7 +172,7 @@
             updateStatus("");
         } catch (err) {
             console.error("Failed to fetch mailboxes", err);
-            updateStatus("Failed to load mailboxes. Please try signing in again.", true);
+            updateStatus("Failed to load mailboxes. Please click Sign In.", true);
             showAppUi(false);
         }
     }
@@ -201,15 +209,14 @@
         }
         updateStatus(`Filing email to ${selectedMailbox}...`);
         try {
-            // Get a verified account object first
             let account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
             if (!account) {
-                const loginResponse = await msalInstance.loginPopup(loginRequest);
+                // This should not happen in this flow, but as a safeguard:
+                const loginResponse = await msalInstance.loginPopup(allScopesRequest);
                 msalInstance.setActiveAccount(loginResponse.account);
                 account = loginResponse.account;
             }
 
-            // Get a token for Graph API scopes
             const graphTokenRequest = { scopes: ["Mail.Read", "Mail.ReadWrite"], account: account };
             const graphTokenResponse = await msalInstance.acquireTokenSilent(graphTokenRequest);
             const graphToken = graphTokenResponse.accessToken;
@@ -223,7 +230,6 @@
             if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located.");
             const graphMessageId = findData.value[0].id;
             
-            // Get a separate token for Power Automate
             const flowTokenRequest = { scopes: ["https://service.flow.microsoft.com//.default"], account: account };
             const flowTokenResponse = await msalInstance.acquireTokenSilent(flowTokenRequest);
             const flowToken = flowTokenResponse.accessToken;
@@ -248,6 +254,51 @@
         } catch (err) {
             console.error("Failed to file email:", err);
             updateStatus(`Error: ${err.message}`, true);
+        }
+    }
+
+    async function createNewProject() {
+        const projectName = document.getElementById("newProjectName").value;
+        if (!projectName || projectName.trim().length === 0) {
+            updateCreateStatus("Please enter a project name.", true);
+            return;
+        }
+        updateCreateStatus(`Creating mailbox for "${projectName}"...`);
+        try {
+            const token = await signInAndGetToken({ scopes: ["Directory.ReadWrite.All"] }, true);
+            if (!token) return;
+
+            const mailNickname = projectName.replace(/[^a-zA-Z0-9_]/g, '');
+            if (mailNickname.length === 0) {
+                updateCreateStatus("Project name contains invalid characters.", true);
+                return;
+            }
+            const tempPassword = "TempP@ssword" + Math.floor(Math.random() * 1000);
+            const userDetails = {
+                accountEnabled: true,
+                displayName: projectName,
+                mailNickname: mailNickname,
+                userPrincipalName: `${mailNickname}@summation.au`,
+                passwordProfile: { forceChangePasswordNextSignIn: false, password: tempPassword }
+            };
+
+            const createUrl = "https://graph.microsoft.com/v1.0/users";
+            const response = await fetch(createUrl, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(userDetails)
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error.message || "Failed to create user.");
+            }
+
+            updateCreateStatus("Mailbox created successfully! Refreshing list...");
+            document.getElementById("newProjectName").value = "";
+            setTimeout(fetchSharedMailboxes, 2000);
+        } catch (err) {
+            console.error("Failed to create project:", err);
+            updateCreateStatus(`Error: ${err.message}`, true);
         }
     }
 
