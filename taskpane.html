@@ -103,7 +103,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "3.7";
+    const APP_VERSION = "3.7-diagnostic";
     let mailboxList = [];
     let msalInstance;
 
@@ -318,6 +318,17 @@
                 console.error("Failed to update draft status, but email was filed.");
             }
 
+            // NEW: Verification Step
+            const verifyUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages/${newMsgId}?$select=isDraft,isRead,subject`;
+            const verifyResponse = await fetch(verifyUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+            if(verifyResponse.ok) {
+                const finalMessageState = await verifyResponse.json();
+                console.log("--- Final Message State from Server ---");
+                console.log(finalMessageState);
+            } else {
+                console.error("Could not verify the final state of the message.");
+            }
+
             const deleteUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}`;
             await fetch(deleteUrl, {
                 method: 'DELETE',
@@ -348,7 +359,6 @@
                 updateCreateStatus("Project name contains invalid characters.", true);
                 return;
             }
-
             const tempPassword = "TempP@ssword" + Math.floor(Math.random() * 1000);
             const userDetails = {
                 accountEnabled: true,
@@ -370,7 +380,7 @@
                 throw new Error(errorData.error.message || "Failed to create user.");
             }
 
-            updateCreateStatus("Mailbox created successfully! Refreshing list...");
+            updateCreate-status("Mailbox created successfully! Refreshing list...");
             document.getElementById("newProjectName").value = "";
             setTimeout(fetchSharedMailboxes, 2000);
         } catch (err) {
