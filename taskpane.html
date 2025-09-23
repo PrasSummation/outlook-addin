@@ -48,7 +48,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "6.6";
+    const APP_VERSION = "6.7";
     const POWER_AUTOMATE_URL = "https://defaultecb5f45895484e8b96f3904f1828f9.31.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/9b842424d6f24507ad254c8e94c614c0/triggers/manual/paths/invoke?api-version=1";
     
     let mailboxList = [];
@@ -62,7 +62,6 @@
       }
     };
 
-    // FIX: Scopes must be separated by resource. You cannot request tokens for Graph and another API in one call.
     const graphRequest = {
         scopes: ["User.Read", "Directory.ReadWrite.All", "Mail.Read", "Mail.ReadWrite"]
     };
@@ -94,8 +93,6 @@
     async function handleLogin() {
         updateStatus("Please sign in using the pop-up window...");
         try {
-            // FIX: Use 'extraScopesToConsent' to request permissions for multiple resources (Graph and Flow)
-            // in a single interactive login pop-up. This is the correct pattern.
             const loginRequest = {
                 scopes: graphRequest.scopes,
                 extraScopesToConsent: flowRequest.scopes
@@ -115,7 +112,6 @@
     
     async function attemptSilentSignIn() {
         try {
-            // FIX: Silent sign-in should only try to get a token for the primary resource (Graph) to check for a session.
             const token = await signInAndGetToken(graphRequest, false);
             if (token) {
                 showAppUi(true);
@@ -153,7 +149,6 @@
             }
         }
         if (isUserAction) {
-            // This path is now mainly handled by handleLogin's specific request object.
             const loginResponse = await msalInstance.loginPopup(request);
             msalInstance.setActiveAccount(loginResponse.account);
             return loginResponse.accessToken;
@@ -223,7 +218,9 @@
         }
         updateStatus(`Filing email to ${selectedMailbox}...`);
         try {
-            const account = msalInstance.getActiveAccount();
+            // FIX: Use a more robust way to get the account. Fall back to getAllAccounts() 
+            // if getActiveAccount() returns null.
+            const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
             if (!account) { throw new Error("No active account. Please sign in again."); }
 
             // Get Graph token silently
