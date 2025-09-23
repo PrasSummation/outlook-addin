@@ -48,7 +48,8 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "6.4";
+    // FIX: Incremented version number
+    const APP_VERSION = "6.5";
     const POWER_AUTOMATE_URL = "https://defaultecb5f45895484e8b96f3904f1828f9.31.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/9b842424d6f24507ad254c8e94c614c0/triggers/manual/paths/invoke?api-version=1";
     
     let mailboxList = [];
@@ -73,6 +74,8 @@
         document.getElementById("versionDisplay").innerText = `Version: ${APP_VERSION}`;
         document.getElementById("refreshButton").addEventListener("click", () => { window.location.reload(true); });
         document.getElementById("signInButton").addEventListener("click", handleLogin);
+        document.getElementById("searchBox").addEventListener("input", () => updateMailboxList(document.getElementById("searchBox").value));
+
 
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
@@ -90,12 +93,13 @@
     async function handleLogin() {
         updateStatus("Please sign in using the pop-up window...");
         try {
-            // UPDATED: The interactive login ALWAYS requests all scopes to ensure consent is granted.
+            // Interactive login always requests all scopes to ensure consent is granted.
             await signInAndGetToken(allScopesRequest, true);
             showAppUi(true);
             setTimeout(() => document.getElementById("searchBox").focus(), 100);
             await fetchSharedMailboxes();
         } catch (error) {
+            console.error("Interactive sign in failed:", error);
             updateStatus("Sign in failed. Please try again.", true);
             showAppUi(false);
         }
@@ -103,17 +107,20 @@
     
     async function attemptSilentSignIn() {
         try {
-            // A minimal request just to check for an active session.
-            const token = await signInAndGetToken({ scopes: ["User.Read"] }, false);
+            // FIX: The silent sign-in now attempts to acquire a token for ALL required scopes.
+            // If consent is missing for any of these, it will correctly throw an
+            // InteractionRequiredAuthError and fall back to the interactive sign-in prompt.
+            const token = await signInAndGetToken(allScopesRequest, false);
             if (token) {
                 showAppUi(true);
                 setTimeout(() => document.getElementById("searchBox").focus(), 100);
                 await fetchSharedMailboxes();
             } else {
-                showAppUi(false);
+                showAppUi(false); // Should not be reached if error is thrown, but good for safety.
             }
         } catch (error) {
-            // This will fail if consent is missing, correctly showing the sign-in button.
+            // This is the expected path for a first-time user or if consent is revoked.
+            console.log("Silent sign-in failed, user interaction required.", error);
             showAppUi(false);
         }
     }
@@ -132,14 +139,16 @@
         let account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
         if (account) {
             try {
-                const silentRequest = { scopes: request.scopes, account: account };
+                const silentRequest = { ...request, account: account };
                 const silentResponse = await msalInstance.acquireTokenSilent(silentRequest);
                 return silentResponse.accessToken;
             } catch (error) {
+                // If silent acquisition fails, and it's not an interactive call, re-throw to be handled by the caller.
                 if (!(error instanceof msal.InteractionRequiredAuthError)) { throw error; }
                 if (!isUserAction) { throw error; }
             }
         }
+        // If there's no account or silent failed for an interactive action, trigger login popup.
         if (isUserAction) {
             const loginResponse = await msalInstance.loginPopup(request);
             msalInstance.setActiveAccount(loginResponse.account);
@@ -151,12 +160,15 @@
     async function fetchSharedMailboxes() {
         updateStatus("Loading mailboxes...");
         try {
+            // A token with Directory.Read.All is needed here. 
+            // The login process (silent or interactive) already secured it.
             const token = await signInAndGetToken({ scopes: ["Directory.Read.All"] }, false);
             if (!token) {
+                updateStatus("Authentication token is missing. Please sign in again.", true);
                 showAppUi(false);
                 return;
             }
-            const url = `https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses`;
+            const url = `https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses&$top=999`;
             const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
             if (!response.ok) {
                 const errorText = await response.text();
@@ -167,7 +179,7 @@
             const sharedMailboxes = data.value.filter(user => 
                 user.assignedLicenses.length === 0 && user.mail && projectMailboxRegex.test(user.mail)
             );
-            mailboxList = sharedMailboxes.map(user => user.mail);
+            mailboxList = sharedMailboxes.map(user => user.mail).sort(); // Sort the list alphabetically
             updateMailboxList(document.getElementById("searchBox").value);
             updateStatus("");
         } catch (err) {
@@ -209,45 +221,48 @@
         }
         updateStatus(`Filing email to ${selectedMailbox}...`);
         try {
-            let account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
-            if (!account) {
-                // This should not happen in this flow, but as a safeguard:
-                const loginResponse = await msalInstance.loginPopup(allScopesRequest);
-                msalInstance.setActiveAccount(loginResponse.account);
-                account = loginResponse.account;
-            }
+            // Get the current account
+            let account = msalInstance.getActiveAccount();
+            if (!account) { throw new Error("No active account. Please sign in again."); }
 
-            const graphTokenRequest = { scopes: ["Mail.Read", "Mail.ReadWrite"], account: account };
-            const graphTokenResponse = await msalInstance.acquireTokenSilent(graphTokenRequest);
-            const graphToken = graphTokenResponse.accessToken;
+            // Get Graph token to find the message
+            const graphToken = await msalInstance.acquireTokenSilent({ scopes: ["Mail.ReadWrite"], account: account }).then(res => res.accessToken);
 
+            // Find the message in the user's mailbox using its internetMessageId
             const internetMessageId = Office.context.mailbox.item.internetMessageId;
             const encodedInternetMessageId = encodeURIComponent(internetMessageId);
             const findUrl = `https://graph.microsoft.com/v1.0/me/messages?$filter=internetMessageId eq '${encodedInternetMessageId}'&$select=id`;
             const findResponse = await fetch(findUrl, { headers: { 'Authorization': `Bearer ${graphToken}` } });
             if (!findResponse.ok) throw new Error("Could not find the original message.");
             const findData = await findResponse.json();
-            if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located.");
+            if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located via Graph API.");
             const graphMessageId = findData.value[0].id;
             
-            const flowTokenRequest = { scopes: ["https://service.flow.microsoft.com//.default"], account: account };
-            const flowTokenResponse = await msalInstance.acquireTokenSilent(flowTokenRequest);
-            const flowToken = flowTokenResponse.accessToken;
+            // Get Power Automate token to trigger the copy flow
+            const flowToken = await msalInstance.acquireTokenSilent({ scopes: ["https://service.flow.microsoft.com//.default"], account: account }).then(res => res.accessToken);
 
+            // Trigger the flow
             const flowResponse = await fetch(POWER_AUTOMATE_URL, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${flowToken}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ "graphMessageId": graphMessageId, "destinationMailbox": selectedMailbox })
             });
             if (!flowResponse.ok) {
-                throw new Error(`The flow failed with status: ${flowResponse.status} ${flowResponse.statusText}`);
+                throw new Error(`The filing process failed with status: ${flowResponse.status} ${flowResponse.statusText}`);
             }
 
+            // After a successful flow trigger, delete the original message
             const deleteUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}`;
-            await fetch(deleteUrl, {
+            const deleteResponse = await fetch(deleteUrl, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${graphToken}` }
             });
+
+            if (!deleteResponse.ok) {
+                // If deletion fails, the email is filed but not removed. Inform the user.
+                 updateStatus("Email filed, but failed to delete from inbox. Please delete manually.", true);
+                 return;
+            }
 
             updateStatus("Email filed successfully!");
 
@@ -265,15 +280,19 @@
         }
         updateCreateStatus(`Creating mailbox for "${projectName}"...`);
         try {
+            // Get token with appropriate permissions, triggering interactive consent if needed for this specific action.
             const token = await signInAndGetToken({ scopes: ["Directory.ReadWrite.All"] }, true);
-            if (!token) return;
+            if (!token) {
+                 updateCreateStatus("Could not get permission to create mailboxes.", true);
+                 return;
+            }
 
             const mailNickname = projectName.replace(/[^a-zA-Z0-9_]/g, '');
             if (mailNickname.length === 0) {
-                updateCreateStatus("Project name contains invalid characters.", true);
+                updateCreateStatus("Project name contains only invalid characters.", true);
                 return;
             }
-            const tempPassword = "TempP@ssword" + Math.floor(Math.random() * 1000);
+            const tempPassword = "TempP@ssword" + Math.floor(Math.random() * 10000);
             const userDetails = {
                 accountEnabled: true,
                 displayName: projectName,
@@ -295,18 +314,11 @@
 
             updateCreateStatus("Mailbox created successfully! Refreshing list...");
             document.getElementById("newProjectName").value = "";
-            setTimeout(fetchSharedMailboxes, 2000);
+            setTimeout(fetchSharedMailboxes, 2000); // Wait 2s for Graph API to be consistent
         } catch (err) {
             console.error("Failed to create project:", err);
             updateCreateStatus(`Error: ${err.message}`, true);
         }
-    }
-
-    function setupUI() {
-        const searchBox = document.getElementById("searchBox");
-        searchBox.addEventListener("input", () => {
-            updateMailboxList(searchBox.value);
-        });
     }
   </script>
 </body>
