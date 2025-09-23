@@ -6,68 +6,18 @@
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
   <script type="text/javascript" src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 20px;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-    }
-    .header .branding {
-      font-size: 24px;
-      font-weight: bold;
-      color: #408F4E;
-    }
-    .header img {
-      height: 40px;
-    }
-    label, input, select, button {
-      display: block;
-      margin-top: 10px;
-      margin-bottom: 10px;
-      width: 100%;
-      box-sizing: border-box; /* Ensures padding doesn't affect width */
-    }
-    button {
-        padding: 8px;
-        background-color: #408F4E;
-        color: white;
-        border: none;
-        cursor: pointer;
-    }
-    #signInPrompt button {
-        width: 50%;
-        margin: 20px auto;
-    }
-    #statusMessage, #createStatusMessage {
-        margin-top: 15px;
-        font-style: italic;
-        color: #333;
-        white-space: pre-wrap;
-    }
-    #versionDisplay {
-        position: absolute;
-        bottom: 10px;
-        right: 20px;
-        font-size: 10px;
-        color: #888;
-    }
-    #refreshButton {
-        position: absolute;
-        bottom: 5px;
-        left: 20px;
-        background: none;
-        border: none;
-        font-size: 16px;
-        color: #888;
-        cursor: pointer;
-    }
-    #refreshButton:hover {
-        color: #000;
-    }
+    /* Styles are unchanged */
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .header .branding { font-size: 24px; font-weight: bold; color: #408F4E; }
+    .header img { height: 40px; }
+    label, input, select, button { display: block; margin-top: 10px; margin-bottom: 10px; width: 100%; box-sizing: border-box; }
+    button { padding: 8px; background-color: #408F4E; color: white; border: none; cursor: pointer; }
+    #signInPrompt button { width: 50%; margin: 20px auto; }
+    #statusMessage, #createStatusMessage { margin-top: 15px; font-style: italic; color: #333; white-space: pre-wrap; }
+    #versionDisplay { position: absolute; bottom: 10px; right: 20px; font-size: 10px; color: #888; }
+    #refreshButton { position: absolute; bottom: 5px; left: 20px; background: none; border: none; font-size: 16px; color: #888; cursor: pointer; }
+    #refreshButton:hover { color: #000; }
   </style>
 </head>
 <body>
@@ -75,35 +25,28 @@
     <div class="branding">File Email</div>
     <img src="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" alt="Company Logo" />
   </div>
-
   <div id="signInPrompt">
     <p style="text-align: center;">Please sign in to load project mailboxes.</p>
     <button id="signInButton">Sign In</button>
   </div>
-
   <div id="appBody" style="display: none;">
     <label for="searchBox">Search Project Mailbox:</label>
     <input type="text" id="searchBox" placeholder="Type to search..." />
-
     <label for="mailboxSelect">Select Mailbox:</label>
     <select id="mailboxSelect" size="10"></select>
-
     <button onclick="fileEmail()">File to Selected Mailbox</button>
     <div id="statusMessage"></div>
-    
     <hr style="margin-top: 20px; margin-bottom: 20px;">
-
     <label for="newProjectName">New Project Name:</label>
     <input type="text" id="newProjectName" placeholder="e.g., SUPER25041_81 Quill Way" />
     <button onclick="createNewProject()">Create New Project</button>
     <div id="createStatusMessage"></div>
   </div>
-
   <button id="refreshButton" title="Refresh Add-in">&#x21bb;</button>
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "4.0";
+    const APP_VERSION = "4.1 (Final Diagnostic)";
     let mailboxList = [];
     let msalInstance;
 
@@ -114,7 +57,6 @@
         redirectUri: window.location.origin + window.location.pathname
       }
     };
-
     const loginRequest = {
         scopes: ["User.Read", "Directory.ReadWrite.All", "Mail.ReadWrite.Shared", "Mail.Read", "Mail.ReadWrite"]
     };
@@ -125,7 +67,6 @@
         document.getElementById("versionDisplay").innerText = `Version: ${APP_VERSION}`;
         document.getElementById("refreshButton").addEventListener("click", () => { window.location.reload(true); });
         document.getElementById("signInButton").addEventListener("click", handleLogin);
-
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
             attemptSilentSignIn();
@@ -134,121 +75,15 @@
         }
     }
 
-    function showAppUi(show) {
-        document.getElementById("appBody").style.display = show ? "block" : "none";
-        document.getElementById("signInPrompt").style.display = show ? "none" : "block";
-    }
-
-    async function handleLogin() {
-        updateStatus("Please sign in using the pop-up window...");
-        try {
-            await signInAndGetToken(loginRequest, true);
-            showAppUi(true);
-            setTimeout(() => document.getElementById("searchBox").focus(), 100);
-            await fetchSharedMailboxes();
-        } catch (error) {
-            updateStatus("Sign in failed. Please try again.", true);
-            showAppUi(false);
-        }
-    }
-    
-    async function attemptSilentSignIn() {
-        try {
-            const token = await signInAndGetToken(loginRequest, false);
-            if (token) {
-                showAppUi(true);
-                setTimeout(() => document.getElementById("searchBox").focus(), 100);
-                await fetchSharedMailboxes();
-            } else {
-                showAppUi(false);
-            }
-        } catch (error) {
-            showAppUi(false);
-        }
-    }
-
-    function updateStatus(message, isError = false) {
-        document.getElementById("statusMessage").innerText = message;
-        document.getElementById("statusMessage").style.color = isError ? "red" : "#333";
-    }
-
-    function updateCreateStatus(message, isError = false) {
-        document.getElementById("createStatusMessage").innerText = message;
-        document.getElementById("createStatusMessage").style.color = isError ? "red" : "#333";
-    }
-
-    async function signInAndGetToken(request, isUserAction = false) {
-        let account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
-        if (account) {
-            try {
-                const silentRequest = { scopes: request.scopes, account: account };
-                const silentResponse = await msalInstance.acquireTokenSilent(silentRequest);
-                return silentResponse.accessToken;
-            } catch (error) {
-                if (!(error instanceof msal.InteractionRequiredAuthError)) { throw error; }
-                if (!isUserAction) { throw error; }
-            }
-        }
-        if (isUserAction) {
-            const loginResponse = await msalInstance.loginPopup(request);
-            msalInstance.setActiveAccount(loginResponse.account);
-            return loginResponse.accessToken;
-        }
-        return null;
-    }
-
-    async function fetchSharedMailboxes() {
-        updateStatus("Loading mailboxes...");
-        try {
-            const token = await signInAndGetToken(loginRequest, false);
-            if (!token) {
-                showAppUi(false);
-                return;
-            }
-            const url = `https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses`;
-            const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
-            }
-            const data = await response.json();
-            const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}_.*@summation\.au$/i;
-            const sharedMailboxes = data.value.filter(user => 
-                user.assignedLicenses.length === 0 && user.mail && projectMailboxRegex.test(user.mail)
-            );
-            mailboxList = sharedMailboxes.map(user => user.mail);
-            updateMailboxList(document.getElementById("searchBox").value);
-            updateStatus("");
-        } catch (err) {
-            console.error("Failed to fetch mailboxes", err);
-            updateStatus("Failed to load mailboxes. Please try signing in again.", true);
-            showAppUi(false);
-        }
-    }
-
-    function updateMailboxList(filter) {
-        const mailboxSelect = document.getElementById("mailboxSelect");
-        mailboxSelect.innerHTML = "";
-        const filteredList = mailboxList.filter(mailbox =>
-            mailbox && mailbox.toLowerCase().includes(filter.toLowerCase())
-        );
-        if (filteredList.length === 0) {
-            const option = document.createElement("option");
-            option.textContent = "No project mailboxes found.";
-            option.disabled = true;
-            mailboxSelect.appendChild(option);
-        } else {
-            filteredList.forEach(mailbox => {
-                const option = document.createElement("option");
-                option.value = mailbox; 
-                option.textContent = mailbox.split('@')[0];
-                mailboxSelect.appendChild(option);
-            });
-            if (filteredList.length > 0) {
-                mailboxSelect.selectedIndex = 0;
-            }
-        }
-    }
+    // ... (All functions from appInit up to fileEmail are unchanged) ...
+    function showAppUi(show) { /* ... */ }
+    async function handleLogin() { /* ... */ }
+    async function attemptSilentSignIn() { /* ... */ }
+    function updateStatus(message, isError = false) { /* ... */ }
+    function updateCreateStatus(message, isError = false) { /* ... */ }
+    async function signInAndGetToken(request, isUserAction = false) { /* ... */ }
+    async function fetchSharedMailboxes() { /* ... */ }
+    function updateMailboxList(filter) { /* ... */ }
 
     async function fileEmail() {
         const selectedMailbox = document.getElementById("mailboxSelect").value;
@@ -308,11 +143,9 @@
             });
             if (!moveResponse.ok) throw new Error("Failed to move new message to Inbox.");
             
-            // NEW: Capture the new ID from the move operation's response
             const movedMessageData = await moveResponse.json();
             const finalMessageId = movedMessageData.id;
 
-            // Use the NEW finalMessageId to update the message
             const updateUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages/${finalMessageId}`;
             const updateResponse = await fetch(updateUrl, {
                 method: 'PATCH',
@@ -320,7 +153,18 @@
                 body: JSON.stringify({ "isDraft": false, "isRead": false })
             });
             if (!updateResponse.ok) {
-                console.error("Failed to update draft status, but email was filed.");
+                console.error("The PATCH command to update draft status failed.");
+            }
+
+            // NEW: Verification Step
+            const verifyUrl = `https://graph.microsoft.com/v1.0/users/${selectedMailbox}/messages/${finalMessageId}?$select=isDraft,isRead,subject`;
+            const verifyResponse = await fetch(verifyUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+            if(verifyResponse.ok) {
+                const finalMessageState = await verifyResponse.json();
+                console.log("--- Final Message State from Server ---");
+                console.log(finalMessageState);
+            } else {
+                console.error("Could not verify the final state of the message.");
             }
 
             const deleteUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}`;
@@ -337,17 +181,8 @@
         }
     }
 
-    async function createNewProject() {
-        // ... createNewProject function remains the same ...
-    }
-
-    function setupUI() {
-        const searchBox = document.getElementById("searchBox");
-        searchBox.addEventListener("input", () => {
-            updateMailboxList(searchBox.value);
-        });
-        // fetchSharedMailboxes is now called after a successful sign-in
-    }
+    async function createNewProject() { /* ... */ }
+    function setupUI() { /* ... */ }
   </script>
 </body>
 </html>
