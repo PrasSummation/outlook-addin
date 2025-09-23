@@ -37,6 +37,7 @@
     <label for="mailboxSelect">Select Mailbox:</label>
     <select id="mailboxSelect" size="10"></select>
 
+    <button onclick="fileEmail()">File to Selected Mailbox</button>
     <div id="statusMessage"></div>
   </div>
 
@@ -44,7 +45,10 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "6.0 (Mailbox List Test)";
+    const APP_VERSION = "6.1";
+    // URL FOR POWER AUTOMATE FLOW ADDED BACK
+    const POWER_AUTOMATE_URL = "https://defaultecb5f45895484e8b96f3904f1828f9.31.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/9b842424d6f24507ad254c8e94c614c0/triggers/manual/paths/invoke?api-version=1";
+    
     let mailboxList = [];
     let msalInstance;
 
@@ -56,8 +60,9 @@
       }
     };
 
+    // PERMISSIONS FOR ALL FEATURES ADDED BACK
     const loginRequest = {
-        scopes: ["User.Read", "Directory.Read.All"]
+        scopes: ["User.Read", "Directory.Read.All", "Mail.Read", "Mail.ReadWrite", "https://service.flow.microsoft.com//.default"]
     };
     
     Office.onReady(appInit);
@@ -95,7 +100,7 @@
     
     async function attemptSilentSignIn() {
         try {
-            const token = await signInAndGetToken(loginRequest, false);
+            const token = await signInAndGetToken({ scopes: ["User.Read"] }, false);
             if (token) {
                 showAppUi(true);
                 setTimeout(() => document.getElementById("searchBox").focus(), 100);
@@ -136,7 +141,7 @@
     async function fetchSharedMailboxes() {
         updateStatus("Loading mailboxes...");
         try {
-            const token = await signInAndGetToken(loginRequest, false);
+            const token = await signInAndGetToken({ scopes: ["Directory.Read.All"] }, false);
             if (!token) {
                 showAppUi(false);
                 return;
@@ -183,6 +188,65 @@
             if (filteredList.length > 0) {
                 mailboxSelect.selectedIndex = 0;
             }
+        }
+    }
+    
+    // FILE EMAIL FUNCTION ADDED BACK
+    async function fileEmail() {
+        const selectedMailbox = document.getElementById("mailboxSelect").value;
+        if (!selectedMailbox) {
+            updateStatus("Please select a mailbox first.", true);
+            return;
+        }
+        updateStatus(`Filing email to ${selectedMailbox}...`);
+        try {
+            const graphTokenRequest = { scopes: ["Mail.Read", "Mail.ReadWrite"] };
+            const graphToken = await signInAndGetToken(graphTokenRequest, true);
+            if (!graphToken) return;
+
+            const internetMessageId = Office.context.mailbox.item.internetMessageId;
+            const encodedInternetMessageId = encodeURIComponent(internetMessageId);
+            const findUrl = `https://graph.microsoft.com/v1.0/me/messages?$filter=internetMessageId eq '${encodedInternetMessageId}'&$select=id`;
+            const findResponse = await fetch(findUrl, { headers: { 'Authorization': `Bearer ${graphToken}` } });
+            if (!findResponse.ok) throw new Error("Could not find the original message.");
+            const findData = await findResponse.json();
+            if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located.");
+            const graphMessageId = findData.value[0].id;
+            
+            const flowTokenRequest = {
+                scopes: ["https://service.flow.microsoft.com//.default"],
+                account: msalInstance.getActiveAccount()
+            };
+            const flowTokenResponse = await msalInstance.acquireTokenSilent(flowTokenRequest);
+            const flowToken = flowTokenResponse.accessToken;
+
+            const flowResponse = await fetch(POWER_AUTOMATE_URL, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${flowToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    "graphMessageId": graphMessageId,
+                    "destinationMailbox": selectedMailbox
+                })
+            });
+
+            if (!flowResponse.ok) {
+                throw new Error(`The flow failed with status: ${flowResponse.status} ${flowResponse.statusText}`);
+            }
+
+            const deleteUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}`;
+            await fetch(deleteUrl, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${graphToken}` }
+            });
+
+            updateStatus("Email filed successfully!");
+
+        } catch (err) {
+            console.error("Failed to file email:", err);
+            updateStatus(`Error: ${err.message}`, true);
         }
     }
 
