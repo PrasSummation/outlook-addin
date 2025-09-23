@@ -13,7 +13,7 @@
     label, input, select, button { display: block; margin-top: 10px; margin-bottom: 10px; width: 100%; box-sizing: border-box; }
     button { padding: 8px; background-color: #408F4E; color: white; border: none; cursor: pointer; }
     #signInPrompt button { width: 50%; margin: 20px auto; }
-    #statusMessage, #createStatusMessage { margin-top: 15px; font-style: italic; color: #333; white-space: pre-wrap; }
+    #statusMessage { margin-top: 15px; font-style: italic; color: #333; white-space: pre-wrap; }
     #versionDisplay { position: absolute; bottom: 10px; right: 20px; font-size: 10px; color: #888; }
     #refreshButton { position: absolute; bottom: 5px; left: 20px; background: none; border: none; font-size: 16px; color: #888; cursor: pointer; }
     #refreshButton:hover { color: #000; }
@@ -33,23 +33,18 @@
   <div id="appBody" style="display: none;">
     <label for="searchBox">Search Project Mailbox:</label>
     <input type="text" id="searchBox" placeholder="Type to search..." />
+
     <label for="mailboxSelect">Select Mailbox:</label>
     <select id="mailboxSelect" size="10"></select>
-    <button onclick="fileEmail()">File to Selected Mailbox</button>
+
     <div id="statusMessage"></div>
-    <hr style="margin-top: 20px; margin-bottom: 20px;">
-    <label for="newProjectName">New Project Name:</label>
-    <input type="text" id="newProjectName" placeholder="e.g., SUPER25041_81 Quill Way" />
-    <button onclick="createNewProject()">Create New Project</button>
-    <div id="createStatusMessage"></div>
   </div>
 
   <button id="refreshButton" title="Refresh Add-in">&#x21bb;</button>
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "5.9";
-    const POWER_AUTOMATE_URL = "https://defaultecb5f45895484e8b96f3904f1828f9.31.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/9b842424d6f24507ad254c8e94c614c0/triggers/manual/paths/invoke?api-version=1";
+    const APP_VERSION = "6.0 (Mailbox List Test)";
     let mailboxList = [];
     let msalInstance;
 
@@ -61,9 +56,8 @@
       }
     };
 
-    // UPDATED: A minimal request for the initial sign-in
-    const initialLoginRequest = {
-        scopes: ["User.Read"]
+    const loginRequest = {
+        scopes: ["User.Read", "Directory.Read.All"]
     };
     
     Office.onReady(appInit);
@@ -72,6 +66,7 @@
         document.getElementById("versionDisplay").innerText = `Version: ${APP_VERSION}`;
         document.getElementById("refreshButton").addEventListener("click", () => { window.location.reload(true); });
         document.getElementById("signInButton").addEventListener("click", handleLogin);
+
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
             attemptSilentSignIn();
@@ -88,11 +83,7 @@
     async function handleLogin() {
         updateStatus("Please sign in using the pop-up window...");
         try {
-            // UPDATED: The first interactive login gets consent for ALL scopes
-            const fullScopeRequest = {
-                scopes: ["User.Read", "Directory.ReadWrite.All", "Mail.Read", "Mail.ReadWrite", "https://service.flow.microsoft.com//.default"]
-            };
-            await signInAndGetToken(fullScopeRequest, true);
+            await signInAndGetToken(loginRequest, true);
             showAppUi(true);
             setTimeout(() => document.getElementById("searchBox").focus(), 100);
             await fetchSharedMailboxes();
@@ -104,7 +95,7 @@
     
     async function attemptSilentSignIn() {
         try {
-            const token = await signInAndGetToken(initialLoginRequest, false);
+            const token = await signInAndGetToken(loginRequest, false);
             if (token) {
                 showAppUi(true);
                 setTimeout(() => document.getElementById("searchBox").focus(), 100);
@@ -120,11 +111,6 @@
     function updateStatus(message, isError = false) {
         document.getElementById("statusMessage").innerText = message;
         document.getElementById("statusMessage").style.color = isError ? "red" : "#333";
-    }
-
-    function updateCreateStatus(message, isError = false) {
-        document.getElementById("createStatusMessage").innerText = message;
-        document.getElementById("createStatusMessage").style.color = isError ? "red" : "#333";
     }
 
     async function signInAndGetToken(request, isUserAction = false) {
@@ -150,8 +136,7 @@
     async function fetchSharedMailboxes() {
         updateStatus("Loading mailboxes...");
         try {
-            const graphTokenRequest = { scopes: ["Directory.Read.All"] };
-            const token = await signInAndGetToken(graphTokenRequest, false);
+            const token = await signInAndGetToken(loginRequest, false);
             if (!token) {
                 showAppUi(false);
                 return;
@@ -201,107 +186,12 @@
         }
     }
 
-    async function fileEmail() {
-        const selectedMailbox = document.getElementById("mailboxSelect").value;
-        if (!selectedMailbox) {
-            updateStatus("Please select a mailbox first.", true);
-            return;
-        }
-        updateStatus(`Filing email to ${selectedMailbox}...`);
-        try {
-            const graphTokenRequest = { scopes: ["Mail.Read", "Mail.ReadWrite"] };
-            const graphToken = await signInAndGetToken(graphTokenRequest, true);
-            if (!graphToken) return;
-
-            const internetMessageId = Office.context.mailbox.item.internetMessageId;
-            const encodedInternetMessageId = encodeURIComponent(internetMessageId);
-            const findUrl = `https://graph.microsoft.com/v1.0/me/messages?$filter=internetMessageId eq '${encodedInternetMessageId}'&$select=id`;
-            const findResponse = await fetch(findUrl, { headers: { 'Authorization': `Bearer ${graphToken}` } });
-            if (!findResponse.ok) throw new Error("Could not find the original message.");
-            const findData = await findResponse.json();
-            if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located.");
-            const graphMessageId = findData.value[0].id;
-            
-            const flowTokenRequest = {
-                scopes: ["https://service.flow.microsoft.com//.default"],
-                account: msalInstance.getActiveAccount()
-            };
-            const flowTokenResponse = await msalInstance.acquireTokenSilent(flowTokenRequest);
-            const flowToken = flowTokenResponse.accessToken;
-
-            const flowResponse = await fetch(POWER_AUTOMATE_URL, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${flowToken}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ "graphMessageId": graphMessageId, "destinationMailbox": selectedMailbox })
-            });
-            if (!flowResponse.ok) {
-                throw new Error(`The flow failed with status: ${flowResponse.status} ${flowResponse.statusText}`);
-            }
-
-            const deleteUrl = `https://graph.microsoft.com/v1.0/me/messages/${graphMessageId}`;
-            await fetch(deleteUrl, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${graphToken}` }
-            });
-
-            updateStatus("Email filed successfully!");
-        } catch (err) {
-            console.error("Failed to file email:", err);
-            updateStatus(`Error: ${err.message}`, true);
-        }
-    }
-
-    async function createNewProject() {
-        const projectName = document.getElementById("newProjectName").value;
-        if (!projectName || projectName.trim().length === 0) {
-            updateCreateStatus("Please enter a project name.", true);
-            return;
-        }
-        updateCreateStatus(`Creating mailbox for "${projectName}"...`);
-        try {
-            const graphTokenRequest = { scopes: ["Directory.ReadWrite.All"] };
-            const token = await signInAndGetToken(graphTokenRequest, true);
-            if (!token) return;
-
-            const mailNickname = projectName.replace(/[^a-zA-Z0-9_]/g, '');
-            if (mailNickname.length === 0) {
-                updateCreateStatus("Project name contains invalid characters.", true);
-                return;
-            }
-            const tempPassword = "TempP@ssword" + Math.floor(Math.random() * 1000);
-            const userDetails = {
-                accountEnabled: true,
-                displayName: projectName,
-                mailNickname: mailNickname,
-                userPrincipalName: `${mailNickname}@summation.au`,
-                passwordProfile: { forceChangePasswordNextSignIn: false, password: tempPassword }
-            };
-
-            const createUrl = "https://graph.microsoft.com/v1.0/users";
-            const response = await fetch(createUrl, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify(userDetails)
-            });
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error.message || "Failed to create user.");
-            }
-
-            updateCreateStatus("Mailbox created successfully! Refreshing list...");
-            document.getElementById("newProjectName").value = "";
-            setTimeout(fetchSharedMailboxes, 2000);
-        } catch (err) {
-            console.error("Failed to create project:", err);
-            updateCreateStatus(`Error: ${err.message}`, true);
-        }
-    }
-
     function setupUI() {
         const searchBox = document.getElementById("searchBox");
         searchBox.addEventListener("input", () => {
             updateMailboxList(searchBox.value);
         });
+        // fetchSharedMailboxes is now called after a successful sign-in
     }
   </script>
 </body>
