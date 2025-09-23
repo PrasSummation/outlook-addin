@@ -13,7 +13,7 @@
     label, input, select, button { display: block; margin-top: 10px; margin-bottom: 10px; width: 100%; box-sizing: border-box; }
     button { padding: 8px; background-color: #408F4E; color: white; border: none; cursor: pointer; }
     #signInPrompt button { width: 50%; margin: 20px auto; }
-    #statusMessage { margin-top: 15px; font-style: italic; color: #333; white-space: pre-wrap; }
+    #statusMessage, #createStatusMessage { margin-top: 15px; font-style: italic; color: #333; white-space: pre-wrap; }
     #versionDisplay { position: absolute; bottom: 10px; right: 20px; font-size: 10px; color: #888; }
     #refreshButton { position: absolute; bottom: 5px; left: 20px; background: none; border: none; font-size: 16px; color: #888; cursor: pointer; }
     #refreshButton:hover { color: #000; }
@@ -33,10 +33,8 @@
   <div id="appBody" style="display: none;">
     <label for="searchBox">Search Project Mailbox:</label>
     <input type="text" id="searchBox" placeholder="Type to search..." />
-
     <label for="mailboxSelect">Select Mailbox:</label>
     <select id="mailboxSelect" size="10"></select>
-
     <button onclick="fileEmail()">File to Selected Mailbox</button>
     <div id="statusMessage"></div>
   </div>
@@ -45,8 +43,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "6.1";
-    // URL FOR POWER AUTOMATE FLOW ADDED BACK
+    const APP_VERSION = "6.2";
     const POWER_AUTOMATE_URL = "https://defaultecb5f45895484e8b96f3904f1828f9.31.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/9b842424d6f24507ad254c8e94c614c0/triggers/manual/paths/invoke?api-version=1";
     
     let mailboxList = [];
@@ -60,7 +57,6 @@
       }
     };
 
-    // PERMISSIONS FOR ALL FEATURES ADDED BACK
     const loginRequest = {
         scopes: ["User.Read", "Directory.Read.All", "Mail.Read", "Mail.ReadWrite", "https://service.flow.microsoft.com//.default"]
     };
@@ -191,7 +187,6 @@
         }
     }
     
-    // FILE EMAIL FUNCTION ADDED BACK
     async function fileEmail() {
         const selectedMailbox = document.getElementById("mailboxSelect").value;
         if (!selectedMailbox) {
@@ -200,9 +195,19 @@
         }
         updateStatus(`Filing email to ${selectedMailbox}...`);
         try {
-            const graphTokenRequest = { scopes: ["Mail.Read", "Mail.ReadWrite"] };
-            const graphToken = await signInAndGetToken(graphTokenRequest, true);
-            if (!graphToken) return;
+            // Get the currently signed-in account object
+            let account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+            if (!account) {
+                // If no account, force a login
+                const loginResponse = await msalInstance.loginPopup(loginRequest);
+                msalInstance.setActiveAccount(loginResponse.account);
+                account = loginResponse.account;
+            }
+
+            // Get a token for Graph API using the verified account
+            const graphTokenRequest = { scopes: ["Mail.Read", "Mail.ReadWrite"], account: account };
+            const graphTokenResponse = await msalInstance.acquireTokenSilent(graphTokenRequest);
+            const graphToken = graphTokenResponse.accessToken;
 
             const internetMessageId = Office.context.mailbox.item.internetMessageId;
             const encodedInternetMessageId = encodeURIComponent(internetMessageId);
@@ -213,10 +218,8 @@
             if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located.");
             const graphMessageId = findData.value[0].id;
             
-            const flowTokenRequest = {
-                scopes: ["https://service.flow.microsoft.com//.default"],
-                account: msalInstance.getActiveAccount()
-            };
+            // Get a token for Power Automate using the same verified account
+            const flowTokenRequest = { scopes: ["https://service.flow.microsoft.com//.default"], account: account };
             const flowTokenResponse = await msalInstance.acquireTokenSilent(flowTokenRequest);
             const flowToken = flowTokenResponse.accessToken;
 
@@ -255,7 +258,6 @@
         searchBox.addEventListener("input", () => {
             updateMailboxList(searchBox.value);
         });
-        // fetchSharedMailboxes is now called after a successful sign-in
     }
   </script>
 </body>
