@@ -48,7 +48,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "5.8";
+    const APP_VERSION = "5.9";
     const POWER_AUTOMATE_URL = "https://defaultecb5f45895484e8b96f3904f1828f9.31.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/9b842424d6f24507ad254c8e94c614c0/triggers/manual/paths/invoke?api-version=1";
     let mailboxList = [];
     let msalInstance;
@@ -61,8 +61,8 @@
       }
     };
 
-    // Minimal request for initial sign-in
-    const loginRequest = {
+    // UPDATED: A minimal request for the initial sign-in
+    const initialLoginRequest = {
         scopes: ["User.Read"]
     };
     
@@ -88,9 +88,9 @@
     async function handleLogin() {
         updateStatus("Please sign in using the pop-up window...");
         try {
-            // UPDATED: The first interactive login now requests ALL necessary scopes
+            // UPDATED: The first interactive login gets consent for ALL scopes
             const fullScopeRequest = {
-                scopes: [ "User.Read", "Directory.ReadWrite.All", "Mail.Read", "Mail.ReadWrite", "https://service.flow.microsoft.com//.default" ]
+                scopes: ["User.Read", "Directory.ReadWrite.All", "Mail.Read", "Mail.ReadWrite", "https://service.flow.microsoft.com//.default"]
             };
             await signInAndGetToken(fullScopeRequest, true);
             showAppUi(true);
@@ -104,8 +104,7 @@
     
     async function attemptSilentSignIn() {
         try {
-            // Try to get a basic token silently just to see if user is signed in
-            const token = await signInAndGetToken(loginRequest, false);
+            const token = await signInAndGetToken(initialLoginRequest, false);
             if (token) {
                 showAppUi(true);
                 setTimeout(() => document.getElementById("searchBox").focus(), 100);
@@ -151,7 +150,6 @@
     async function fetchSharedMailboxes() {
         updateStatus("Loading mailboxes...");
         try {
-            // UPDATED: Request only the specific Graph scopes needed for this function
             const graphTokenRequest = { scopes: ["Directory.Read.All"] };
             const token = await signInAndGetToken(graphTokenRequest, false);
             if (!token) {
@@ -211,7 +209,6 @@
         }
         updateStatus(`Filing email to ${selectedMailbox}...`);
         try {
-            // UPDATED: Request only Graph scopes
             const graphTokenRequest = { scopes: ["Mail.Read", "Mail.ReadWrite"] };
             const graphToken = await signInAndGetToken(graphTokenRequest, true);
             if (!graphToken) return;
@@ -225,7 +222,6 @@
             if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located.");
             const graphMessageId = findData.value[0].id;
             
-            // UPDATED: Silently request a separate token for Power Automate
             const flowTokenRequest = {
                 scopes: ["https://service.flow.microsoft.com//.default"],
                 account: msalInstance.getActiveAccount()
@@ -263,7 +259,6 @@
         }
         updateCreateStatus(`Creating mailbox for "${projectName}"...`);
         try {
-            // UPDATED: Request only the specific Graph scope needed
             const graphTokenRequest = { scopes: ["Directory.ReadWrite.All"] };
             const token = await signInAndGetToken(graphTokenRequest, true);
             if (!token) return;
