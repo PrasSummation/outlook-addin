@@ -33,8 +33,10 @@
   <div id="appBody" style="display: none;">
     <label for="searchBox">Search Project Mailbox:</label>
     <input type="text" id="searchBox" placeholder="Type to search..." />
+
     <label for="mailboxSelect">Select Mailbox:</label>
     <select id="mailboxSelect" size="10"></select>
+
     <button onclick="fileEmail()">File to Selected Mailbox</button>
     <div id="statusMessage"></div>
   </div>
@@ -57,6 +59,7 @@
       }
     };
 
+    // The full list of scopes for the one-time interactive login
     const loginRequest = {
         scopes: ["User.Read", "Directory.Read.All", "Mail.Read", "Mail.ReadWrite", "https://service.flow.microsoft.com//.default"]
     };
@@ -84,6 +87,7 @@
     async function handleLogin() {
         updateStatus("Please sign in using the pop-up window...");
         try {
+            // The interactive login requests all scopes to get consent upfront
             await signInAndGetToken(loginRequest, true);
             showAppUi(true);
             setTimeout(() => document.getElementById("searchBox").focus(), 100);
@@ -96,6 +100,7 @@
     
     async function attemptSilentSignIn() {
         try {
+            // A minimal request to check for an existing session
             const token = await signInAndGetToken({ scopes: ["User.Read"] }, false);
             if (token) {
                 showAppUi(true);
@@ -137,6 +142,7 @@
     async function fetchSharedMailboxes() {
         updateStatus("Loading mailboxes...");
         try {
+            // Request a token for just the Graph scopes needed
             const token = await signInAndGetToken({ scopes: ["Directory.Read.All"] }, false);
             if (!token) {
                 showAppUi(false);
@@ -195,16 +201,15 @@
         }
         updateStatus(`Filing email to ${selectedMailbox}...`);
         try {
-            // Get the currently signed-in account object
+            // Get a verified account object first
             let account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
             if (!account) {
-                // If no account, force a login
                 const loginResponse = await msalInstance.loginPopup(loginRequest);
                 msalInstance.setActiveAccount(loginResponse.account);
                 account = loginResponse.account;
             }
 
-            // Get a token for Graph API using the verified account
+            // Get a token for Graph API scopes
             const graphTokenRequest = { scopes: ["Mail.Read", "Mail.ReadWrite"], account: account };
             const graphTokenResponse = await msalInstance.acquireTokenSilent(graphTokenRequest);
             const graphToken = graphTokenResponse.accessToken;
@@ -218,23 +223,16 @@
             if (!findData.value || findData.value.length === 0) throw new Error("Message could not be located.");
             const graphMessageId = findData.value[0].id;
             
-            // Get a token for Power Automate using the same verified account
+            // Get a separate token for Power Automate
             const flowTokenRequest = { scopes: ["https://service.flow.microsoft.com//.default"], account: account };
             const flowTokenResponse = await msalInstance.acquireTokenSilent(flowTokenRequest);
             const flowToken = flowTokenResponse.accessToken;
 
             const flowResponse = await fetch(POWER_AUTOMATE_URL, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${flowToken}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    "graphMessageId": graphMessageId,
-                    "destinationMailbox": selectedMailbox
-                })
+                headers: { 'Authorization': `Bearer ${flowToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ "graphMessageId": graphMessageId, "destinationMailbox": selectedMailbox })
             });
-
             if (!flowResponse.ok) {
                 throw new Error(`The flow failed with status: ${flowResponse.status} ${flowResponse.statusText}`);
             }
