@@ -6,7 +6,8 @@
            xsi:type="MailApp">
   
   <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id> 
-  <Version>1.0.0.5</Version> <ProviderName>Summation Group</ProviderName>
+  <Version>1.0.0.6</Version>
+  <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
   <Description DefaultValue="AI-powered automation tools for Summation Group." />
@@ -110,7 +111,7 @@
         <bt:String id="TaskpaneButtonLabel" DefaultValue="Summation Assistant" />
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="TaskpaneButtonToolTip" DefaultValue="Open the Summation Assistant." />
+        <bt:String id="TaskpaneButtonToolTip" DefaultValue="Open the Summation AI helper." />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
