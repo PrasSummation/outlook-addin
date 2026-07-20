@@ -64,7 +64,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "8.1";
+    const APP_VERSION = "8.2";
 
     let msalInstance;
     let folderEntries = [];
@@ -355,8 +355,7 @@
                 throw new Error(errorData.error.message || "Failed to create mailbox.");
             }
 
-            updateCreateStatus("Shared mailbox created successfully! Refreshing folder list...");
-            setTimeout(loadFolders, 2000);
+            updateCreateStatus("Mailbox account created. Microsoft 365 can take several minutes (sometimes longer) to finish provisioning the mailbox before it appears in this list or can receive mail. Use the ↻ refresh button below to check back later.");
         } catch (err) {
             console.error("Failed to create shared mailbox:", err);
             updateCreateStatus(`Error: ${err.message}`, true);
