@@ -26,6 +26,10 @@
     .folder-item .tag { font-size: 10px; color: #888; margin-left: 8px; white-space: nowrap; }
     .folder-item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .empty-message { padding: 10px; color: #888; font-style: italic; font-size: 13px; }
+
+    #selectedInfo { margin-top: 10px; font-size: 12px; color: #555; }
+    #createMailboxSection { display: none; }
+    #createMailboxSection .hint { font-size: 11px; color: #888; margin-top: -6px; }
   </style>
 </head>
 <body>
@@ -44,16 +48,27 @@
     <input type="text" id="filterBox" placeholder="Type to filter..." />
     <div id="folderList"></div>
     <div id="statusMessage"></div>
+    <div id="selectedInfo"></div>
+
+    <div id="createMailboxSection">
+      <hr style="margin-top: 20px; margin-bottom: 20px;">
+      <label for="newMailboxName">New Shared Mailbox Name:</label>
+      <input type="text" id="newMailboxName" placeholder="e.g., SUPER25041_81 Quill Way" />
+      <div class="hint">Tip: prefix with a project code (e.g. SUPER25041_) so it's recognized as a project mailbox.</div>
+      <button id="createMailboxButton">Create New Shared Mailbox</button>
+      <div id="createStatusMessage"></div>
+    </div>
   </div>
 
   <button id="refreshButton" title="Refresh Add-in">&#x21bb;</button>
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "8.0";
+    const APP_VERSION = "8.1";
 
     let msalInstance;
     let folderEntries = [];
+    let selectedEntry = null;
 
     const msalConfig = {
       auth: {
@@ -67,6 +82,10 @@
     const graphRequest = {
         scopes: ["User.Read", "Mail.Read", "Directory.Read.All"]
     };
+    // Only requested on demand, when creating a shared mailbox.
+    const directoryWriteRequest = {
+        scopes: ["Directory.ReadWrite.All"]
+    };
 
     Office.onReady(appInit);
 
@@ -75,6 +94,7 @@
         document.getElementById("refreshButton").addEventListener("click", () => { window.location.reload(true); });
         document.getElementById("signInButton").addEventListener("click", handleLogin);
         document.getElementById("filterBox").addEventListener("input", () => renderFolderList(document.getElementById("filterBox").value));
+        document.getElementById("createMailboxButton").addEventListener("click", createSharedMailbox);
 
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
@@ -107,7 +127,7 @@
 
     async function attemptSilentSignIn() {
         try {
-            const token = await signInAndGetToken(false);
+            const token = await signInAndGetToken(graphRequest, false);
             if (token) {
                 showAppUi(true);
                 setTimeout(() => document.getElementById("filterBox").focus(), 100);
@@ -126,22 +146,22 @@
         document.getElementById("statusMessage").style.color = isError ? "red" : "#333";
     }
 
-    async function signInAndGetToken(isUserAction = false) {
+    async function signInAndGetToken(request, isUserAction = false) {
         const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
         if (account) {
             try {
-                const silentResponse = await msalInstance.acquireTokenSilent({ ...graphRequest, account });
+                const silentResponse = await msalInstance.acquireTokenSilent({ ...request, account });
                 return silentResponse.accessToken;
             } catch (error) {
                 if (error instanceof msal.InteractionRequiredAuthError && isUserAction) {
-                    const interactiveResponse = await msalInstance.acquireTokenPopup(graphRequest);
+                    const interactiveResponse = await msalInstance.acquireTokenPopup(request);
                     return interactiveResponse.accessToken;
                 }
                 throw error;
             }
         }
         if (isUserAction) {
-            const loginResponse = await msalInstance.loginPopup(graphRequest);
+            const loginResponse = await msalInstance.loginPopup(request);
             msalInstance.setActiveAccount(loginResponse.account);
             return loginResponse.accessToken;
         }
@@ -160,7 +180,7 @@
     async function loadFolders() {
         updateStatus("Loading project folders...");
         try {
-            const token = await signInAndGetToken(false);
+            const token = await signInAndGetToken(graphRequest, false);
             if (!token) {
                 updateStatus("Authentication token is missing. Please sign in again.", true);
                 showAppUi(false);
@@ -261,10 +281,86 @@
             item.addEventListener("click", () => {
                 document.querySelectorAll(".folder-item.selected").forEach(el => el.classList.remove("selected"));
                 item.classList.add("selected");
+                selectedEntry = entry;
+                updateSelectionUi();
             });
 
             folderList.appendChild(item);
         });
+    }
+
+    function updateSelectionUi() {
+        const info = document.getElementById("selectedInfo");
+        const createSection = document.getElementById("createMailboxSection");
+
+        if (!selectedEntry) {
+            info.textContent = "";
+            createSection.style.display = "none";
+            return;
+        }
+
+        const fullPath = selectedEntry.path.join(" / ");
+        if (selectedEntry.type === "shared") {
+            info.textContent = `Selected: ${fullPath} (Shared Mailbox)`;
+            createSection.style.display = "none";
+        } else {
+            info.textContent = `Selected: ${fullPath} (My Inbox subfolder)`;
+            createSection.style.display = "block";
+            document.getElementById("newMailboxName").value = selectedEntry.path[selectedEntry.path.length - 1];
+            document.getElementById("createStatusMessage").textContent = "";
+        }
+    }
+
+    function updateCreateStatus(message, isError = false) {
+        document.getElementById("createStatusMessage").innerText = message;
+        document.getElementById("createStatusMessage").style.color = isError ? "red" : "#333";
+    }
+
+    async function createSharedMailbox() {
+        const mailboxName = document.getElementById("newMailboxName").value;
+        if (!mailboxName || mailboxName.trim().length === 0) {
+            updateCreateStatus("Please enter a mailbox name.", true);
+            return;
+        }
+        updateCreateStatus(`Creating shared mailbox "${mailboxName}"...`);
+        try {
+            const token = await signInAndGetToken(directoryWriteRequest, true);
+            if (!token) {
+                updateCreateStatus("Could not get permission to create mailboxes.", true);
+                return;
+            }
+
+            const mailNickname = mailboxName.replace(/[^a-zA-Z0-9_]/g, '');
+            if (mailNickname.length === 0) {
+                updateCreateStatus("Mailbox name contains only invalid characters.", true);
+                return;
+            }
+            const tempPassword = "TempP@ssword" + Math.floor(Math.random() * 10000);
+            const userDetails = {
+                accountEnabled: true,
+                displayName: mailboxName,
+                mailNickname: mailNickname,
+                userPrincipalName: `${mailNickname}@summation.au`,
+                passwordProfile: { forceChangePasswordNextSignIn: false, password: tempPassword }
+            };
+
+            const createUrl = "https://graph.microsoft.com/v1.0/users";
+            const response = await fetch(createUrl, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(userDetails)
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error.message || "Failed to create mailbox.");
+            }
+
+            updateCreateStatus("Shared mailbox created successfully! Refreshing folder list...");
+            setTimeout(loadFolders, 2000);
+        } catch (err) {
+            console.error("Failed to create shared mailbox:", err);
+            updateCreateStatus(`Error: ${err.message}`, true);
+        }
     }
   </script>
 </body>
