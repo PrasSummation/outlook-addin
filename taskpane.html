@@ -30,6 +30,22 @@
     #selectedInfo { margin-top: 10px; font-size: 12px; color: #555; }
     #createMailboxSection { display: none; }
     #createMailboxSection .hint { font-size: 11px; color: #888; margin-top: -6px; }
+
+    #topActions { display: flex; justify-content: flex-end; }
+    .small-button { width: auto; margin: 0; padding: 4px 10px; font-size: 12px; }
+    .secondary-button { background-color: #888; }
+
+    .radio-row { display: flex; gap: 15px; margin-bottom: 10px; }
+    .radio-row label { display: flex; align-items: center; gap: 5px; width: auto; margin: 0; font-weight: normal; }
+    .radio-row input { display: inline-block; width: auto; margin: 0; }
+
+    .name-candidate { display: inline-block; width: auto; margin: 0 6px 6px 0; padding: 6px 10px; background: #eee; color: #333; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    .name-candidate.selected { background: #408F4E; color: white; border-color: #408F4E; }
+
+    .summary-box { border: 1px solid #ccc; border-radius: 4px; padding: 10px; font-size: 13px; margin-bottom: 10px; }
+    .summary-box .row { margin-bottom: 6px; }
+    .summary-box .label { font-weight: bold; }
+    .warning-box { border: 1px solid #e0a800; background: #fff8e1; color: #7a5b00; border-radius: 4px; padding: 8px; font-size: 12px; margin-bottom: 10px; }
   </style>
 </head>
 <body>
@@ -44,19 +60,59 @@
   </div>
 
   <div id="appBody" style="display: none;">
-    <label for="filterBox">Filter Projects / Folders:</label>
-    <input type="text" id="filterBox" placeholder="Type to filter..." />
-    <div id="folderList"></div>
-    <div id="statusMessage"></div>
-    <div id="selectedInfo"></div>
+    <div id="topActions">
+      <button id="newProjectButton" class="small-button">+ New Project</button>
+    </div>
 
-    <div id="createMailboxSection">
-      <hr style="margin-top: 20px; margin-bottom: 20px;">
-      <label for="newMailboxName">New Shared Mailbox Name:</label>
-      <input type="text" id="newMailboxName" placeholder="e.g., SUPER25041_81 Quill Way" />
-      <div class="hint">Tip: prefix with a project code (e.g. SUPER25041_) so it's recognized as a project mailbox.</div>
-      <button id="createMailboxButton">Create New Shared Mailbox</button>
-      <div id="createStatusMessage"></div>
+    <div id="folderBrowser">
+      <label for="filterBox">Filter Projects / Folders:</label>
+      <input type="text" id="filterBox" placeholder="Type to filter..." />
+      <div id="folderList"></div>
+      <div id="statusMessage"></div>
+      <div id="selectedInfo"></div>
+
+      <div id="createMailboxSection">
+        <hr style="margin-top: 20px; margin-bottom: 20px;">
+        <label for="newMailboxName">New Shared Mailbox Name:</label>
+        <input type="text" id="newMailboxName" placeholder="e.g., SUPER25041_81 Quill Way" />
+        <div class="hint">Tip: prefix with a project code (e.g. SUPER25041_) so it's recognized as a project mailbox.</div>
+        <button id="createMailboxButton">Create New Shared Mailbox</button>
+        <div id="createStatusMessage"></div>
+      </div>
+    </div>
+
+    <div id="newProjectWizard" style="display: none;">
+      <button id="backToBrowserButton" class="small-button secondary-button">&larr; Back</button>
+
+      <div id="npStepIntake">
+        <label>Service:</label>
+        <div class="radio-row">
+          <label><input type="radio" name="npService" value="Sustainability" checked /> Sustainability</label>
+          <label><input type="radio" name="npService" value="Energy" /> Energy</label>
+        </div>
+        <label>Location:</label>
+        <div class="radio-row">
+          <label><input type="radio" name="npLocation" value="Perth" checked /> Perth</label>
+          <label><input type="radio" name="npLocation" value="Adelaide" /> Adelaide</label>
+        </div>
+        <label>Project Name:</label>
+        <div id="npNameCandidates"></div>
+        <input type="text" id="npNameFreeText" placeholder="Or type a project name..." />
+        <div id="npIntakeStatus"></div>
+        <button id="npNextButton">Next</button>
+      </div>
+
+      <div id="npStepConfirm" style="display: none;">
+        <div id="npConfirmSummary"></div>
+        <div id="npConfirmStatus"></div>
+        <button id="npConfirmButton">Confirm &amp; Create</button>
+        <button id="npBackToIntakeButton" class="secondary-button">&larr; Edit Details</button>
+      </div>
+
+      <div id="npStepResult" style="display: none;">
+        <div id="npResultSummary"></div>
+        <button id="npStartOverButton">Start Another</button>
+      </div>
     </div>
   </div>
 
@@ -64,11 +120,31 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "8.2";
+    const APP_VERSION = "9.0";
 
     let msalInstance;
     let folderEntries = [];
     let selectedEntry = null;
+    let npState = {};
+
+    const SITE_ID = "summationptyltd.sharepoint.com,b0a8b5e8-0c27-4b46-a97f-e9f7668c3021,039ea15c-5b24-4eea-b48a-9f4e61e9439c";
+    const ACTIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5wp-OK02_E3RbZkRH_jE_Lr";
+    const ARCHIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5zGiD4R7k2PQZMwL6mUreXS";
+    const TEMPLATE_PATH = "Sustainability/Perth/SUPER00000_Project_Template";
+
+    // Branch folder is not the same path in both libraries — see brief §2.1.
+    const ACTIVE_BRANCH_PATH = {
+        SUPER: "Sustainability/Perth",
+        SUADL: "Sustainability/Adelaide",
+        ENPER: "Energy/Perth",
+        ENADL: "Energy/Adelaide"
+    };
+    const ARCHIVE_BRANCH_PATH = {
+        SUPER: "Sustainability/Perth",
+        SUADL: "Sustainability/Archived_Adelaide",
+        ENPER: "Energy/Perth",
+        ENADL: "Energy/Adelaide"
+    };
 
     const msalConfig = {
       auth: {
@@ -86,6 +162,10 @@
     const directoryWriteRequest = {
         scopes: ["Directory.ReadWrite.All"]
     };
+    // Only requested on demand, when using the New Project wizard.
+    const sitesRequest = {
+        scopes: ["Sites.Selected"]
+    };
 
     Office.onReady(appInit);
 
@@ -95,6 +175,12 @@
         document.getElementById("signInButton").addEventListener("click", handleLogin);
         document.getElementById("filterBox").addEventListener("input", () => renderFolderList(document.getElementById("filterBox").value));
         document.getElementById("createMailboxButton").addEventListener("click", createSharedMailbox);
+        document.getElementById("newProjectButton").addEventListener("click", openNewProjectWizard);
+        document.getElementById("backToBrowserButton").addEventListener("click", closeNewProjectWizard);
+        document.getElementById("npNextButton").addEventListener("click", handleIntakeNext);
+        document.getElementById("npBackToIntakeButton").addEventListener("click", () => showWizardStep("intake"));
+        document.getElementById("npConfirmButton").addEventListener("click", handleConfirmCreate);
+        document.getElementById("npStartOverButton").addEventListener("click", openNewProjectWizard);
 
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
@@ -359,6 +445,463 @@
         } catch (err) {
             console.error("Failed to create shared mailbox:", err);
             updateCreateStatus(`Error: ${err.message}`, true);
+        }
+    }
+
+    // ---- New Project wizard ----
+
+    function getCurrentMailItem() {
+        return (typeof Office !== "undefined" && Office.context && Office.context.mailbox) ? Office.context.mailbox.item : null;
+    }
+
+    function comboCode(service, location) {
+        const servicePart = service === "Energy" ? "EN" : "SU";
+        const locationPart = location === "Adelaide" ? "ADL" : "PER";
+        return `${servicePart}${locationPart}`;
+    }
+
+    function sanitizeProjectName(name) {
+        return (name || "").replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim();
+    }
+
+    function sanitizeFileName(name) {
+        return (name || "").replace(/[\\/:*?"<>|]/g, "").trim() || "file";
+    }
+
+    function encodePath(path) {
+        return path.split("/").map(encodeURIComponent).join("/");
+    }
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function base64ToBytes(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+    }
+
+    async function graphGetOrNull(url, token) {
+        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (response.status === 404) return null;
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    function openNewProjectWizard() {
+        document.getElementById("folderBrowser").style.display = "none";
+        document.getElementById("newProjectButton").style.display = "none";
+        document.getElementById("newProjectWizard").style.display = "block";
+        npState = {};
+        document.getElementById("npNameFreeText").value = "";
+        document.getElementById("npIntakeStatus").textContent = "";
+        showWizardStep("intake");
+        populateNameCandidates();
+    }
+
+    function closeNewProjectWizard() {
+        document.getElementById("newProjectWizard").style.display = "none";
+        document.getElementById("folderBrowser").style.display = "block";
+        document.getElementById("newProjectButton").style.display = "block";
+    }
+
+    function showWizardStep(step) {
+        document.getElementById("npStepIntake").style.display = step === "intake" ? "block" : "none";
+        document.getElementById("npStepConfirm").style.display = step === "confirm" ? "block" : "none";
+        document.getElementById("npStepResult").style.display = step === "result" ? "block" : "none";
+    }
+
+    function getItemBodyText(item) {
+        return new Promise((resolve, reject) => {
+            if (!item || !item.body || !item.body.getAsync) { resolve(""); return; }
+            item.body.getAsync(Office.CoercionType.Text, (result) => {
+                if (result.status === Office.AsyncResultStatus.Succeeded) resolve(result.value);
+                else reject(new Error(result.error ? result.error.message : "Failed to read email body"));
+            });
+        });
+    }
+
+    function populateNameCandidates() {
+        const container = document.getElementById("npNameCandidates");
+        container.innerHTML = "";
+        const item = getCurrentMailItem();
+        if (!item) return;
+
+        const candidates = new Set();
+        const fromName = item.from && item.from.displayName ? item.from.displayName.trim() : "";
+        if (fromName) candidates.add(fromName);
+
+        const fromEmail = item.from && item.from.emailAddress ? item.from.emailAddress : "";
+        const domainMatch = fromEmail.match(/@([^.]+)\./);
+        if (domainMatch) {
+            candidates.add(domainMatch[1].charAt(0).toUpperCase() + domainMatch[1].slice(1));
+        }
+
+        const subject = (item.subject || "").replace(/^(re|fw|fwd)\s*:\s*/i, "").trim();
+        if (subject) candidates.add(subject);
+
+        getItemBodyText(item).then(bodyText => {
+            const addressMatch = (bodyText || "").match(/\d+[a-zA-Z]?\s+[A-Za-z'\s]+\b(Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Court|Ct|Way|Place|Pl|Terrace|Tce|Highway|Hwy)\b/i);
+            if (addressMatch) candidates.add(addressMatch[0].trim());
+            renderNameCandidates(Array.from(candidates).slice(0, 4));
+        }).catch(() => {
+            renderNameCandidates(Array.from(candidates).slice(0, 4));
+        });
+    }
+
+    function renderNameCandidates(candidates) {
+        const container = document.getElementById("npNameCandidates");
+        container.innerHTML = "";
+        candidates.forEach(name => {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "name-candidate";
+            chip.textContent = name;
+            chip.addEventListener("click", () => {
+                document.querySelectorAll(".name-candidate.selected").forEach(el => el.classList.remove("selected"));
+                chip.classList.add("selected");
+                document.getElementById("npNameFreeText").value = name;
+            });
+            container.appendChild(chip);
+        });
+    }
+
+    async function listFolders(driveId, path, token) {
+        const data = await graphGetOrNull(
+            `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodePath(path)}:/children?$select=name,folder&$top=999`,
+            token
+        );
+        if (!data) return [];
+        return (data.value || []).filter(entry => entry.folder);
+    }
+
+    // Next number for a combo+year = (highest NNN used anywhere for that combo+year,
+    // across BOTH libraries) + 1. Templates are excluded by name, not by hardcoded number.
+    async function getNextProjectNumber(token, combo) {
+        const yy = String(new Date().getFullYear() % 100).padStart(2, "0");
+        const [activeFolders, archiveFolders] = await Promise.all([
+            listFolders(ACTIVE_DRIVE_ID, ACTIVE_BRANCH_PATH[combo], token),
+            listFolders(ARCHIVE_DRIVE_ID, ARCHIVE_BRANCH_PATH[combo], token)
+        ]);
+
+        const codePattern = new RegExp(`^${combo}(\\d{2})(\\d{3})`, "i");
+        const seenThisYear = {};
+        let maxNNN = 0;
+
+        [...activeFolders, ...archiveFolders].forEach(folder => {
+            if (/template/i.test(folder.name)) return;
+            const match = folder.name.match(codePattern);
+            if (!match || match[1] !== yy) return;
+            const nnn = parseInt(match[2], 10);
+            (seenThisYear[nnn] = seenThisYear[nnn] || []).push(folder.name);
+            if (nnn > maxNNN) maxNNN = nnn;
+        });
+
+        const warnings = Object.entries(seenThisYear)
+            .filter(([, names]) => names.length > 1)
+            .map(([nnn, names]) => `Number ${combo}${yy}${String(nnn).padStart(3, "0")} is already used by more than one folder: ${names.join(", ")}`);
+
+        return { yy, nextNNN: maxNNN + 1, warnings };
+    }
+
+    async function handleIntakeNext() {
+        const service = document.querySelector('input[name="npService"]:checked').value;
+        const location = document.querySelector('input[name="npLocation"]:checked').value;
+        const projectName = sanitizeProjectName(document.getElementById("npNameFreeText").value);
+        const intakeStatus = document.getElementById("npIntakeStatus");
+
+        if (!projectName) {
+            intakeStatus.textContent = "Please choose or enter a project name.";
+            intakeStatus.style.color = "red";
+            return;
+        }
+
+        intakeStatus.style.color = "#333";
+        intakeStatus.textContent = "Checking next available project number...";
+
+        try {
+            const token = await signInAndGetToken(sitesRequest, true);
+            if (!token) throw new Error("Could not get permission to access SharePoint.");
+
+            const combo = comboCode(service, location);
+            const numbering = await getNextProjectNumber(token, combo);
+
+            npState = {
+                service, location, projectName, combo, token,
+                yy: numbering.yy, nnn: numbering.nextNNN, warnings: numbering.warnings
+            };
+
+            renderConfirmStep();
+            showWizardStep("confirm");
+            intakeStatus.textContent = "";
+        } catch (err) {
+            console.error("Failed to compute next project number:", err);
+            intakeStatus.textContent = `Error: ${err.message}`;
+            intakeStatus.style.color = "red";
+        }
+    }
+
+    function renderConfirmStep() {
+        const { service, combo, yy, nnn, projectName } = npState;
+        const folderName = `${combo}${yy}${String(nnn).padStart(3, "0")}_${projectName}`;
+        const archivePath = ARCHIVE_BRANCH_PATH[combo];
+        const isSustainability = service === "Sustainability";
+        const item = getCurrentMailItem();
+        const attachments = (item && item.attachments) ? item.attachments.filter(a => !a.isInline) : [];
+
+        npState.folderName = folderName;
+        npState.archivePath = archivePath;
+        npState.bdRelativePath = isSustainability ? "Admin/BD" : "BD";
+
+        let filedDescription;
+        if (!item) {
+            filedDescription = "No email selected — folder will be created with an empty BD folder.";
+        } else {
+            filedDescription = `"${item.subject || "(no subject)"}"`;
+            filedDescription += attachments.length
+                ? ` + ${attachments.length} attachment(s): ${attachments.map(a => a.name).join(", ")}`
+                : " (no attachments)";
+        }
+
+        let html = `
+            <div class="summary-box">
+                <div class="row"><span class="label">New folder:</span> ${folderName}</div>
+                <div class="row"><span class="label">Library:</span> Summation Hub - Archieve Projects</div>
+                <div class="row"><span class="label">Branch:</span> ${archivePath}</div>
+                <div class="row"><span class="label">Structure:</span> ${isSustainability ? "Full copy of the SUPER00000_Project_Template folder" : "Blank folder with a single empty BD subfolder (no Energy template exists)"}</div>
+                <div class="row"><span class="label">Filed into ${npState.bdRelativePath}:</span> ${filedDescription}</div>
+            </div>
+        `;
+        if (npState.warnings && npState.warnings.length) {
+            html += `<div class="warning-box">${npState.warnings.map(w => `⚠ ${w}`).join("<br>")}</div>`;
+        }
+        document.getElementById("npConfirmSummary").innerHTML = html;
+        document.getElementById("npConfirmStatus").textContent = "";
+    }
+
+    async function createFolder(driveId, parentId, name, token) {
+        const createUrl = parentId
+            ? `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}/children`
+            : `https://graph.microsoft.com/v1.0/drives/${driveId}/root/children`;
+        const response = await fetch(createUrl, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ name, folder: {}, "@microsoft.graph.conflictBehavior": "fail" })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to create folder "${name}": ${response.status} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function getOrCreateBranchFolder(driveId, path, token) {
+        const existing = await graphGetOrNull(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodePath(path)}`, token);
+        if (existing) return existing.id;
+
+        const segments = path.split("/");
+        let parentId = null;
+        let builtPath = "";
+        for (const segment of segments) {
+            builtPath = builtPath ? `${builtPath}/${segment}` : segment;
+            let folder = await graphGetOrNull(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodePath(builtPath)}`, token);
+            if (!folder) folder = await createFolder(driveId, parentId, segment, token);
+            parentId = folder.id;
+        }
+        return parentId;
+    }
+
+    async function pollCopyMonitor(monitorUrl) {
+        if (!monitorUrl) return;
+        for (let attempt = 0; attempt < 30; attempt++) {
+            const resp = await fetch(monitorUrl);
+            const data = await resp.json();
+            if (data.status === "completed") return;
+            if (data.status === "failed") throw new Error(`Template copy failed: ${data.statusDescription || JSON.stringify(data)}`);
+            await sleep(2000);
+        }
+        throw new Error("Template copy is taking longer than expected — check the destination folder manually.");
+    }
+
+    async function copyTemplateFolder(destParentId, newName, token) {
+        const templateItem = await graphGetOrNull(
+            `https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/root:/${encodePath(TEMPLATE_PATH)}`,
+            token
+        );
+        if (!templateItem) throw new Error("Could not find the SUPER00000_Project_Template folder.");
+
+        const response = await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/items/${templateItem.id}/copy`,
+            {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ parentReference: { driveId: ARCHIVE_DRIVE_ID, id: destParentId }, name: newName })
+            }
+        );
+        if (response.status !== 202) {
+            const errorText = await response.text();
+            throw new Error(`Failed to start template copy: ${response.status} - ${errorText}`);
+        }
+        await pollCopyMonitor(response.headers.get("Location"));
+
+        const newItem = await graphGetOrNull(
+            `https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/root:/${encodePath(npState.archivePath)}/${encodeURIComponent(newName)}`,
+            token
+        );
+        if (!newItem) throw new Error("Template copy reported success, but the new folder could not be found.");
+        return newItem;
+    }
+
+    function getAttachmentContent(attachmentId) {
+        return new Promise((resolve, reject) => {
+            Office.context.mailbox.item.getAttachmentContentAsync(attachmentId, (result) => {
+                if (result.status === Office.AsyncResultStatus.Succeeded) resolve(result.value);
+                else reject(new Error(result.error ? result.error.message : "Failed to read attachment"));
+            });
+        });
+    }
+
+    async function uploadFileContent(driveId, parentId, filename, bytes, contentType, token) {
+        if (bytes.byteLength > 4 * 1024 * 1024) {
+            throw new Error(`"${filename}" is larger than 4MB — large-file upload isn't supported yet in this version.`);
+        }
+        const response = await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}:/${encodeURIComponent(filename)}:/content`,
+            { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": contentType }, body: bytes }
+        );
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Upload failed: ${response.status} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function fetchEmailAsEml(internetMessageId, mailToken) {
+        const findUrl = `https://graph.microsoft.com/v1.0/me/messages?$filter=internetMessageId eq '${encodeURIComponent(internetMessageId)}'&$select=id`;
+        const findData = await graphGetOrNull(findUrl, mailToken);
+        if (!findData || !findData.value || findData.value.length === 0) return null;
+
+        const response = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${findData.value[0].id}/$value`, {
+            headers: { Authorization: `Bearer ${mailToken}` }
+        });
+        if (!response.ok) throw new Error(`Could not download email content: ${response.status}`);
+        return response.arrayBuffer();
+    }
+
+    async function fileEmailAndAttachments(driveId, bdFolderId, token) {
+        const results = { email: null, attachments: [], errors: [] };
+        const item = getCurrentMailItem();
+        if (!item) return results;
+
+        try {
+            if (item.internetMessageId) {
+                const mailToken = await signInAndGetToken(graphRequest, true);
+                const emlBytes = await fetchEmailAsEml(item.internetMessageId, mailToken);
+                if (emlBytes) {
+                    const filename = sanitizeFileName(`${item.subject || "email"}.eml`);
+                    await uploadFileContent(driveId, bdFolderId, filename, new Uint8Array(emlBytes), "message/rfc822", token);
+                    results.email = filename;
+                }
+            }
+        } catch (err) {
+            results.errors.push(`Email: ${err.message}`);
+        }
+
+        const attachments = (item.attachments || []).filter(a => !a.isInline);
+        for (const attachment of attachments) {
+            try {
+                const content = await getAttachmentContent(attachment.id);
+                const filename = sanitizeFileName(attachment.name);
+                await uploadFileContent(driveId, bdFolderId, filename, base64ToBytes(content.content), "application/octet-stream", token);
+                results.attachments.push(filename);
+            } catch (err) {
+                results.errors.push(`Attachment "${attachment.name}": ${err.message}`);
+            }
+        }
+
+        return results;
+    }
+
+    function renderResultStep(success, errorMessage) {
+        const container = document.getElementById("npResultSummary");
+        if (errorMessage) {
+            container.innerHTML = `<div class="warning-box">Error: ${errorMessage}</div>`;
+            return;
+        }
+        const { folderName, webUrl, filingResults } = success;
+        let html = `<div class="summary-box">
+            <div class="row"><span class="label">Created:</span> ${folderName}</div>
+            <div class="row"><a href="${webUrl}" target="_blank">Open folder in SharePoint</a></div>`;
+        if (filingResults.email) html += `<div class="row">Filed email as: ${filingResults.email}</div>`;
+        if (filingResults.attachments.length) html += `<div class="row">Filed attachments: ${filingResults.attachments.join(", ")}</div>`;
+        if (filingResults.errors && filingResults.errors.length) {
+            html += `<div class="row" style="color:red;">Some items failed to file: ${filingResults.errors.join("; ")}</div>`;
+        }
+        html += `</div>`;
+        container.innerHTML = html;
+    }
+
+    async function handleConfirmCreate() {
+        const confirmStatus = document.getElementById("npConfirmStatus");
+        const confirmButton = document.getElementById("npConfirmButton");
+        confirmStatus.style.color = "#333";
+        confirmStatus.textContent = "Creating project folder...";
+        confirmButton.disabled = true;
+
+        try {
+            const token = npState.token;
+
+            // Race-condition mitigation: recheck immediately before writing (see brief §5).
+            const recheck = await getNextProjectNumber(token, npState.combo);
+            if (recheck.nextNNN !== npState.nnn) {
+                throw new Error("Someone else just took that project number. Please go back and try again.");
+            }
+
+            const branchFolderId = await getOrCreateBranchFolder(ARCHIVE_DRIVE_ID, npState.archivePath, token);
+
+            const existing = await graphGetOrNull(
+                `https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/root:/${encodePath(npState.archivePath)}/${encodeURIComponent(npState.folderName)}`,
+                token
+            );
+            if (existing) {
+                throw new Error(`A folder named "${npState.folderName}" already exists. Refusing to overwrite — please go back and retry.`);
+            }
+
+            let bdFolderId, projectFolderWebUrl;
+            if (npState.service === "Sustainability") {
+                confirmStatus.textContent = "Copying project template...";
+                const newFolder = await copyTemplateFolder(branchFolderId, npState.folderName, token);
+                projectFolderWebUrl = newFolder.webUrl;
+                const bdFolder = await graphGetOrNull(
+                    `https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/items/${newFolder.id}:/Admin/BD`,
+                    token
+                );
+                if (!bdFolder) throw new Error("Template was copied, but its Admin/BD folder could not be found — please check the folder manually.");
+                bdFolderId = bdFolder.id;
+            } else {
+                confirmStatus.textContent = "Creating blank project folder...";
+                const projectFolder = await createFolder(ARCHIVE_DRIVE_ID, branchFolderId, npState.folderName, token);
+                projectFolderWebUrl = projectFolder.webUrl;
+                const bdFolder = await createFolder(ARCHIVE_DRIVE_ID, projectFolder.id, "BD", token);
+                bdFolderId = bdFolder.id;
+            }
+
+            confirmStatus.textContent = "Filing email and attachments...";
+            const filingResults = await fileEmailAndAttachments(ARCHIVE_DRIVE_ID, bdFolderId, token);
+
+            renderResultStep({ folderName: npState.folderName, webUrl: projectFolderWebUrl, filingResults }, null);
+            showWizardStep("result");
+        } catch (err) {
+            console.error("Failed to create project folder:", err);
+            renderResultStep(null, err.message);
+            showWizardStep("result");
+        } finally {
+            confirmButton.disabled = false;
         }
     }
   </script>
