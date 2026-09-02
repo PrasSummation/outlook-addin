@@ -120,7 +120,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.0";
+    const APP_VERSION = "9.1";
 
     let msalInstance;
     let folderEntries = [];
@@ -151,6 +151,12 @@
         clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
         authority: "https://login.microsoftonline.com/ecb5f458-9548-4e8b-96f3-904f1828f931",
         redirectUri: window.location.origin + window.location.pathname
+      },
+      // localStorage (not the default sessionStorage) so sign-in survives the taskpane
+      // being closed/reopened, not just a single Outlook session.
+      cache: {
+        cacheLocation: "localStorage",
+        storeAuthStateInCookie: false
       }
     };
 
