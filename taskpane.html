@@ -29,7 +29,7 @@
 
     #selectedInfo { margin-top: 10px; font-size: 12px; color: #555; }
     #createMailboxSection { display: none; }
-    #createMailboxSection .hint { font-size: 11px; color: #888; margin-top: -6px; }
+    .hint { font-size: 11px; color: #888; margin-top: -6px; margin-bottom: 10px; }
 
     #topActions { display: flex; justify-content: flex-end; }
     .small-button { width: auto; margin: 0; padding: 4px 10px; font-size: 12px; }
@@ -120,7 +120,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.1";
+    const APP_VERSION = "9.2";
 
     let msalInstance;
     let folderEntries = [];
@@ -842,7 +842,13 @@
         const { folderName, webUrl, filingResults } = success;
         let html = `<div class="summary-box">
             <div class="row"><span class="label">Created:</span> ${folderName}</div>
-            <div class="row"><a href="${webUrl}" target="_blank">Open folder in SharePoint</a></div>`;
+            <div class="row">
+                <a href="${webUrl}" target="_blank">Open folder in SharePoint</a>
+                &nbsp;|&nbsp;
+                <button type="button" id="npCopyLinkButton" class="small-button" style="display:inline-block;">Copy Folder Link</button>
+                <span id="npCopyLinkStatus" style="font-size:11px; color:#888; margin-left:6px;"></span>
+            </div>
+            <div class="hint">Tip: paste the copied link into File Explorer's address bar to open it locally, if this library is synced via OneDrive on this PC.</div>`;
         if (filingResults.email) html += `<div class="row">Filed email as: ${filingResults.email}</div>`;
         if (filingResults.attachments.length) html += `<div class="row">Filed attachments: ${filingResults.attachments.join(", ")}</div>`;
         if (filingResults.errors && filingResults.errors.length) {
@@ -850,6 +856,19 @@
         }
         html += `</div>`;
         container.innerHTML = html;
+
+        const copyButton = document.getElementById("npCopyLinkButton");
+        if (copyButton) copyButton.addEventListener("click", () => copyFolderLink(webUrl));
+    }
+
+    async function copyFolderLink(url) {
+        const status = document.getElementById("npCopyLinkStatus");
+        try {
+            await navigator.clipboard.writeText(url);
+            if (status) status.textContent = "Copied!";
+        } catch (err) {
+            if (status) status.textContent = "Could not copy — select and copy the link manually.";
+        }
     }
 
     async function handleConfirmCreate() {
