@@ -18,7 +18,7 @@
     #refreshButton { position: absolute; bottom: 5px; left: 20px; background: none; border: none; font-size: 16px; color: #888; cursor: pointer; }
     #refreshButton:hover { color: #000; }
 
-    #folderList { border: 1px solid #ccc; border-radius: 4px; max-height: 350px; overflow-y: auto; margin-top: 5px; }
+    #folderList, #cvFolderList { border: 1px solid #ccc; border-radius: 4px; max-height: 350px; overflow-y: auto; margin-top: 5px; }
     .folder-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid #eee; font-size: 13px; }
     .folder-item:last-child { border-bottom: none; }
     .folder-item:hover { background-color: #f2f7f2; }
@@ -31,7 +31,7 @@
     #createMailboxSection { display: none; }
     .hint { font-size: 11px; color: #888; margin-top: -6px; margin-bottom: 10px; }
 
-    #topActions { display: flex; justify-content: flex-end; }
+    #topActions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
     .small-button { width: auto; margin: 0; padding: 4px 10px; font-size: 12px; }
     .secondary-button { background-color: #888; }
 
@@ -61,7 +61,8 @@
 
   <div id="appBody" style="display: none;">
     <div id="topActions">
-      <button id="newProjectButton" class="small-button">+ New Project</button>
+      <button id="newProjectButton" class="small-button">+ New BD Project</button>
+      <button id="convertProjectButton" class="small-button">Convert BD to Project Folder</button>
     </div>
 
     <div id="folderBrowser">
@@ -114,18 +115,43 @@
         <button id="npStartOverButton">Start Another</button>
       </div>
     </div>
+
+    <div id="convertWizard" style="display: none;">
+      <button id="cvBackToBrowserButton" class="small-button secondary-button">&larr; Back</button>
+
+      <div id="cvStepBrowse">
+        <label for="cvFilterBox">Filter Archive Project Folders:</label>
+        <input type="text" id="cvFilterBox" placeholder="Type to filter..." />
+        <div id="cvFolderList"></div>
+        <div id="cvBrowseStatus"></div>
+      </div>
+
+      <div id="cvStepConfirm" style="display: none;">
+        <div id="cvConfirmSummary"></div>
+        <div id="cvConfirmStatus"></div>
+        <button id="cvConfirmButton">Confirm &amp; Convert</button>
+        <button id="cvBackToBrowseButton" class="secondary-button">&larr; Choose a Different Folder</button>
+      </div>
+
+      <div id="cvStepResult" style="display: none;">
+        <div id="cvResultSummary"></div>
+        <button id="cvStartOverButton">Convert Another</button>
+      </div>
+    </div>
   </div>
 
   <button id="refreshButton" title="Refresh Add-in">&#x21bb;</button>
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.2";
+    const APP_VERSION = "9.3";
 
     let msalInstance;
     let folderEntries = [];
     let selectedEntry = null;
     let npState = {};
+    let cvState = {};
+    let archiveFolderEntries = [];
 
     const SITE_ID = "summationptyltd.sharepoint.com,b0a8b5e8-0c27-4b46-a97f-e9f7668c3021,039ea15c-5b24-4eea-b48a-9f4e61e9439c";
     const ACTIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5wp-OK02_E3RbZkRH_jE_Lr";
@@ -187,6 +213,12 @@
         document.getElementById("npBackToIntakeButton").addEventListener("click", () => showWizardStep("intake"));
         document.getElementById("npConfirmButton").addEventListener("click", handleConfirmCreate);
         document.getElementById("npStartOverButton").addEventListener("click", openNewProjectWizard);
+        document.getElementById("convertProjectButton").addEventListener("click", openConvertWizard);
+        document.getElementById("cvBackToBrowserButton").addEventListener("click", closeConvertWizard);
+        document.getElementById("cvFilterBox").addEventListener("input", () => renderArchiveFolderList(document.getElementById("cvFilterBox").value));
+        document.getElementById("cvBackToBrowseButton").addEventListener("click", () => showConvertStep("browse"));
+        document.getElementById("cvConfirmButton").addEventListener("click", handleConvertConfirm);
+        document.getElementById("cvStartOverButton").addEventListener("click", openConvertWizard);
 
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
@@ -502,6 +534,7 @@
     function openNewProjectWizard() {
         document.getElementById("folderBrowser").style.display = "none";
         document.getElementById("newProjectButton").style.display = "none";
+        document.getElementById("convertProjectButton").style.display = "none";
         document.getElementById("newProjectWizard").style.display = "block";
         npState = {};
         document.getElementById("npNameFreeText").value = "";
@@ -514,6 +547,7 @@
         document.getElementById("newProjectWizard").style.display = "none";
         document.getElementById("folderBrowser").style.display = "block";
         document.getElementById("newProjectButton").style.display = "block";
+        document.getElementById("convertProjectButton").style.display = "block";
     }
 
     function showWizardStep(step) {
@@ -858,11 +892,11 @@
         container.innerHTML = html;
 
         const copyButton = document.getElementById("npCopyLinkButton");
-        if (copyButton) copyButton.addEventListener("click", () => copyFolderLink(webUrl));
+        if (copyButton) copyButton.addEventListener("click", () => copyLinkToClipboard(webUrl, "npCopyLinkStatus"));
     }
 
-    async function copyFolderLink(url) {
-        const status = document.getElementById("npCopyLinkStatus");
+    async function copyLinkToClipboard(url, statusElementId) {
+        const status = document.getElementById(statusElementId);
         try {
             await navigator.clipboard.writeText(url);
             if (status) status.textContent = "Copied!";
@@ -925,6 +959,257 @@
             console.error("Failed to create project folder:", err);
             renderResultStep(null, err.message);
             showWizardStep("result");
+        } finally {
+            confirmButton.disabled = false;
+        }
+    }
+
+    // ---- Convert BD to Project Folder wizard ----
+    // Graph's move (PATCH parentReference) only works within a single drive. Active and
+    // Archive are two different drives, so "converting" is copy into Active, verify it
+    // landed, then delete the Archive original as a separate step.
+
+    function openConvertWizard() {
+        document.getElementById("folderBrowser").style.display = "none";
+        document.getElementById("newProjectButton").style.display = "none";
+        document.getElementById("convertProjectButton").style.display = "none";
+        document.getElementById("convertWizard").style.display = "block";
+        cvState = {};
+        document.getElementById("cvFilterBox").value = "";
+        showConvertStep("browse");
+        loadArchiveProjectFolders();
+    }
+
+    function closeConvertWizard() {
+        document.getElementById("convertWizard").style.display = "none";
+        document.getElementById("folderBrowser").style.display = "block";
+        document.getElementById("newProjectButton").style.display = "block";
+        document.getElementById("convertProjectButton").style.display = "block";
+    }
+
+    function showConvertStep(step) {
+        document.getElementById("cvStepBrowse").style.display = step === "browse" ? "block" : "none";
+        document.getElementById("cvStepConfirm").style.display = step === "confirm" ? "block" : "none";
+        document.getElementById("cvStepResult").style.display = step === "result" ? "block" : "none";
+    }
+
+    async function loadArchiveProjectFolders() {
+        const status = document.getElementById("cvBrowseStatus");
+        status.style.color = "#333";
+        status.textContent = "Loading Archive project folders...";
+        try {
+            const token = await signInAndGetToken(sitesRequest, true);
+            if (!token) throw new Error("Could not get permission to access SharePoint.");
+            cvState.token = token;
+
+            const combos = Object.keys(ARCHIVE_BRANCH_PATH);
+            const results = await Promise.all(combos.map(async combo => {
+                const archivePath = ARCHIVE_BRANCH_PATH[combo];
+                const folders = await listFolders(ARCHIVE_DRIVE_ID, archivePath, token);
+                return folders
+                    .filter(f => !/template/i.test(f.name))
+                    .map(f => ({ name: f.name, combo, archivePath }));
+            }));
+
+            archiveFolderEntries = results.flat().sort((a, b) => a.name.localeCompare(b.name));
+            renderArchiveFolderList(document.getElementById("cvFilterBox").value);
+            status.textContent = "";
+        } catch (err) {
+            console.error("Failed to load Archive project folders:", err);
+            status.textContent = `Error: ${err.message}`;
+            status.style.color = "red";
+        }
+    }
+
+    function renderArchiveFolderList(filter) {
+        const list = document.getElementById("cvFolderList");
+        list.innerHTML = "";
+        const normalizedFilter = (filter || "").toLowerCase();
+        const filtered = archiveFolderEntries.filter(entry => entry.name.toLowerCase().includes(normalizedFilter));
+
+        if (filtered.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "empty-message";
+            empty.textContent = "No matching Archive project folders found.";
+            list.appendChild(empty);
+            return;
+        }
+
+        filtered.forEach(entry => {
+            const item = document.createElement("div");
+            item.className = "folder-item";
+
+            const name = document.createElement("span");
+            name.className = "name";
+            name.textContent = entry.name;
+            item.appendChild(name);
+
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = entry.combo;
+            item.appendChild(tag);
+
+            item.title = `${entry.archivePath}/${entry.name}`;
+            item.addEventListener("click", () => selectArchiveFolderForConversion(entry));
+
+            list.appendChild(item);
+        });
+    }
+
+    async function selectArchiveFolderForConversion(entry) {
+        cvState.selectedEntry = entry;
+        cvState.destPath = ACTIVE_BRANCH_PATH[entry.combo];
+        const confirmStatus = document.getElementById("cvConfirmStatus");
+        const confirmButton = document.getElementById("cvConfirmButton");
+        document.getElementById("cvConfirmSummary").innerHTML = "";
+        confirmStatus.style.color = "#333";
+        confirmStatus.textContent = "Checking destination...";
+        confirmButton.disabled = true;
+        showConvertStep("confirm");
+
+        try {
+            const token = cvState.token;
+            const [destBranchFolder, destExisting] = await Promise.all([
+                graphGetOrNull(`https://graph.microsoft.com/v1.0/drives/${ACTIVE_DRIVE_ID}/root:/${encodePath(cvState.destPath)}`, token),
+                graphGetOrNull(`https://graph.microsoft.com/v1.0/drives/${ACTIVE_DRIVE_ID}/root:/${encodePath(cvState.destPath)}/${encodeURIComponent(entry.name)}`, token)
+            ]);
+
+            cvState.branchNeedsCreating = !destBranchFolder;
+            cvState.destinationExists = !!destExisting;
+
+            renderConvertConfirmSummary();
+            confirmStatus.textContent = "";
+            confirmButton.disabled = cvState.destinationExists;
+        } catch (err) {
+            console.error("Failed to check conversion destination:", err);
+            confirmStatus.textContent = `Error: ${err.message}`;
+            confirmStatus.style.color = "red";
+        }
+    }
+
+    function renderConvertConfirmSummary() {
+        const { selectedEntry, destPath, branchNeedsCreating, destinationExists } = cvState;
+        let html = `
+            <div class="summary-box">
+                <div class="row"><span class="label">Folder:</span> ${selectedEntry.name}</div>
+                <div class="row"><span class="label">From:</span> Summation Hub - Archieve Projects / ${selectedEntry.archivePath}</div>
+                <div class="row"><span class="label">To:</span> Summation Hub - Active Projects / ${destPath}${branchNeedsCreating ? " (branch folder will be created)" : ""}</div>
+                <div class="row">The folder is copied into Active first, then removed from Archive once the copy is confirmed to have landed.</div>
+            </div>
+        `;
+        if (destinationExists) {
+            html += `<div class="warning-box">A folder named "${selectedEntry.name}" already exists at that location in Active. Refusing to convert — remove or rename it first.</div>`;
+        }
+        document.getElementById("cvConfirmSummary").innerHTML = html;
+    }
+
+    async function copyFolderAcrossDrives(sourceDriveId, sourceItemId, destDriveId, destParentId, newName, token) {
+        const response = await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${sourceDriveId}/items/${sourceItemId}/copy`,
+            {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ parentReference: { driveId: destDriveId, id: destParentId }, name: newName })
+            }
+        );
+        if (response.status !== 202) {
+            const errorText = await response.text();
+            throw new Error(`Failed to start copy: ${response.status} - ${errorText}`);
+        }
+        await pollCopyMonitor(response.headers.get("Location"));
+    }
+
+    async function deleteItem(driveId, itemId, token) {
+        const response = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`${response.status} - ${errorText}`);
+        }
+    }
+
+    function renderConvertResultStep(success, errorMessage) {
+        const container = document.getElementById("cvResultSummary");
+        if (errorMessage) {
+            container.innerHTML = `<div class="warning-box">Error: ${errorMessage}</div>`;
+            return;
+        }
+        const { folderName, webUrl, deleteError } = success;
+        let html = `<div class="summary-box">
+            <div class="row"><span class="label">Converted:</span> ${folderName}</div>
+            <div class="row">
+                <a href="${webUrl}" target="_blank">Open folder in SharePoint (Active)</a>
+                &nbsp;|&nbsp;
+                <button type="button" id="cvCopyLinkButton" class="small-button" style="display:inline-block;">Copy Folder Link</button>
+                <span id="cvCopyLinkStatus" style="font-size:11px; color:#888; margin-left:6px;"></span>
+            </div>`;
+        if (deleteError) {
+            html += `<div class="warning-box">Copied to Active successfully, but could not remove the original from Archive (${deleteError}). Please delete "${folderName}" from Archive manually to avoid a duplicate.</div>`;
+        } else {
+            html += `<div class="row">Original removed from Archive.</div>`;
+        }
+        html += `</div>`;
+        container.innerHTML = html;
+
+        const copyButton = document.getElementById("cvCopyLinkButton");
+        if (copyButton) copyButton.addEventListener("click", () => copyLinkToClipboard(webUrl, "cvCopyLinkStatus"));
+    }
+
+    async function handleConvertConfirm() {
+        const { selectedEntry, destPath, token } = cvState;
+        const confirmStatus = document.getElementById("cvConfirmStatus");
+        const confirmButton = document.getElementById("cvConfirmButton");
+        confirmStatus.style.color = "#333";
+        confirmButton.disabled = true;
+
+        try {
+            // Race-condition mitigation: recheck immediately before writing.
+            const destExisting = await graphGetOrNull(
+                `https://graph.microsoft.com/v1.0/drives/${ACTIVE_DRIVE_ID}/root:/${encodePath(destPath)}/${encodeURIComponent(selectedEntry.name)}`,
+                token
+            );
+            if (destExisting) {
+                throw new Error(`A folder named "${selectedEntry.name}" already exists in Active. Refusing to convert.`);
+            }
+
+            const sourceItem = await graphGetOrNull(
+                `https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/root:/${encodePath(selectedEntry.archivePath)}/${encodeURIComponent(selectedEntry.name)}`,
+                token
+            );
+            if (!sourceItem) {
+                throw new Error(`Could not find "${selectedEntry.name}" in Archive anymore — it may have already been converted.`);
+            }
+
+            confirmStatus.textContent = "Preparing Active branch folder...";
+            const destBranchFolderId = await getOrCreateBranchFolder(ACTIVE_DRIVE_ID, destPath, token);
+
+            confirmStatus.textContent = "Copying folder to Active (this can take a while for large folders)...";
+            await copyFolderAcrossDrives(ARCHIVE_DRIVE_ID, sourceItem.id, ACTIVE_DRIVE_ID, destBranchFolderId, selectedEntry.name, token);
+
+            const newActiveItem = await graphGetOrNull(
+                `https://graph.microsoft.com/v1.0/drives/${ACTIVE_DRIVE_ID}/root:/${encodePath(destPath)}/${encodeURIComponent(selectedEntry.name)}`,
+                token
+            );
+            if (!newActiveItem) {
+                throw new Error("Copy reported success, but the folder could not be found in Active. Nothing was deleted from Archive — please check manually.");
+            }
+
+            confirmStatus.textContent = "Removing original from Archive...";
+            let deleteError = null;
+            try {
+                await deleteItem(ARCHIVE_DRIVE_ID, sourceItem.id, token);
+            } catch (err) {
+                deleteError = err.message;
+            }
+
+            renderConvertResultStep({ folderName: selectedEntry.name, webUrl: newActiveItem.webUrl, deleteError }, null);
+            showConvertStep("result");
+        } catch (err) {
+            console.error("Failed to convert folder:", err);
+            renderConvertResultStep(null, err.message);
+            showConvertStep("result");
         } finally {
             confirmButton.disabled = false;
         }
