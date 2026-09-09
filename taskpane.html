@@ -120,6 +120,11 @@
       <button id="cvBackToBrowserButton" class="small-button secondary-button">&larr; Back</button>
 
       <div id="cvStepBrowse">
+        <label>Service:</label>
+        <div class="radio-row">
+          <label><input type="radio" name="cvService" value="Sustainability" checked /> Sustainability</label>
+          <label><input type="radio" name="cvService" value="Energy" /> Energy</label>
+        </div>
         <label for="cvFilterBox">Filter Archive Project Folders:</label>
         <input type="text" id="cvFilterBox" placeholder="Type to filter..." />
         <div id="cvFolderList"></div>
@@ -144,7 +149,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.4";
+    const APP_VERSION = "9.5";
 
     let msalInstance;
     let folderEntries = [];
@@ -216,6 +221,9 @@
         document.getElementById("convertProjectButton").addEventListener("click", openConvertWizard);
         document.getElementById("cvBackToBrowserButton").addEventListener("click", closeConvertWizard);
         document.getElementById("cvFilterBox").addEventListener("input", () => renderArchiveFolderList(document.getElementById("cvFilterBox").value));
+        document.querySelectorAll('input[name="cvService"]').forEach(el =>
+            el.addEventListener("change", () => renderArchiveFolderList(document.getElementById("cvFilterBox").value))
+        );
         document.getElementById("cvBackToBrowseButton").addEventListener("click", () => showConvertStep("browse"));
         document.getElementById("cvConfirmButton").addEventListener("click", handleConvertConfirm);
         document.getElementById("cvStartOverButton").addEventListener("click", openConvertWizard);
@@ -1022,8 +1030,13 @@
     function renderArchiveFolderList(filter) {
         const list = document.getElementById("cvFolderList");
         list.innerHTML = "";
+        const selectedService = document.querySelector('input[name="cvService"]:checked').value;
+        const servicePrefix = selectedService === "Energy" ? "EN" : "SU";
         const normalizedFilter = (filter || "").toLowerCase();
-        const filtered = archiveFolderEntries.filter(entry => entry.name.toLowerCase().includes(normalizedFilter));
+        const filtered = archiveFolderEntries
+            .filter(entry => entry.combo.startsWith(servicePrefix))
+            .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
+            .sort((a, b) => b.name.localeCompare(a.name));
 
         if (filtered.length === 0) {
             const empty = document.createElement("div");
