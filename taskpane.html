@@ -31,7 +31,7 @@
     #createMailboxSection { display: none; }
     .hint { font-size: 11px; color: #888; margin-top: -6px; margin-bottom: 10px; }
 
-    #topActions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+    #topActions { display: block; }
     .small-button { width: auto; margin: 0; padding: 4px 10px; font-size: 12px; }
     .secondary-button { background-color: #888; }
 
@@ -61,11 +61,11 @@
 
   <div id="appBody" style="display: none;">
     <div id="topActions">
-      <button id="newProjectButton" class="small-button">+ New BD Project</button>
-      <button id="convertProjectButton" class="small-button">Convert BD to Project Folder</button>
+      <button id="newProjectButton">+ New BD Project</button>
+      <button id="convertProjectButton">Convert BD to Project Folder</button>
     </div>
 
-    <div id="folderBrowser">
+    <div id="folderBrowser" style="display: none;">
       <label for="filterBox">Filter Projects / Folders:</label>
       <input type="text" id="filterBox" placeholder="Type to filter..." />
       <div id="folderList"></div>
@@ -144,7 +144,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.3";
+    const APP_VERSION = "9.4";
 
     let msalInstance;
     let folderEntries = [];
@@ -545,7 +545,6 @@
 
     function closeNewProjectWizard() {
         document.getElementById("newProjectWizard").style.display = "none";
-        document.getElementById("folderBrowser").style.display = "block";
         document.getElementById("newProjectButton").style.display = "block";
         document.getElementById("convertProjectButton").style.display = "block";
     }
@@ -982,7 +981,6 @@
 
     function closeConvertWizard() {
         document.getElementById("convertWizard").style.display = "none";
-        document.getElementById("folderBrowser").style.display = "block";
         document.getElementById("newProjectButton").style.display = "block";
         document.getElementById("convertProjectButton").style.display = "block";
     }
