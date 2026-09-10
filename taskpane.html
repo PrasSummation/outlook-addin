@@ -168,6 +168,7 @@
       <div class="section-label">Actions</div>
       <button id="newProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.5"><path d="M7 2v10M2 7h10"/></svg></span><span class="txt"><b>New BD project</b><i>Allocate the next number and file this email</i></span></span></button>
       <button id="convertProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2 7h10M8.5 3.5 12 7l-3.5 3.5"/></svg></span><span class="txt"><b>Convert BD to project</b><i>Move an Archive folder into Active</i></span></span></button>
+      <button id="convertToArchiveButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M12 7H2M5.5 3.5 2 7l3.5 3.5"/></svg></span><span class="txt"><b>Convert Active to Archive</b><i>Move a project folder from Active into Archive</i></span></span></button>
     </div>
 
     <div id="folderBrowser" style="display: none;">
@@ -248,19 +249,49 @@
         <button id="cvStartOverButton">Convert Another</button>
       </div>
     </div>
+
+    <div id="convertToArchiveWizard" style="display: none;">
+      <button id="caBackToBrowserButton" class="small-button secondary-button">&larr; Back</button>
+
+      <div id="caStepBrowse">
+        <label>Service</label>
+        <div class="radio-row">
+          <label><input type="radio" name="caService" value="Sustainability" checked /> Sustainability</label>
+          <label><input type="radio" name="caService" value="Energy" /> Energy</label>
+        </div>
+        <label for="caFilterBox">Filter active project folders</label>
+        <input type="text" id="caFilterBox" placeholder="Type to filter..." />
+        <div id="caFolderList"></div>
+        <div id="caBrowseStatus"></div>
+      </div>
+
+      <div id="caStepConfirm" style="display: none;">
+        <div id="caConfirmSummary"></div>
+        <div id="caConfirmStatus"></div>
+        <button id="caConfirmButton">Confirm &amp; Convert</button>
+        <button id="caBackToBrowseButton" class="secondary-button">&larr; Choose a Different Folder</button>
+      </div>
+
+      <div id="caStepResult" style="display: none;">
+        <div id="caResultSummary"></div>
+        <button id="caStartOverButton">Convert Another</button>
+      </div>
+    </div>
   </div>
 
   <button id="refreshButton" title="Refresh Add-in"><span aria-hidden="true">&#x21bb;</span>Refresh</button>
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.6";
+    const APP_VERSION = "9.7";
 
     let msalInstance;
     let folderEntries = [];
     let selectedEntry = null;
     let npState = {};
     let cvState = {};
+    let caState = {};
+    let activeFolderEntries = [];
     let archiveFolderEntries = [];
 
     const SITE_ID = "summationptyltd.sharepoint.com,b0a8b5e8-0c27-4b46-a97f-e9f7668c3021,039ea15c-5b24-4eea-b48a-9f4e61e9439c";
@@ -332,6 +363,15 @@
         document.getElementById("cvBackToBrowseButton").addEventListener("click", () => showConvertStep("browse"));
         document.getElementById("cvConfirmButton").addEventListener("click", handleConvertConfirm);
         document.getElementById("cvStartOverButton").addEventListener("click", openConvertWizard);
+        document.getElementById("convertToArchiveButton").addEventListener("click", openConvertToArchiveWizard);
+        document.getElementById("caBackToBrowserButton").addEventListener("click", closeConvertToArchiveWizard);
+        document.getElementById("caFilterBox").addEventListener("input", () => renderActiveFolderList(document.getElementById("caFilterBox").value));
+        document.querySelectorAll('input[name="caService"]').forEach(el =>
+            el.addEventListener("change", () => renderActiveFolderList(document.getElementById("caFilterBox").value))
+        );
+        document.getElementById("caBackToBrowseButton").addEventListener("click", () => showConvertToArchiveStep("browse"));
+        document.getElementById("caConfirmButton").addEventListener("click", handleConvertToArchiveConfirm);
+        document.getElementById("caStartOverButton").addEventListener("click", openConvertToArchiveWizard);
 
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
@@ -648,6 +688,7 @@
         document.getElementById("folderBrowser").style.display = "none";
         document.getElementById("newProjectButton").style.display = "none";
         document.getElementById("convertProjectButton").style.display = "none";
+        document.getElementById("convertToArchiveButton").style.display = "none";
         document.getElementById("newProjectWizard").style.display = "block";
         npState = {};
         document.getElementById("npNameFreeText").value = "";
@@ -660,6 +701,7 @@
         document.getElementById("newProjectWizard").style.display = "none";
         document.getElementById("newProjectButton").style.display = "block";
         document.getElementById("convertProjectButton").style.display = "block";
+        document.getElementById("convertToArchiveButton").style.display = "block";
     }
 
     function showWizardStep(step) {
@@ -1085,6 +1127,7 @@
         document.getElementById("folderBrowser").style.display = "none";
         document.getElementById("newProjectButton").style.display = "none";
         document.getElementById("convertProjectButton").style.display = "none";
+        document.getElementById("convertToArchiveButton").style.display = "none";
         document.getElementById("convertWizard").style.display = "block";
         cvState = {};
         document.getElementById("cvFilterBox").value = "";
@@ -1096,6 +1139,7 @@
         document.getElementById("convertWizard").style.display = "none";
         document.getElementById("newProjectButton").style.display = "block";
         document.getElementById("convertProjectButton").style.display = "block";
+        document.getElementById("convertToArchiveButton").style.display = "block";
     }
 
     function showConvertStep(step) {
@@ -1326,6 +1370,266 @@
             console.error("Failed to convert folder:", err);
             renderConvertResultStep(null, err.message);
             showConvertStep("result");
+        } finally {
+            confirmButton.disabled = false;
+        }
+    }
+
+    // ---- Convert Active to Archive wizard ----
+    // Mirror of the Convert-to-Active wizard, reversed direction. Also detects (but does
+    // not act on) an associated shared mailbox — un-mapping/disabling it is an Exchange-
+    // or account-level change that needs an explicit decision, not something safe to do
+    // silently as a side effect of a folder move.
+
+    function openConvertToArchiveWizard() {
+        document.getElementById("folderBrowser").style.display = "none";
+        document.getElementById("newProjectButton").style.display = "none";
+        document.getElementById("convertProjectButton").style.display = "none";
+        document.getElementById("convertToArchiveButton").style.display = "none";
+        document.getElementById("convertToArchiveWizard").style.display = "block";
+        caState = {};
+        document.getElementById("caFilterBox").value = "";
+        showConvertToArchiveStep("browse");
+        loadActiveProjectFolders();
+    }
+
+    function closeConvertToArchiveWizard() {
+        document.getElementById("convertToArchiveWizard").style.display = "none";
+        document.getElementById("newProjectButton").style.display = "block";
+        document.getElementById("convertProjectButton").style.display = "block";
+        document.getElementById("convertToArchiveButton").style.display = "block";
+    }
+
+    function showConvertToArchiveStep(step) {
+        document.getElementById("caStepBrowse").style.display = step === "browse" ? "block" : "none";
+        document.getElementById("caStepConfirm").style.display = step === "confirm" ? "block" : "none";
+        document.getElementById("caStepResult").style.display = step === "result" ? "block" : "none";
+    }
+
+    async function loadActiveProjectFolders() {
+        const status = document.getElementById("caBrowseStatus");
+        status.style.color = "#333";
+        status.textContent = "Loading Active project folders...";
+        try {
+            const token = await signInAndGetToken(sitesRequest, true);
+            if (!token) throw new Error("Could not get permission to access SharePoint.");
+            caState.token = token;
+
+            const combos = Object.keys(ACTIVE_BRANCH_PATH);
+            const results = await Promise.all(combos.map(async combo => {
+                const activePath = ACTIVE_BRANCH_PATH[combo];
+                const folders = await listFolders(ACTIVE_DRIVE_ID, activePath, token);
+                return folders
+                    .filter(f => !/template/i.test(f.name))
+                    .map(f => ({ name: f.name, combo, activePath }));
+            }));
+
+            activeFolderEntries = results.flat().sort((a, b) => a.name.localeCompare(b.name));
+            renderActiveFolderList(document.getElementById("caFilterBox").value);
+            status.textContent = "";
+        } catch (err) {
+            console.error("Failed to load Active project folders:", err);
+            status.textContent = `Error: ${err.message}`;
+            status.style.color = "red";
+        }
+    }
+
+    function renderActiveFolderList(filter) {
+        const list = document.getElementById("caFolderList");
+        list.innerHTML = "";
+        const selectedService = document.querySelector('input[name="caService"]:checked').value;
+        const servicePrefix = selectedService === "Energy" ? "EN" : "SU";
+        const normalizedFilter = (filter || "").toLowerCase();
+        const filtered = activeFolderEntries
+            .filter(entry => entry.combo.startsWith(servicePrefix))
+            .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
+            .sort((a, b) => b.name.localeCompare(a.name));
+
+        if (filtered.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "empty-message";
+            empty.textContent = "No matching Active project folders found.";
+            list.appendChild(empty);
+            return;
+        }
+
+        filtered.forEach(entry => {
+            const item = document.createElement("div");
+            item.className = "folder-item";
+
+            const name = document.createElement("span");
+            name.className = "name";
+            name.textContent = entry.name;
+            item.appendChild(name);
+
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = entry.combo;
+            item.appendChild(tag);
+
+            item.title = `${entry.activePath}/${entry.name}`;
+            item.addEventListener("click", () => selectActiveFolderForConversion(entry));
+
+            list.appendChild(item);
+        });
+    }
+
+    function expectedMailboxUpn(folderName) {
+        const mailNickname = folderName.replace(/[^a-zA-Z0-9_]/g, '');
+        return mailNickname ? `${mailNickname}@summation.au` : null;
+    }
+
+    // Detection only — reuses the naming convention from Create New Shared Mailbox.
+    async function findAssociatedSharedMailbox(folderName) {
+        const upn = expectedMailboxUpn(folderName);
+        if (!upn) return null;
+        try {
+            const mailToken = await signInAndGetToken(graphRequest, true);
+            return await graphGetOrNull(
+                `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}?$select=id,displayName,mail,userPrincipalName,accountEnabled`,
+                mailToken
+            );
+        } catch (err) {
+            console.error("Failed to check for an associated shared mailbox:", err);
+            return null;
+        }
+    }
+
+    async function selectActiveFolderForConversion(entry) {
+        caState.selectedEntry = entry;
+        caState.destPath = ARCHIVE_BRANCH_PATH[entry.combo];
+        const confirmStatus = document.getElementById("caConfirmStatus");
+        const confirmButton = document.getElementById("caConfirmButton");
+        document.getElementById("caConfirmSummary").innerHTML = "";
+        confirmStatus.style.color = "#333";
+        confirmStatus.textContent = "Checking destination...";
+        confirmButton.disabled = true;
+        showConvertToArchiveStep("confirm");
+
+        try {
+            const token = caState.token;
+            const [destBranchFolder, destExisting, sharedMailbox] = await Promise.all([
+                graphGetOrNull(`https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/root:/${encodePath(caState.destPath)}`, token),
+                graphGetOrNull(`https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/root:/${encodePath(caState.destPath)}/${encodeURIComponent(entry.name)}`, token),
+                findAssociatedSharedMailbox(entry.name)
+            ]);
+
+            caState.branchNeedsCreating = !destBranchFolder;
+            caState.destinationExists = !!destExisting;
+            caState.sharedMailbox = sharedMailbox;
+
+            renderConvertToArchiveConfirmSummary();
+            confirmStatus.textContent = "";
+            confirmButton.disabled = caState.destinationExists;
+        } catch (err) {
+            console.error("Failed to check conversion destination:", err);
+            confirmStatus.textContent = `Error: ${err.message}`;
+            confirmStatus.style.color = "red";
+        }
+    }
+
+    function renderConvertToArchiveConfirmSummary() {
+        const { selectedEntry, destPath, branchNeedsCreating, destinationExists, sharedMailbox } = caState;
+        let html = `
+            <div class="summary-box">
+                <div class="row"><span class="label">Folder:</span> ${selectedEntry.name}</div>
+                <div class="row"><span class="label">From:</span> Summation Hub - Active Projects / ${selectedEntry.activePath}</div>
+                <div class="row"><span class="label">To:</span> Summation Hub - Archieve Projects / ${destPath}${branchNeedsCreating ? " (branch folder will be created)" : ""}</div>
+                <div class="row">The folder is copied into Archive first, then removed from Active once the copy is confirmed to have landed.</div>
+            </div>
+        `;
+        if (sharedMailbox) {
+            html += `<div class="warning-box">A shared mailbox exists for this project (${sharedMailbox.mail || sharedMailbox.userPrincipalName}). This tool does not automatically disable or remove it — please handle that separately.</div>`;
+        }
+        if (destinationExists) {
+            html += `<div class="warning-box">A folder named "${selectedEntry.name}" already exists at that location in Archive. Refusing to convert — remove or rename it first.</div>`;
+        }
+        document.getElementById("caConfirmSummary").innerHTML = html;
+    }
+
+    function renderConvertToArchiveResultStep(success, errorMessage) {
+        const container = document.getElementById("caResultSummary");
+        if (errorMessage) {
+            container.innerHTML = `<div class="warning-box">Error: ${errorMessage}</div>`;
+            return;
+        }
+        const { folderName, webUrl, deleteError, sharedMailbox } = success;
+        let html = `<div class="summary-box">
+            <div class="row"><span class="label">Converted:</span> ${folderName}</div>
+            <div class="row">
+                <a href="${webUrl}" target="_blank">Open folder in SharePoint (Archive)</a>
+                &nbsp;|&nbsp;
+                <button type="button" id="caCopyLinkButton" class="small-button" style="display:inline-block;">Copy Folder Link</button>
+                <span id="caCopyLinkStatus" style="font-size:11px; color:#888; margin-left:6px;"></span>
+            </div>`;
+        if (deleteError) {
+            html += `<div class="warning-box">Copied to Archive successfully, but could not remove the original from Active (${deleteError}). Please delete "${folderName}" from Active manually to avoid a duplicate.</div>`;
+        } else {
+            html += `<div class="row">Original removed from Active.</div>`;
+        }
+        if (sharedMailbox) {
+            html += `<div class="warning-box">Note: the shared mailbox ${sharedMailbox.mail || sharedMailbox.userPrincipalName} is still associated with this project — no changes were made to it automatically.</div>`;
+        }
+        html += `</div>`;
+        container.innerHTML = html;
+
+        const copyButton = document.getElementById("caCopyLinkButton");
+        if (copyButton) copyButton.addEventListener("click", () => copyLinkToClipboard(webUrl, "caCopyLinkStatus"));
+    }
+
+    async function handleConvertToArchiveConfirm() {
+        const { selectedEntry, destPath, token, sharedMailbox } = caState;
+        const confirmStatus = document.getElementById("caConfirmStatus");
+        const confirmButton = document.getElementById("caConfirmButton");
+        confirmStatus.style.color = "#333";
+        confirmButton.disabled = true;
+
+        try {
+            // Race-condition mitigation: recheck immediately before writing.
+            const destExisting = await graphGetOrNull(
+                `https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/root:/${encodePath(destPath)}/${encodeURIComponent(selectedEntry.name)}`,
+                token
+            );
+            if (destExisting) {
+                throw new Error(`A folder named "${selectedEntry.name}" already exists in Archive. Refusing to convert.`);
+            }
+
+            const sourceItem = await graphGetOrNull(
+                `https://graph.microsoft.com/v1.0/drives/${ACTIVE_DRIVE_ID}/root:/${encodePath(selectedEntry.activePath)}/${encodeURIComponent(selectedEntry.name)}`,
+                token
+            );
+            if (!sourceItem) {
+                throw new Error(`Could not find "${selectedEntry.name}" in Active anymore — it may have already been converted.`);
+            }
+
+            confirmStatus.textContent = "Preparing Archive branch folder...";
+            const destBranchFolderId = await getOrCreateBranchFolder(ARCHIVE_DRIVE_ID, destPath, token);
+
+            confirmStatus.textContent = "Copying folder to Archive (this can take a while for large folders)...";
+            await copyFolderAcrossDrives(ACTIVE_DRIVE_ID, sourceItem.id, ARCHIVE_DRIVE_ID, destBranchFolderId, selectedEntry.name, token);
+
+            const newArchiveItem = await graphGetOrNull(
+                `https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/root:/${encodePath(destPath)}/${encodeURIComponent(selectedEntry.name)}`,
+                token
+            );
+            if (!newArchiveItem) {
+                throw new Error("Copy reported success, but the folder could not be found in Archive. Nothing was deleted from Active — please check manually.");
+            }
+
+            confirmStatus.textContent = "Removing original from Active...";
+            let deleteError = null;
+            try {
+                await deleteItem(ACTIVE_DRIVE_ID, sourceItem.id, token);
+            } catch (err) {
+                deleteError = err.message;
+            }
+
+            renderConvertToArchiveResultStep({ folderName: selectedEntry.name, webUrl: newArchiveItem.webUrl, deleteError, sharedMailbox }, null);
+            showConvertToArchiveStep("result");
+        } catch (err) {
+            console.error("Failed to convert folder to Archive:", err);
+            renderConvertToArchiveResultStep(null, err.message);
+            showConvertToArchiveStep("result");
         } finally {
             confirmButton.disabled = false;
         }
