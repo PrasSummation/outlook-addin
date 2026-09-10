@@ -1,0 +1,12 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "<connection string of the Function App's linked Storage Account>",
+    "FUNCTIONS_WORKER_RUNTIME": "powershell",
+
+    "EXO_APP_ID": "<client ID of the SEPARATE 'Summation Exchange Bridge' app registration - NOT the Summation Assistant sign-in app>",
+    "EXO_ORGANIZATION": "summationptyltd.onmicrosoft.com",
+    "EXO_CERT_THUMBPRINT": "<thumbprint of the certificate uploaded to this Function App's Certificates blade>",
+    "WEBSITE_LOAD_CERTIFICATES": "<same thumbprint as EXO_CERT_THUMBPRINT, so Azure loads it into the instance's cert store>"
+  }
+}

@@ -1,0 +1,3 @@
+@{
+    'ExchangeOnlineManagement' = '3.*'
+}
