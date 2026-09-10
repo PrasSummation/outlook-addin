@@ -6,52 +6,156 @@
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
   <script type="text/javascript" src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; padding-bottom: 25px; }
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-    .header .branding { font-size: 24px; font-weight: bold; color: #408F4E; }
-    .header img { height: 40px; }
-    label, input, button { display: block; margin-top: 10px; margin-bottom: 10px; width: 100%; box-sizing: border-box; }
-    button { padding: 8px; background-color: #408F4E; color: white; border: none; cursor: pointer; }
-    #signInPrompt button { width: 50%; margin: 20px auto; }
-    #statusMessage { margin-top: 10px; font-style: italic; color: #333; white-space: pre-wrap; }
-    #versionDisplay { position: absolute; bottom: 10px; right: 20px; font-size: 10px; color: #888; }
-    #refreshButton { position: absolute; bottom: 5px; left: 20px; background: none; border: none; font-size: 16px; color: #888; cursor: pointer; }
-    #refreshButton:hover { color: #000; }
+    /* ── Summation Assistant — brand shell (v9.5 logic untouched) ───────── */
+    :root{
+      --green:#408F4E; --green-dark:#2D6B38; --green-pale:#EDF7EE;
+      --grey-900:#2B2B2B; --grey-600:#646464; --grey-400:#909090;
+      --grey-500:#787878; --grey-300:#B4B4B4; --grey-200:#DCDCDC; --grey-100:#EFEFEF; --grey-50:#F7F7F7;
+      --font-display:'Bahnschrift','DIN Alternate','Segoe UI',sans-serif;
+      --font-body:'Calibri','Segoe UI',system-ui,sans-serif;
+      --font-mono:'Consolas','Courier New',monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;padding:76px 0 40px;background:#fff;font-family:var(--font-body);
+         font-size:13px;line-height:1.5;color:var(--grey-600);-webkit-font-smoothing:antialiased}
+    a{color:var(--green-dark);text-decoration:none}
+    a:hover{color:var(--green);text-decoration:underline}
+    hr{border:none;border-top:1px solid var(--grey-100);margin:18px 0}
+    #signInPrompt,#appBody{padding:16px 18px}
 
-    #folderList, #cvFolderList { border: 1px solid #ccc; border-radius: 4px; max-height: 350px; overflow-y: auto; margin-top: 5px; }
-    .folder-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid #eee; font-size: 13px; }
-    .folder-item:last-child { border-bottom: none; }
-    .folder-item:hover { background-color: #f2f7f2; }
-    .folder-item.selected { background-color: #dcecdd; }
-    .folder-item .tag { font-size: 10px; color: #888; margin-left: 8px; white-space: nowrap; }
-    .folder-item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .empty-message { padding: 10px; color: #888; font-style: italic; font-size: 13px; }
+    /* ── Brand band + intro ────────────────────────────────────────────── */
+    #brandBar{position:fixed;top:0;left:0;right:0;height:76px;background:var(--grey-900);
+      z-index:50;overflow:hidden;pointer-events:none;
+      animation:morphBlock 2100ms cubic-bezier(.4,0,.2,1) both}
+    #brandLockup{position:absolute;left:20px;top:22px;display:flex;align-items:center;gap:11px;
+      transform-origin:left top;animation:morphLockup 2100ms cubic-bezier(.4,0,.2,1) both}
+    #brandLockup img{width:28px;height:auto;display:block;
+      animation:symIn 560ms cubic-bezier(.2,.6,.2,1) both}
+    #brandWord{font-size:13px;font-weight:600;color:#fff;letter-spacing:.18em;
+      animation:wordIn 680ms cubic-bezier(.2,.6,.2,1) 200ms both}
+    #brandSub{display:flex;align-items:center;gap:8px;margin-top:4px;
+      animation:fadeIn 420ms ease 620ms both}
+    #brandSub span{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--grey-400)}
+    #brandSub i{flex:1;height:1px;background:var(--green);transform-origin:left;
+      animation:ruleIn 520ms cubic-bezier(.2,.6,.2,1) 700ms both}
+    #brandUser{position:absolute;right:20px;top:26px;display:flex;align-items:center;gap:6px;
+      font-size:10px;color:var(--grey-200);animation:fadeIn 420ms ease 1600ms both}
+    #brandUser b{flex:none;width:6px;height:6px;border-radius:50%;background:#5AAD68;
+      animation:dotPulse 3.6s ease-in-out 2.4s infinite}
 
-    #selectedInfo { margin-top: 10px; font-size: 12px; color: #555; }
-    #createMailboxSection { display: none; }
-    .hint { font-size: 11px; color: #888; margin-top: -6px; margin-bottom: 10px; }
+    @keyframes morphBlock{0%,52%{height:100vh}100%{height:76px}}
+    @keyframes morphLockup{
+      0%,52%{transform:translate(calc(50vw - 85% - 20px),calc(50vh - 85% - 22px)) scale(1.7)}
+      100%{transform:none}}
+    @keyframes symIn{from{opacity:0;transform:translateY(-6px) scale(.9)}to{opacity:1;transform:none}}
+    @keyframes wordIn{from{opacity:0;transform:translateX(-10px);letter-spacing:.34em}
+      to{opacity:1;transform:none;letter-spacing:.18em}}
+    @keyframes ruleIn{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    @keyframes dotPulse{0%,100%{opacity:1}50%{opacity:.3}}
+    @media (prefers-reduced-motion:reduce){
+      #brandBar,#brandLockup,#brandLockup img,#brandWord,#brandSub,#brandSub i,#brandUser,#brandUser b
+        {animation-duration:1ms!important;animation-delay:0ms!important}}
 
-    #topActions { display: block; }
-    .small-button { width: auto; margin: 0; padding: 4px 10px; font-size: 12px; }
-    .secondary-button { background-color: #888; }
+    /* ── Form primitives (same block layout the script expects) ────────── */
+    label{display:block;width:100%;margin:14px 0 6px;font-size:10px;letter-spacing:.09em;
+      text-transform:uppercase;color:var(--grey-400)}
+    input[type=text]{display:block;width:100%;margin:0 0 10px;padding:8px 10px;
+      font:400 13px/1.4 var(--font-body);color:var(--grey-900);background:#fff;
+      border:1.5px solid var(--grey-200);border-radius:4px}
+    input[type=text]:focus{outline:none;border-color:var(--green)}
+    button{display:block;width:100%;margin:0 0 9px;padding:10px 12px;
+      font:600 13px/1.2 var(--font-body);letter-spacing:.04em;color:#fff;
+      background:var(--green);border:1px solid var(--green);border-radius:4px;cursor:pointer;
+      transition:background 100ms ease,border-color 100ms ease}
+    button:hover{background:var(--green-dark);border-color:var(--green-dark)}
+    button:disabled{background:var(--grey-100);border-color:var(--grey-200);color:var(--grey-500);cursor:not-allowed}
+    .small-button{display:inline-block;width:auto;margin:0;padding:5px 10px;font-size:11px}
+    .secondary-button{background:#fff;color:var(--grey-900);border:1px solid var(--grey-200)}
+    .secondary-button:hover{background:#fff;border-color:var(--grey-400)}
+    .section-label{font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+      color:var(--grey-400);margin:0 0 8px}
 
-    .radio-row { display: flex; gap: 15px; margin-bottom: 10px; }
-    .radio-row label { display: flex; align-items: center; gap: 5px; width: auto; margin: 0; font-weight: normal; }
-    .radio-row input { display: inline-block; width: auto; margin: 0; }
+    /* ── Action tiles ──────────────────────────────────────────────────── */
+    #topActions{display:block;margin:0 0 18px}
+    #newProjectButton,#convertProjectButton{width:100%;margin:0 0 9px;padding:11px 12px;
+      background:#fff;border:1px solid var(--grey-200);border-radius:10px;
+      font-weight:400;color:inherit;transition:box-shadow 180ms ease,transform 180ms ease}
+    #newProjectButton:hover,#convertProjectButton:hover{background:#fff;
+      border-color:var(--grey-200);transform:translateY(-2px);box-shadow:0 6px 14px rgba(0,0,0,.09)}
+    .tile{display:flex;align-items:center;gap:11px;text-align:left}
+    .tile .ico{flex:none;display:flex;align-items:center;justify-content:center;
+      width:28px;height:28px;border-radius:4px;background:var(--green-pale)}
+    #convertProjectButton .tile .ico{background:var(--grey-100)}
+    .tile .txt{display:block}
+    .tile .txt b{display:block;font-size:13px;font-weight:600;color:var(--grey-900)}
+    .tile .txt i{display:block;font-style:normal;font-size:10.5px;color:var(--grey-400);margin-top:2px}
 
-    .name-candidate { display: inline-block; width: auto; margin: 0 6px 6px 0; padding: 6px 10px; background: #eee; color: #333; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 12px; }
-    .name-candidate.selected { background: #408F4E; color: white; border-color: #408F4E; }
+    /* ── Folder lists ──────────────────────────────────────────────────── */
+    #folderList,#cvFolderList{border:1px solid var(--grey-200);border-radius:10px;
+      max-height:320px;overflow-y:auto;margin-top:6px}
+    .folder-item{display:flex;justify-content:space-between;align-items:center;gap:10px;
+      padding:9px 11px;border-bottom:1px solid var(--grey-100);cursor:pointer;font-size:13px;
+      transition:background 100ms ease}
+    .folder-item:last-child{border-bottom:none}
+    .folder-item:hover{background:var(--grey-50)}
+    .folder-item.selected{background:var(--green-pale);box-shadow:inset 2px 0 0 var(--green)}
+    .folder-item .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--grey-900)}
+    .folder-item .tag{flex:none;font-family:var(--font-mono);font-size:10px;letter-spacing:.04em;
+      color:var(--grey-400);margin-left:8px;white-space:nowrap}
+    .empty-message{padding:12px;color:var(--grey-400);font-size:12px}
 
-    .summary-box { border: 1px solid #ccc; border-radius: 4px; padding: 10px; font-size: 13px; margin-bottom: 10px; }
-    .summary-box .row { margin-bottom: 6px; }
-    .summary-box .label { font-weight: bold; }
-    .warning-box { border: 1px solid #e0a800; background: #fff8e1; color: #7a5b00; border-radius: 4px; padding: 8px; font-size: 12px; margin-bottom: 10px; }
+    /* ── Status, hints, summaries ──────────────────────────────────────── */
+    #statusMessage,#createStatusMessage,#npIntakeStatus,#npConfirmStatus,#cvBrowseStatus,#cvConfirmStatus{
+      margin-top:8px;font-size:12px;color:var(--grey-600);white-space:pre-wrap}
+    #selectedInfo{margin-top:10px;font-size:11.5px;color:var(--grey-400)}
+    .hint{font-size:10.5px;color:var(--grey-400);margin:-4px 0 12px}
+    #createMailboxSection{display:none}
+    .summary-box{border:1px solid var(--grey-200);border-radius:10px;padding:12px;
+      font-size:12.5px;margin-bottom:12px;background:#fff}
+    .summary-box .row{margin-bottom:6px}
+    .summary-box .row:last-child{margin-bottom:0}
+    .summary-box .label{font-weight:600;color:var(--grey-900)}
+    .warning-box{border:1px solid #E78707;background:#FFF8E1;color:#7A5B00;border-radius:4px;
+      padding:10px;font-size:12px;margin-bottom:10px}
+
+    .radio-row{display:flex;gap:16px;margin-bottom:10px}
+    .radio-row label{display:flex;align-items:center;gap:6px;width:auto;margin:0;
+      font-size:12.5px;letter-spacing:0;text-transform:none;color:var(--grey-900)}
+    .radio-row input{display:inline-block;width:auto;margin:0;accent-color:var(--green)}
+    .name-candidate{display:inline-block;width:auto;margin:0 6px 6px 0;padding:6px 10px;
+      background:#fff;color:var(--grey-900);border:1px solid var(--grey-200);border-radius:4px;
+      cursor:pointer;font:400 12px/1.2 var(--font-body)}
+    .name-candidate:hover{background:#fff;border-color:var(--grey-400)}
+    .name-candidate.selected{background:var(--green);color:#fff;border-color:var(--green)}
+
+    /* ── Sign-in ───────────────────────────────────────────────────────── */
+    #signInPrompt{padding:48px 24px;text-align:center}
+    #signInPrompt p{margin:0 0 20px;font-size:13px;color:var(--grey-600)}
+    #signInButton{width:auto;min-width:150px;margin:0 auto;display:inline-block}
+
+    /* ── Footer bar ────────────────────────────────────────────────────── */
+    #versionDisplay{position:fixed;left:0;right:0;bottom:0;height:32px;display:flex;
+      align-items:center;justify-content:flex-end;padding:0 18px;font-family:var(--font-mono);
+      font-size:10px;color:var(--grey-300);background:var(--grey-50);
+      border-top:1px solid var(--grey-100);z-index:40}
+    #refreshButton{position:fixed;left:18px;bottom:0;height:32px;width:auto;margin:0;padding:0;
+      display:flex;align-items:center;gap:5px;font:400 10px/1 var(--font-body);
+      letter-spacing:.04em;text-transform:uppercase;color:var(--grey-400);
+      background:none;border:none;cursor:pointer;z-index:41}
+    #refreshButton:hover{color:var(--green);background:none}
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="branding">Summation Assistant</div>
-    <img src="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" alt="Company Logo" />
+  <div id="brandBar">
+    <div id="brandLockup">
+      <img src="https://prassummation.github.io/outlook-addin/logo-symbol-80x80.png" alt="Summation" />
+      <div>
+        <div id="brandWord">SUMMATION</div>
+        <div id="brandSub"><span>Assistant</span><i></i></div>
+      </div>
+    </div>
+    <div id="brandUser"><b></b><span id="brandUserName">Signed in</span></div>
   </div>
 
   <div id="signInPrompt">
@@ -61,12 +165,13 @@
 
   <div id="appBody" style="display: none;">
     <div id="topActions">
-      <button id="newProjectButton">+ New BD Project</button>
-      <button id="convertProjectButton">Convert BD to Project Folder</button>
+      <div class="section-label">Actions</div>
+      <button id="newProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.5"><path d="M7 2v10M2 7h10"/></svg></span><span class="txt"><b>New BD project</b><i>Allocate the next number and file this email</i></span></span></button>
+      <button id="convertProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2 7h10M8.5 3.5 12 7l-3.5 3.5"/></svg></span><span class="txt"><b>Convert BD to project</b><i>Move an Archive folder into Active</i></span></span></button>
     </div>
 
     <div id="folderBrowser" style="display: none;">
-      <label for="filterBox">Filter Projects / Folders:</label>
+      <label for="filterBox">Filter projects and folders</label>
       <input type="text" id="filterBox" placeholder="Type to filter..." />
       <div id="folderList"></div>
       <div id="statusMessage"></div>
@@ -74,7 +179,7 @@
 
       <div id="createMailboxSection">
         <hr style="margin-top: 20px; margin-bottom: 20px;">
-        <label for="newMailboxName">New Shared Mailbox Name:</label>
+        <label for="newMailboxName">New shared mailbox name</label>
         <input type="text" id="newMailboxName" placeholder="e.g., SUPER25041_81 Quill Way" />
         <div class="hint">Tip: prefix with a project code (e.g. SUPER25041_) so it's recognized as a project mailbox.</div>
         <button id="createMailboxButton">Create New Shared Mailbox</button>
@@ -86,17 +191,17 @@
       <button id="backToBrowserButton" class="small-button secondary-button">&larr; Back</button>
 
       <div id="npStepIntake">
-        <label>Service:</label>
+        <label>Service</label>
         <div class="radio-row">
           <label><input type="radio" name="npService" value="Sustainability" checked /> Sustainability</label>
           <label><input type="radio" name="npService" value="Energy" /> Energy</label>
         </div>
-        <label>Location:</label>
+        <label>Location</label>
         <div class="radio-row">
           <label><input type="radio" name="npLocation" value="Perth" checked /> Perth</label>
           <label><input type="radio" name="npLocation" value="Adelaide" /> Adelaide</label>
         </div>
-        <label>Project Name:</label>
+        <label>Project name</label>
         <div id="npNameCandidates"></div>
         <input type="text" id="npNameFreeText" placeholder="Or type a project name..." />
         <div id="npIntakeStatus"></div>
@@ -120,12 +225,12 @@
       <button id="cvBackToBrowserButton" class="small-button secondary-button">&larr; Back</button>
 
       <div id="cvStepBrowse">
-        <label>Service:</label>
+        <label>Service</label>
         <div class="radio-row">
           <label><input type="radio" name="cvService" value="Sustainability" checked /> Sustainability</label>
           <label><input type="radio" name="cvService" value="Energy" /> Energy</label>
         </div>
-        <label for="cvFilterBox">Filter Archive Project Folders:</label>
+        <label for="cvFilterBox">Filter archive project folders</label>
         <input type="text" id="cvFilterBox" placeholder="Type to filter..." />
         <div id="cvFolderList"></div>
         <div id="cvBrowseStatus"></div>
@@ -145,11 +250,11 @@
     </div>
   </div>
 
-  <button id="refreshButton" title="Refresh Add-in">&#x21bb;</button>
+  <button id="refreshButton" title="Refresh Add-in"><span aria-hidden="true">&#x21bb;</span>Refresh</button>
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.5";
+    const APP_VERSION = "9.6";
 
     let msalInstance;
     let folderEntries = [];
@@ -1225,6 +1330,34 @@
             confirmButton.disabled = false;
         }
     }
+  </script>
+  <script>
+    // Additive only — labels the header with the account MSAL already holds.
+    (function () {
+      function shortName(account) {
+        var n = (account && (account.name || account.username)) || "";
+        if (!n) return "";
+        if (n.indexOf("@") > -1 && n.indexOf(" ") === -1) return n.split("@")[0];
+        var parts = n.trim().split(/\s+/);
+        return parts.length > 1 ? parts[0].charAt(0) + ". " + parts[parts.length - 1] : n;
+      }
+      var tries = 0;
+      var timer = setInterval(function () {
+        tries++;
+        try {
+          if (typeof msalInstance !== "undefined" && msalInstance) {
+            var acc = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+            var label = shortName(acc);
+            if (label) {
+              document.getElementById("brandUserName").textContent = label;
+              clearInterval(timer);
+              return;
+            }
+          }
+        } catch (e) { /* cosmetic only — never block the app */ }
+        if (tries > 60) clearInterval(timer);
+      }, 1000);
+    })();
   </script>
 </body>
 </html>
