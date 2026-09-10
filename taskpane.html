@@ -282,6 +282,11 @@
     <div id="searchMailboxWizard" style="display: none;">
       <button id="smBackToBrowserButton" class="small-button secondary-button">&larr; Back</button>
 
+      <label>Service</label>
+      <div class="radio-row">
+        <label><input type="radio" name="smService" value="Sustainability" checked /> Sustainability</label>
+        <label><input type="radio" name="smService" value="Energy" /> Energy</label>
+      </div>
       <label for="smFilterBox">Search shared mailboxes</label>
       <input type="text" id="smFilterBox" placeholder="Type to search..." />
       <div id="smMailboxList"></div>
@@ -293,7 +298,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.9";
+    const APP_VERSION = "9.10";
 
     let msalInstance;
     let folderEntries = [];
@@ -386,6 +391,9 @@
         document.getElementById("searchMailboxButton").addEventListener("click", openSearchMailboxWizard);
         document.getElementById("smBackToBrowserButton").addEventListener("click", closeSearchMailboxWizard);
         document.getElementById("smFilterBox").addEventListener("input", () => renderSharedMailboxSearchList(document.getElementById("smFilterBox").value));
+        document.querySelectorAll('input[name="smService"]').forEach(el =>
+            el.addEventListener("change", () => renderSharedMailboxSearchList(document.getElementById("smFilterBox").value))
+        );
 
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
@@ -1669,10 +1677,12 @@
     function renderSharedMailboxSearchList(filter) {
         const list = document.getElementById("smMailboxList");
         list.innerHTML = "";
+        const selectedService = document.querySelector('input[name="smService"]:checked').value;
+        const servicePrefix = selectedService === "Energy" ? "EN" : "SU";
         const normalizedFilter = (filter || "").toLowerCase();
-        const filtered = sharedMailboxSearchEntries.filter(entry =>
-            entry.path[0].toLowerCase().includes(normalizedFilter)
-        );
+        const filtered = sharedMailboxSearchEntries
+            .filter(entry => entry.path[0].toUpperCase().startsWith(servicePrefix))
+            .filter(entry => entry.path[0].toLowerCase().includes(normalizedFilter));
 
         if (filtered.length === 0) {
             const empty = document.createElement("div");
