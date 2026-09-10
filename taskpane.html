@@ -78,15 +78,15 @@
 
     /* ── Action tiles ──────────────────────────────────────────────────── */
     #topActions{display:block;margin:0 0 18px}
-    #newProjectButton,#convertProjectButton{width:100%;margin:0 0 9px;padding:11px 12px;
+    #newProjectButton,#convertProjectButton,#convertToArchiveButton{width:100%;margin:0 0 9px;padding:11px 12px;
       background:#fff;border:1px solid var(--grey-200);border-radius:10px;
       font-weight:400;color:inherit;transition:box-shadow 180ms ease,transform 180ms ease}
-    #newProjectButton:hover,#convertProjectButton:hover{background:#fff;
+    #newProjectButton:hover,#convertProjectButton:hover,#convertToArchiveButton:hover{background:#fff;
       border-color:var(--grey-200);transform:translateY(-2px);box-shadow:0 6px 14px rgba(0,0,0,.09)}
     .tile{display:flex;align-items:center;gap:11px;text-align:left}
     .tile .ico{flex:none;display:flex;align-items:center;justify-content:center;
       width:28px;height:28px;border-radius:4px;background:var(--green-pale)}
-    #convertProjectButton .tile .ico{background:var(--grey-100)}
+    #convertProjectButton .tile .ico,#convertToArchiveButton .tile .ico{background:var(--grey-100)}
     .tile .txt{display:block}
     .tile .txt b{display:block;font-size:13px;font-weight:600;color:var(--grey-900)}
     .tile .txt i{display:block;font-style:normal;font-size:10.5px;color:var(--grey-400);margin-top:2px}
@@ -283,7 +283,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.7";
+    const APP_VERSION = "9.8";
 
     let msalInstance;
     let folderEntries = [];
@@ -1474,27 +1474,6 @@
         });
     }
 
-    function expectedMailboxUpn(folderName) {
-        const mailNickname = folderName.replace(/[^a-zA-Z0-9_]/g, '');
-        return mailNickname ? `${mailNickname}@summation.au` : null;
-    }
-
-    // Detection only — reuses the naming convention from Create New Shared Mailbox.
-    async function findAssociatedSharedMailbox(folderName) {
-        const upn = expectedMailboxUpn(folderName);
-        if (!upn) return null;
-        try {
-            const mailToken = await signInAndGetToken(graphRequest, true);
-            return await graphGetOrNull(
-                `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}?$select=id,displayName,mail,userPrincipalName,accountEnabled`,
-                mailToken
-            );
-        } catch (err) {
-            console.error("Failed to check for an associated shared mailbox:", err);
-            return null;
-        }
-    }
-
     async function selectActiveFolderForConversion(entry) {
         caState.selectedEntry = entry;
         caState.destPath = ARCHIVE_BRANCH_PATH[entry.combo];
@@ -1508,15 +1487,13 @@
 
         try {
             const token = caState.token;
-            const [destBranchFolder, destExisting, sharedMailbox] = await Promise.all([
+            const [destBranchFolder, destExisting] = await Promise.all([
                 graphGetOrNull(`https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/root:/${encodePath(caState.destPath)}`, token),
-                graphGetOrNull(`https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/root:/${encodePath(caState.destPath)}/${encodeURIComponent(entry.name)}`, token),
-                findAssociatedSharedMailbox(entry.name)
+                graphGetOrNull(`https://graph.microsoft.com/v1.0/drives/${ARCHIVE_DRIVE_ID}/root:/${encodePath(caState.destPath)}/${encodeURIComponent(entry.name)}`, token)
             ]);
 
             caState.branchNeedsCreating = !destBranchFolder;
             caState.destinationExists = !!destExisting;
-            caState.sharedMailbox = sharedMailbox;
 
             renderConvertToArchiveConfirmSummary();
             confirmStatus.textContent = "";
@@ -1529,7 +1506,7 @@
     }
 
     function renderConvertToArchiveConfirmSummary() {
-        const { selectedEntry, destPath, branchNeedsCreating, destinationExists, sharedMailbox } = caState;
+        const { selectedEntry, destPath, branchNeedsCreating, destinationExists } = caState;
         let html = `
             <div class="summary-box">
                 <div class="row"><span class="label">Folder:</span> ${selectedEntry.name}</div>
@@ -1538,9 +1515,6 @@
                 <div class="row">The folder is copied into Archive first, then removed from Active once the copy is confirmed to have landed.</div>
             </div>
         `;
-        if (sharedMailbox) {
-            html += `<div class="warning-box">A shared mailbox exists for this project (${sharedMailbox.mail || sharedMailbox.userPrincipalName}). This tool does not automatically disable or remove it — please handle that separately.</div>`;
-        }
         if (destinationExists) {
             html += `<div class="warning-box">A folder named "${selectedEntry.name}" already exists at that location in Archive. Refusing to convert — remove or rename it first.</div>`;
         }
@@ -1553,7 +1527,7 @@
             container.innerHTML = `<div class="warning-box">Error: ${errorMessage}</div>`;
             return;
         }
-        const { folderName, webUrl, deleteError, sharedMailbox } = success;
+        const { folderName, webUrl, deleteError } = success;
         let html = `<div class="summary-box">
             <div class="row"><span class="label">Converted:</span> ${folderName}</div>
             <div class="row">
@@ -1567,9 +1541,6 @@
         } else {
             html += `<div class="row">Original removed from Active.</div>`;
         }
-        if (sharedMailbox) {
-            html += `<div class="warning-box">Note: the shared mailbox ${sharedMailbox.mail || sharedMailbox.userPrincipalName} is still associated with this project — no changes were made to it automatically.</div>`;
-        }
         html += `</div>`;
         container.innerHTML = html;
 
@@ -1578,7 +1549,7 @@
     }
 
     async function handleConvertToArchiveConfirm() {
-        const { selectedEntry, destPath, token, sharedMailbox } = caState;
+        const { selectedEntry, destPath, token } = caState;
         const confirmStatus = document.getElementById("caConfirmStatus");
         const confirmButton = document.getElementById("caConfirmButton");
         confirmStatus.style.color = "#333";
@@ -1624,7 +1595,7 @@
                 deleteError = err.message;
             }
 
-            renderConvertToArchiveResultStep({ folderName: selectedEntry.name, webUrl: newArchiveItem.webUrl, deleteError, sharedMailbox }, null);
+            renderConvertToArchiveResultStep({ folderName: selectedEntry.name, webUrl: newArchiveItem.webUrl, deleteError }, null);
             showConvertToArchiveStep("result");
         } catch (err) {
             console.error("Failed to convert folder to Archive:", err);
