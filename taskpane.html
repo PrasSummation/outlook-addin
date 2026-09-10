@@ -78,15 +78,15 @@
 
     /* ── Action tiles ──────────────────────────────────────────────────── */
     #topActions{display:block;margin:0 0 18px}
-    #newProjectButton,#convertProjectButton,#convertToArchiveButton{width:100%;margin:0 0 9px;padding:11px 12px;
+    #newProjectButton,#convertProjectButton,#convertToArchiveButton,#searchMailboxButton{width:100%;margin:0 0 9px;padding:11px 12px;
       background:#fff;border:1px solid var(--grey-200);border-radius:10px;
       font-weight:400;color:inherit;transition:box-shadow 180ms ease,transform 180ms ease}
-    #newProjectButton:hover,#convertProjectButton:hover,#convertToArchiveButton:hover{background:#fff;
+    #newProjectButton:hover,#convertProjectButton:hover,#convertToArchiveButton:hover,#searchMailboxButton:hover{background:#fff;
       border-color:var(--grey-200);transform:translateY(-2px);box-shadow:0 6px 14px rgba(0,0,0,.09)}
     .tile{display:flex;align-items:center;gap:11px;text-align:left}
     .tile .ico{flex:none;display:flex;align-items:center;justify-content:center;
       width:28px;height:28px;border-radius:4px;background:var(--green-pale)}
-    #convertProjectButton .tile .ico,#convertToArchiveButton .tile .ico{background:var(--grey-100)}
+    #convertProjectButton .tile .ico,#convertToArchiveButton .tile .ico,#searchMailboxButton .tile .ico{background:var(--grey-100)}
     .tile .txt{display:block}
     .tile .txt b{display:block;font-size:13px;font-weight:600;color:var(--grey-900)}
     .tile .txt i{display:block;font-style:normal;font-size:10.5px;color:var(--grey-400);margin-top:2px}
@@ -169,6 +169,7 @@
       <button id="newProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.5"><path d="M7 2v10M2 7h10"/></svg></span><span class="txt"><b>New BD project</b><i>Allocate the next number and file this email</i></span></span></button>
       <button id="convertProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2 7h10M8.5 3.5 12 7l-3.5 3.5"/></svg></span><span class="txt"><b>Convert BD to project</b><i>Move an Archive folder into Active</i></span></span></button>
       <button id="convertToArchiveButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M12 7H2M5.5 3.5 2 7l3.5 3.5"/></svg></span><span class="txt"><b>Convert Active to Archive</b><i>Move a project folder from Active into Archive</i></span></span></button>
+      <button id="searchMailboxButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><circle cx="6" cy="6" r="4"/><path d="M9.5 9.5 13 13"/></svg></span><span class="txt"><b>Search Shared Mailbox Online</b><i>Find any project mailbox and open it in Outlook Web</i></span></span></button>
     </div>
 
     <div id="folderBrowser" style="display: none;">
@@ -277,13 +278,22 @@
         <button id="caStartOverButton">Convert Another</button>
       </div>
     </div>
+
+    <div id="searchMailboxWizard" style="display: none;">
+      <button id="smBackToBrowserButton" class="small-button secondary-button">&larr; Back</button>
+
+      <label for="smFilterBox">Search shared mailboxes</label>
+      <input type="text" id="smFilterBox" placeholder="Type to search..." />
+      <div id="smMailboxList"></div>
+      <div id="smStatus"></div>
+    </div>
   </div>
 
   <button id="refreshButton" title="Refresh Add-in"><span aria-hidden="true">&#x21bb;</span>Refresh</button>
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.8";
+    const APP_VERSION = "9.9";
 
     let msalInstance;
     let folderEntries = [];
@@ -292,6 +302,7 @@
     let cvState = {};
     let caState = {};
     let activeFolderEntries = [];
+    let sharedMailboxSearchEntries = [];
     let archiveFolderEntries = [];
 
     const SITE_ID = "summationptyltd.sharepoint.com,b0a8b5e8-0c27-4b46-a97f-e9f7668c3021,039ea15c-5b24-4eea-b48a-9f4e61e9439c";
@@ -372,6 +383,9 @@
         document.getElementById("caBackToBrowseButton").addEventListener("click", () => showConvertToArchiveStep("browse"));
         document.getElementById("caConfirmButton").addEventListener("click", handleConvertToArchiveConfirm);
         document.getElementById("caStartOverButton").addEventListener("click", openConvertToArchiveWizard);
+        document.getElementById("searchMailboxButton").addEventListener("click", openSearchMailboxWizard);
+        document.getElementById("smBackToBrowserButton").addEventListener("click", closeSearchMailboxWizard);
+        document.getElementById("smFilterBox").addEventListener("input", () => renderSharedMailboxSearchList(document.getElementById("smFilterBox").value));
 
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
@@ -689,6 +703,7 @@
         document.getElementById("newProjectButton").style.display = "none";
         document.getElementById("convertProjectButton").style.display = "none";
         document.getElementById("convertToArchiveButton").style.display = "none";
+        document.getElementById("searchMailboxButton").style.display = "none";
         document.getElementById("newProjectWizard").style.display = "block";
         npState = {};
         document.getElementById("npNameFreeText").value = "";
@@ -702,6 +717,7 @@
         document.getElementById("newProjectButton").style.display = "block";
         document.getElementById("convertProjectButton").style.display = "block";
         document.getElementById("convertToArchiveButton").style.display = "block";
+        document.getElementById("searchMailboxButton").style.display = "block";
     }
 
     function showWizardStep(step) {
@@ -1128,6 +1144,7 @@
         document.getElementById("newProjectButton").style.display = "none";
         document.getElementById("convertProjectButton").style.display = "none";
         document.getElementById("convertToArchiveButton").style.display = "none";
+        document.getElementById("searchMailboxButton").style.display = "none";
         document.getElementById("convertWizard").style.display = "block";
         cvState = {};
         document.getElementById("cvFilterBox").value = "";
@@ -1140,6 +1157,7 @@
         document.getElementById("newProjectButton").style.display = "block";
         document.getElementById("convertProjectButton").style.display = "block";
         document.getElementById("convertToArchiveButton").style.display = "block";
+        document.getElementById("searchMailboxButton").style.display = "block";
     }
 
     function showConvertStep(step) {
@@ -1386,6 +1404,7 @@
         document.getElementById("newProjectButton").style.display = "none";
         document.getElementById("convertProjectButton").style.display = "none";
         document.getElementById("convertToArchiveButton").style.display = "none";
+        document.getElementById("searchMailboxButton").style.display = "none";
         document.getElementById("convertToArchiveWizard").style.display = "block";
         caState = {};
         document.getElementById("caFilterBox").value = "";
@@ -1398,6 +1417,7 @@
         document.getElementById("newProjectButton").style.display = "block";
         document.getElementById("convertProjectButton").style.display = "block";
         document.getElementById("convertToArchiveButton").style.display = "block";
+        document.getElementById("searchMailboxButton").style.display = "block";
     }
 
     function showConvertToArchiveStep(step) {
@@ -1603,6 +1623,106 @@
             showConvertToArchiveStep("result");
         } finally {
             confirmButton.disabled = false;
+        }
+    }
+
+    // ---- Search Shared Mailbox Online ----
+    // Non-destructive (just opens a mailbox in Outlook Web), so no confirm step needed.
+
+    function openSearchMailboxWizard() {
+        document.getElementById("folderBrowser").style.display = "none";
+        document.getElementById("newProjectButton").style.display = "none";
+        document.getElementById("convertProjectButton").style.display = "none";
+        document.getElementById("convertToArchiveButton").style.display = "none";
+        document.getElementById("searchMailboxButton").style.display = "none";
+        document.getElementById("searchMailboxWizard").style.display = "block";
+        document.getElementById("smFilterBox").value = "";
+        loadSharedMailboxesForSearch();
+    }
+
+    function closeSearchMailboxWizard() {
+        document.getElementById("searchMailboxWizard").style.display = "none";
+        document.getElementById("newProjectButton").style.display = "block";
+        document.getElementById("convertProjectButton").style.display = "block";
+        document.getElementById("convertToArchiveButton").style.display = "block";
+        document.getElementById("searchMailboxButton").style.display = "block";
+    }
+
+    async function loadSharedMailboxesForSearch() {
+        const status = document.getElementById("smStatus");
+        status.style.color = "#333";
+        status.textContent = "Loading shared mailboxes...";
+        try {
+            const token = await signInAndGetToken(graphRequest, true);
+            if (!token) throw new Error("Could not get permission to list shared mailboxes.");
+
+            sharedMailboxSearchEntries = await getSharedMailboxes(token);
+            renderSharedMailboxSearchList(document.getElementById("smFilterBox").value);
+            status.textContent = "";
+        } catch (err) {
+            console.error("Failed to load shared mailboxes:", err);
+            status.textContent = `Error: ${err.message}`;
+            status.style.color = "red";
+        }
+    }
+
+    function renderSharedMailboxSearchList(filter) {
+        const list = document.getElementById("smMailboxList");
+        list.innerHTML = "";
+        const normalizedFilter = (filter || "").toLowerCase();
+        const filtered = sharedMailboxSearchEntries.filter(entry =>
+            entry.path[0].toLowerCase().includes(normalizedFilter)
+        );
+
+        if (filtered.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "empty-message";
+            empty.textContent = "No matching shared mailboxes found.";
+            list.appendChild(empty);
+            return;
+        }
+
+        filtered.forEach(entry => {
+            const item = document.createElement("div");
+            item.className = "folder-item";
+
+            const name = document.createElement("span");
+            name.className = "name";
+            name.textContent = entry.path[0];
+            item.appendChild(name);
+
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = "Open in OWA";
+            item.appendChild(tag);
+
+            item.title = entry.mail;
+            item.addEventListener("click", () => openMailboxInBrowser(entry.mail));
+
+            list.appendChild(item);
+        });
+    }
+
+    // Classic Outlook desktop/Mac support Office.context.ui.openBrowserWindow, which breaks
+    // out of the add-in's sandboxed webview into the OS default browser. New Outlook and
+    // Outlook on the web don't support it at all, so fall back to a plain window.open there.
+    function openMailboxInBrowser(mail) {
+        const status = document.getElementById("smStatus");
+        const url = `https://outlook.office.com/mail/${encodeURIComponent(mail)}/`;
+        try {
+            const supportsOpenBrowserWindow = typeof Office !== "undefined" && Office.context &&
+                Office.context.requirements && Office.context.requirements.isSetSupported("OpenBrowserWindowApi", "1.1");
+            if (supportsOpenBrowserWindow) {
+                Office.context.ui.openBrowserWindow(url);
+            } else {
+                window.open(url, "_blank", "noopener");
+            }
+            status.style.color = "#333";
+            status.textContent = `Opening ${mail} in Outlook Web...`;
+        } catch (err) {
+            console.error("Failed to open mailbox in browser:", err);
+            status.style.color = "red";
+            status.textContent = `Could not open ${mail}: ${err.message}`;
         }
     }
   </script>
