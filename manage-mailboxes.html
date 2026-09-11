@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Manage Outlook Shared Mailboxes</title>
+  <script type="text/javascript" src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
+  <style>
+    :root{
+      --green:#408F4E; --green-dark:#2D6B38; --green-pale:#EDF7EE;
+      --grey-900:#2B2B2B; --grey-600:#646464; --grey-400:#909090;
+      --grey-500:#787878; --grey-300:#B4B4B4; --grey-200:#DCDCDC; --grey-100:#EFEFEF; --grey-50:#F7F7F7;
+      --font-display:'Bahnschrift','DIN Alternate','Segoe UI',sans-serif;
+      --font-body:'Calibri','Segoe UI',system-ui,sans-serif;
+      --font-mono:'Consolas','Courier New',monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;padding:0;background:#fff;font-family:var(--font-body);
+         font-size:14px;line-height:1.5;color:var(--grey-600);-webkit-font-smoothing:antialiased}
+    a{color:var(--green-dark);text-decoration:none}
+    a:hover{color:var(--green);text-decoration:underline}
+
+    #brandBar{background:var(--grey-900);padding:16px 28px;display:flex;align-items:center;gap:12px}
+    #brandBar img{width:32px;height:32px}
+    #brandBar .word{font-family:var(--font-display);font-size:15px;font-weight:600;color:#fff;letter-spacing:.14em}
+    #brandBar .sub{font-size:11px;color:var(--grey-400);letter-spacing:.05em}
+
+    #signInPrompt{padding:80px 24px;text-align:center}
+    #signInPrompt p{margin:0 0 20px;font-size:14px;color:var(--grey-600)}
+    #signInButton{padding:10px 24px;font:600 14px var(--font-body);color:#fff;background:var(--green);
+      border:1px solid var(--green);border-radius:4px;cursor:pointer}
+    #signInButton:hover{background:var(--green-dark)}
+
+    #appBody{max-width:1000px;margin:0 auto;padding:28px}
+    .page-header h1{font-family:var(--font-display);font-size:20px;color:var(--grey-900);margin:0 0 4px}
+    .page-header p{margin:0 0 20px;font-size:13px;color:var(--grey-500)}
+
+    #status{font-size:13px;color:var(--grey-600);white-space:pre-wrap;margin-bottom:14px;min-height:1.4em}
+    #status.error{color:#B3261E}
+
+    .dual-pane{display:flex;gap:18px;align-items:flex-start}
+    .pane{flex:1;min-width:0;border:1px solid var(--grey-200);border-radius:10px;padding:16px;background:#fff}
+    .pane h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--grey-400);margin:0 0 10px}
+    .hint{font-size:11.5px;color:var(--grey-400);margin:0 0 10px}
+
+    .arrows{display:flex;flex-direction:column;align-items:center;gap:10px;padding-top:60px}
+    .arrows button{width:44px;height:44px;border-radius:50%;border:1px solid var(--grey-200);background:#fff;
+      color:var(--grey-600);font-size:18px;cursor:pointer;transition:background 120ms ease,border-color 120ms ease}
+    .arrows button:hover{background:var(--green-pale);border-color:var(--green);color:var(--green-dark)}
+    .arrows button:disabled{opacity:.4;cursor:not-allowed}
+    .arrows button:disabled:hover{background:#fff;border-color:var(--grey-200);color:var(--grey-600)}
+
+    .radio-row{display:flex;gap:16px;margin-bottom:12px}
+    .radio-row label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--grey-900)}
+    .radio-row input{accent-color:var(--green)}
+
+    input[type=text]{display:block;width:100%;margin:0 0 10px;padding:8px 10px;
+      font:400 13px var(--font-body);color:var(--grey-900);background:#fff;
+      border:1.5px solid var(--grey-200);border-radius:4px}
+    input[type=text]:focus{outline:none;border-color:var(--green)}
+
+    .mailbox-list{border:1px solid var(--grey-200);border-radius:8px;max-height:420px;overflow-y:auto}
+    .mailbox-item{display:flex;justify-content:space-between;align-items:center;gap:10px;
+      padding:9px 11px;border-bottom:1px solid var(--grey-100);cursor:pointer;font-size:13px}
+    .mailbox-item:last-child{border-bottom:none}
+    .mailbox-item:hover{background:var(--grey-50)}
+    .mailbox-item.selected{background:var(--green-pale);box-shadow:inset 2px 0 0 var(--green)}
+    .mailbox-item .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .mailbox-item .tag{flex:none;font-family:var(--font-mono);font-size:10px;color:var(--grey-400)}
+    .empty-message{padding:14px;color:var(--grey-400);font-size:12px}
+  </style>
+</head>
+<body>
+  <div id="brandBar">
+    <img src="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" alt="Summation" />
+    <div>
+      <div class="word">SUMMATION</div>
+      <div class="sub">Manage Outlook Shared Mailboxes</div>
+    </div>
+  </div>
+
+  <div id="signInPrompt">
+    <p>Please sign in to manage your shared mailboxes.</p>
+    <button id="signInButton">Sign In</button>
+  </div>
+
+  <div id="appBody" style="display:none;">
+    <div class="page-header">
+      <h1>Manage Outlook Shared Mailboxes</h1>
+      <p>Add or remove which project mailboxes appear automatically in your own Outlook.</p>
+    </div>
+    <div id="status"></div>
+
+    <div class="dual-pane">
+      <div class="pane">
+        <h2>Mapped to your Outlook</h2>
+        <div class="hint">Outlook can reliably show around 32 mailboxes at once — beyond that, some may not appear even if access is granted.</div>
+        <div id="mappedList" class="mailbox-list"></div>
+      </div>
+
+      <div class="arrows">
+        <button id="removeButton" title="Remove selected from your Outlook" disabled>&rarr;</button>
+        <button id="addButton" title="Add selected to your Outlook" disabled>&larr;</button>
+      </div>
+
+      <div class="pane">
+        <h2>Service</h2>
+        <div class="radio-row">
+          <label><input type="radio" name="service" value="Sustainability" checked /> Sustainability</label>
+          <label><input type="radio" name="service" value="Energy" /> Energy</label>
+        </div>
+        <input type="text" id="filterBox" placeholder="Filter project mailboxes..." />
+        <div id="availableList" class="mailbox-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const BRIDGE_URL = "https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net";
+
+    const msalConfig = {
+      auth: {
+        clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
+        authority: "https://login.microsoftonline.com/ecb5f458-9548-4e8b-96f3-904f1828f931",
+        redirectUri: window.location.origin + window.location.pathname
+      },
+      cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+    };
+
+    const graphRequest = { scopes: ["User.Read", "Directory.Read.All"] };
+    const bridgeRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/MailboxBridge.Call"] };
+
+    let msalInstance;
+    let currentUserEmail = "";
+    let allMailboxes = [];
+    let selectedMapped = null;
+    let selectedAvailable = null;
+
+    window.addEventListener("load", () => {
+        document.getElementById("signInButton").addEventListener("click", handleLogin);
+        document.getElementById("filterBox").addEventListener("input", renderAvailableList);
+        document.querySelectorAll('input[name="service"]').forEach(el => el.addEventListener("change", renderAvailableList));
+        document.getElementById("addButton").addEventListener("click", handleAdd);
+        document.getElementById("removeButton").addEventListener("click", handleRemove);
+
+        msalInstance = new msal.PublicClientApplication(msalConfig);
+        attemptSilentSignIn();
+    });
+
+    function showApp(show) {
+        document.getElementById("appBody").style.display = show ? "block" : "none";
+        document.getElementById("signInPrompt").style.display = show ? "none" : "block";
+    }
+
+    async function signInAndGetToken(request, isUserAction) {
+        const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+        if (account) {
+            try {
+                const silentResponse = await msalInstance.acquireTokenSilent({ ...request, account });
+                return silentResponse.accessToken;
+            } catch (error) {
+                if (error instanceof msal.InteractionRequiredAuthError && isUserAction) {
+                    const interactiveResponse = await msalInstance.acquireTokenPopup(request);
+                    return interactiveResponse.accessToken;
+                }
+                throw error;
+            }
+        }
+        if (isUserAction) {
+            const loginResponse = await msalInstance.loginPopup(request);
+            msalInstance.setActiveAccount(loginResponse.account);
+            return loginResponse.accessToken;
+        }
+        return null;
+    }
+
+    async function handleLogin() {
+        try {
+            const loginResponse = await msalInstance.loginPopup(graphRequest);
+            msalInstance.setActiveAccount(loginResponse.account);
+            await afterSignIn();
+        } catch (err) {
+            updateStatus(`Sign in failed: ${err.message}`, true);
+        }
+    }
+
+    async function attemptSilentSignIn() {
+        try {
+            const token = await signInAndGetToken(graphRequest, false);
+            if (token) await afterSignIn();
+            else showApp(false);
+        } catch (err) {
+            showApp(false);
+        }
+    }
+
+    async function afterSignIn() {
+        currentUserEmail = msalInstance.getActiveAccount().username;
+        showApp(true);
+        await loadData();
+    }
+
+    function updateStatus(message, isError) {
+        const el = document.getElementById("status");
+        el.textContent = message;
+        el.className = isError ? "error" : "";
+    }
+
+    async function graphGet(url, token) {
+        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function getSharedMailboxes(token) {
+        const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses&$top=999";
+        const data = await graphGet(url, token);
+        const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}_.*@summation\.au$/i;
+        return data.value
+            .filter(user => user.assignedLicenses.length === 0 && user.mail && projectMailboxRegex.test(user.mail))
+            .map(user => ({ name: user.mail.split("@")[0], mail: user.mail, combo: user.mail.slice(0, 5).toUpperCase() }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    async function getMailboxPermissionsViaBridge(mailbox, token) {
+        const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions?mailbox=${encodeURIComponent(mailbox)}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function grantMailboxPermissionViaBridge(mailbox, user, token) {
+        const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions/grant`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ mailbox, user })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function revokeMailboxPermissionViaBridge(mailbox, user, token) {
+        const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions/revoke`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ mailbox, user })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function loadData() {
+        updateStatus("Loading mailboxes...");
+        selectedMapped = null;
+        selectedAvailable = null;
+        try {
+            const graphToken = await signInAndGetToken(graphRequest, true);
+            const mailboxes = await getSharedMailboxes(graphToken);
+
+            const bridgeToken = await signInAndGetToken(bridgeRequest, true);
+            allMailboxes = await Promise.all(mailboxes.map(async m => {
+                try {
+                    const data = await getMailboxPermissionsViaBridge(m.mail, bridgeToken);
+                    const isMapped = data.members.some(member => member.user.toLowerCase() === currentUserEmail.toLowerCase());
+                    return { ...m, isMapped, error: null };
+                } catch (err) {
+                    return { ...m, isMapped: false, error: err.message };
+                }
+            }));
+
+            renderMappedList();
+            renderAvailableList();
+            updateStatus("");
+        } catch (err) {
+            console.error("Failed to load mailboxes:", err);
+            updateStatus(`Error: ${err.message}`, true);
+        }
+    }
+
+    function renderMappedList() {
+        const list = document.getElementById("mappedList");
+        list.innerHTML = "";
+        const mapped = allMailboxes.filter(m => m.isMapped);
+
+        if (mapped.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "empty-message";
+            empty.textContent = "No project mailboxes currently mapped to your Outlook.";
+            list.appendChild(empty);
+            return;
+        }
+
+        mapped.forEach(entry => {
+            const item = document.createElement("div");
+            item.className = "mailbox-item" + (selectedMapped && selectedMapped.mail === entry.mail ? " selected" : "");
+
+            const name = document.createElement("span");
+            name.className = "name";
+            name.textContent = entry.name;
+            item.appendChild(name);
+
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = entry.combo;
+            item.appendChild(tag);
+
+            item.title = entry.mail;
+            item.addEventListener("click", () => {
+                selectedMapped = entry;
+                document.getElementById("removeButton").disabled = false;
+                renderMappedList();
+            });
+
+            list.appendChild(item);
+        });
+    }
+
+    function renderAvailableList() {
+        const list = document.getElementById("availableList");
+        list.innerHTML = "";
+        const selectedService = document.querySelector('input[name="service"]:checked').value;
+        const servicePrefix = selectedService === "Energy" ? "EN" : "SU";
+        const filterText = (document.getElementById("filterBox").value || "").toLowerCase();
+
+        const available = allMailboxes
+            .filter(m => !m.isMapped)
+            .filter(m => m.combo.startsWith(servicePrefix))
+            .filter(m => m.name.toLowerCase().includes(filterText));
+
+        if (available.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "empty-message";
+            empty.textContent = "No matching project mailboxes found.";
+            list.appendChild(empty);
+            return;
+        }
+
+        available.forEach(entry => {
+            const item = document.createElement("div");
+            item.className = "mailbox-item" + (selectedAvailable && selectedAvailable.mail === entry.mail ? " selected" : "");
+
+            const name = document.createElement("span");
+            name.className = "name";
+            name.textContent = entry.name;
+            item.appendChild(name);
+
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = entry.combo;
+            item.appendChild(tag);
+
+            item.title = entry.mail;
+            item.addEventListener("click", () => {
+                selectedAvailable = entry;
+                document.getElementById("addButton").disabled = false;
+                renderAvailableList();
+            });
+
+            list.appendChild(item);
+        });
+    }
+
+    async function handleAdd() {
+        if (!selectedAvailable) return;
+        if (!confirm(`Add "${selectedAvailable.name}" to your Outlook?`)) return;
+
+        document.getElementById("addButton").disabled = true;
+        updateStatus(`Adding ${selectedAvailable.name}...`);
+        try {
+            const token = await signInAndGetToken(bridgeRequest, true);
+            await grantMailboxPermissionViaBridge(selectedAvailable.mail, currentUserEmail, token);
+            updateStatus(`Added. It may take a little while for Outlook to pick it up automatically next time it refreshes.`);
+            await loadData();
+        } catch (err) {
+            console.error("Failed to add mailbox:", err);
+            updateStatus(`Error: ${err.message}`, true);
+            document.getElementById("addButton").disabled = false;
+        }
+    }
+
+    async function handleRemove() {
+        if (!selectedMapped) return;
+        if (!confirm(`Remove "${selectedMapped.name}" from your Outlook?`)) return;
+
+        document.getElementById("removeButton").disabled = true;
+        updateStatus(`Removing ${selectedMapped.name}...`);
+        try {
+            const token = await signInAndGetToken(bridgeRequest, true);
+            await revokeMailboxPermissionViaBridge(selectedMapped.mail, currentUserEmail, token);
+            updateStatus(`Access revoked. It may take a while to disappear from Outlook — you may need to remove it manually if it lingers.`);
+            await loadData();
+        } catch (err) {
+            console.error("Failed to remove mailbox:", err);
+            updateStatus(`Error: ${err.message}`, true);
+            document.getElementById("removeButton").disabled = false;
+        }
+    }
+  </script>
+</body>
+</html>
