@@ -86,20 +86,20 @@
   <div id="appBody" style="display:none;">
     <div class="page-header">
       <h1>Manage Outlook Shared Mailboxes</h1>
-      <p>Add or remove which project mailboxes appear automatically in your own Outlook.</p>
+      <p>Grant or revoke your own Full Access permission on project mailboxes — this influences, but doesn't directly control, what shows up in your Outlook.</p>
     </div>
     <div id="status"></div>
 
     <div class="dual-pane">
       <div class="pane">
-        <h2>Mapped to your Outlook</h2>
-        <div class="hint">Outlook can reliably show around 32 mailboxes at once — beyond that, some may not appear even if access is granted.</div>
+        <h2>You have access to</h2>
+        <div class="hint">This is Full Access <em>permission</em>, not a live read of your Outlook — Microsoft doesn't expose that. A mailbox can have permission but not currently show in Outlook (you removed it locally before, it hasn't auto-mapped yet, or Outlook's ~32-mailbox display limit is hiding it), or the reverse.</div>
         <div id="mappedList" class="mailbox-list"></div>
       </div>
 
       <div class="arrows">
-        <button id="removeButton" title="Remove selected from your Outlook" disabled>&rarr;</button>
-        <button id="addButton" title="Add selected to your Outlook" disabled>&larr;</button>
+        <button id="removeButton" title="Revoke access" disabled>&rarr;</button>
+        <button id="addButton" title="Grant access" disabled>&larr;</button>
       </div>
 
       <div class="pane">
@@ -392,14 +392,14 @@
 
     async function handleAdd() {
         if (!selectedAvailable) return;
-        if (!confirm(`Add "${selectedAvailable.name}" to your Outlook?`)) return;
+        if (!confirm(`Grant yourself Full Access to "${selectedAvailable.name}"?`)) return;
 
         document.getElementById("addButton").disabled = true;
-        updateStatus(`Adding ${selectedAvailable.name}...`);
+        updateStatus(`Granting access to ${selectedAvailable.name}...`);
         try {
             const token = await signInAndGetToken(bridgeRequest, true);
             await grantMailboxPermissionViaBridge(selectedAvailable.mail, currentUserEmail, token);
-            updateStatus(`Added. It may take a little while for Outlook to pick it up automatically next time it refreshes.`);
+            updateStatus(`Access granted. It may take a while to actually appear in Outlook, and Outlook's own display limit may keep it hidden regardless.`);
             await loadData();
         } catch (err) {
             console.error("Failed to add mailbox:", err);
@@ -410,14 +410,14 @@
 
     async function handleRemove() {
         if (!selectedMapped) return;
-        if (!confirm(`Remove "${selectedMapped.name}" from your Outlook?`)) return;
+        if (!confirm(`Revoke your Full Access to "${selectedMapped.name}"?`)) return;
 
         document.getElementById("removeButton").disabled = true;
-        updateStatus(`Removing ${selectedMapped.name}...`);
+        updateStatus(`Revoking access to ${selectedMapped.name}...`);
         try {
             const token = await signInAndGetToken(bridgeRequest, true);
             await revokeMailboxPermissionViaBridge(selectedMapped.mail, currentUserEmail, token);
-            updateStatus(`Access revoked. It may take a while to disappear from Outlook — you may need to remove it manually if it lingers.`);
+            updateStatus(`Access revoked. If it's currently visible in your Outlook, it may take a while to disappear — you may need to remove it manually if it lingers.`);
             await loadData();
         } catch (err) {
             console.error("Failed to remove mailbox:", err);
