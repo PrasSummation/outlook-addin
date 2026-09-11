@@ -1,5 +1,14 @@
 # Exchange Online bridge
 
+**Status: deployed and verified working (2026-09-11).** Live at
+`https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net`,
+in resource group `summation-exchange-bridge-rg`. All three endpoints were
+exercised directly against real Exchange data (a full grant → verify →
+revoke → verify round trip left no lasting change), and anonymous access is
+confirmed blocked (401) now that Easy Auth is enabled. Nothing in
+`taskpane.html` calls it yet — that's the one remaining step, deliberately
+held back until the bridge was proven solid standalone.
+
 A small Azure Function that does the three things Microsoft Graph cannot do at
 all: list, grant, and revoke **Full Access** permission on a project shared
 mailbox. This is what unblocks:
@@ -7,9 +16,6 @@ mailbox. This is what unblocks:
 - Reviewing/managing who has access to a shared mailbox
 - A real "un-map from Outlook" step when converting a project from Active to Archive
 - The planned "Manage Outlook Shared Mailboxes" two-pane UI
-
-Nothing in `taskpane.html` calls this yet — that's a deliberate next step once
-this is deployed and tested on its own.
 
 ## Why this exists
 
@@ -26,13 +32,14 @@ over HTTPS instead of needing Exchange access itself.
 **This is the part most likely to get quietly merged into one thing if rushed
 — don't.** They serve different trust levels:
 
-1. **"Summation Assistant"** (already exists, client ID
-   `80497ed0-ecd5-475e-97e0-5c9e90fb8a0d`) — the public, browser-facing sign-in
-   app the taskpane already uses via MSAL. To call this bridge, it needs one
-   addition: an **exposed API scope** (e.g. `api://80497ed0-.../MailboxBridge.Call`)
-   that the taskpane requests like any other incremental-consent scope (same
-   pattern as `Sites.Selected`), then sends as the Bearer token to the Function.
-   This identifies *which signed-in Summation user* is calling.
+1. **"Summation Outlook Add-in"** (already exists, client ID
+   `80497ed0-ecd5-475e-97e0-5c9e90fb8a0d`; branded "Summation Assistant" in the
+   taskpane UI, but that's just its display name there) — the public,
+   browser-facing sign-in app the taskpane already uses via MSAL. It now has
+   an **exposed API scope**, `api://80497ed0-.../MailboxBridge.Call`, that the
+   taskpane requests like any other incremental-consent scope (same pattern as
+   `Sites.Selected`), then sends as the Bearer token to the Function. This
+   identifies *which signed-in Summation user* is calling.
 
 2. **"Summation Exchange Bridge"** (new, to be created) — an app-only,
    **certificate-based** identity used exclusively by the Function's server-side
@@ -59,26 +66,59 @@ Azure Function  ──[App Service Authentication validates the token]──┐
 Exchange Online PowerShell (Get/Add/Remove-MailboxPermission) ◄──────┘
 ```
 
-## Least privilege on the Exchange side
+## Least privilege on the Exchange side — plan vs. reality
 
-Rather than assigning the bridge identity a broad role like Exchange
-Administrator, `setup-exchange-rbac.ps1` creates:
+The original design (and `setup-exchange-rbac.ps1`, still present) tried to
+avoid assigning the bridge identity a broad role like Exchange Administrator,
+by creating:
 
 - A **custom management role** cloned from the built-in "Mail Recipients"
   role, then trimmed to exactly three cmdlets: `Get-MailboxPermission`,
   `Add-MailboxPermission`, `Remove-MailboxPermission`.
 - A **management scope** restricting that role to mailboxes matching the
   `SUPER*`/`SUADL*`/`ENPER*`/`ENADL*` naming convention.
+- `New-ManagementRoleAssignment -App <id> -Role <role> -CustomResourceScope <scope>`
+  to assign that scoped role to the bridge's service principal.
 
-So even in the worst case (the certificate is somehow compromised), this
-identity cannot touch anyone's personal mailbox, cannot do anything to
-recipients outside the project-mailbox naming convention, and cannot run any
-cmdlet beyond those three.
+**This doesn't actually work for this authentication flow.** Exchange
+Online's app-only `Connect-ExchangeOnline -AppId -CertificateThumbprint` login
+doesn't support fine-grained delegation the way Microsoft Graph does — it's
+enforced as all-or-nothing, and requires the service principal to hold the
+actual Entra ID **Exchange Administrator** directory role. A custom-scoped
+Exchange management role assignment doesn't satisfy that check at all (it
+fails with "the role assigned to application ... isn't supported in this
+scenario"). This was confirmed both by direct testing and by Microsoft
+support threads describing the same limitation.
 
-The Function code adds a second, redundant layer of the same check
-(`Test-ProjectMailboxAddress` / `Test-SummationUserAddress` in
-`Modules/MailboxBridge/MailboxBridge.psm1`) so a bug in the Exchange-side scope
-isn't the only thing standing between this and touching the wrong mailbox.
+So the bridge's service principal is assigned the full **Exchange
+Administrator** directory role (Entra ID → Roles & admins → Exchange
+Administrator → assignments), which grants it broad rights across all of
+Exchange Online (mail flow rules, connectors, retention, every mailbox — not
+just Full Access management), tenant-wide. This is a real, accepted trade-off,
+not an oversight — see the discussion that led to it for the full reasoning.
+
+The custom role (`SummationMailboxPermissionManager`) and scope
+(`SummationProjectMailboxes`) created by `setup-exchange-rbac.ps1` are now
+**inert leftover configuration** — harmless, but not doing anything, since
+they were never successfully assigned to the app before this was discovered.
+Worth deleting at some point for clarity (`Remove-ManagementRoleAssignment`,
+`Remove-ManagementRole`, `Remove-ManagementScope`), not urgent.
+
+**What actually keeps the blast radius narrow, given the broader credential:**
+
+- The Function code's own validation (`Test-ProjectMailboxAddress` /
+  `Test-SummationUserAddress` in `Modules/MailboxBridge/MailboxBridge.psm1`)
+  still means the bridge itself only ever calls the three intended cmdlets on
+  project-pattern mailboxes — as long as nobody changes that code.
+- The certificate's private key is never reachable from any public-facing
+  code — only from the Function App's own certificate store.
+- Easy Auth (see below) means only tokens issued to the taskpane app, for
+  signed-in Summation users, in Summation's own tenant, can reach the
+  endpoints at all — there's no anonymous path to triggering anything.
+- The security boundary is therefore "trust the Function code + who has
+  Azure access to change it," not "Exchange enforces the limit" — a strictly
+  weaker guarantee than originally designed, worth remembering if this bridge
+  is ever extended to do more than these three actions.
 
 ## API contract
 
@@ -104,39 +144,55 @@ unreliable without the user manually removing it. Whatever UI calls this
 endpoint should say "access has been revoked; they may need to remove it from
 their own Outlook if it lingers," not promise instant disappearance.
 
-## One-time setup runbook
+## One-time setup runbook (as actually completed)
 
-1. **Create the Azure subscription** (Pay-As-You-Go is fine — no resources
-   deployed yet means no cost).
-2. **Create the "Summation Exchange Bridge" app registration** in Entra ID:
-   - No redirect URI, no delegated permissions.
-   - API permissions → add → the "Office 365 Exchange Online" API → Application
-     permissions → `Exchange.ManageAsApp` → grant admin consent.
-   - Generate a certificate (`New-SelfSignedCertificate` or a real CA-issued
-     one) and upload the **public** half to this app registration's
-     Certificates & secrets. Keep the private half for step 5.
-3. **Add an exposed API scope to the existing "Summation Assistant" app
-   registration** (e.g. `MailboxBridge.Call`), so the taskpane can request a
-   token for it via MSAL the same way it already requests `Sites.Selected`.
-4. **Run `setup-exchange-rbac.ps1`** — connect as a real Exchange/Global admin
-   and create the scoped custom role, then assign it to the Exchange Bridge
-   app's client ID.
-5. **Create the Function App** (Consumption plan, PowerShell runtime):
-   - Deploy this folder's contents to it.
-   - Upload the certificate's private half (`.pfx`) to the Function App's
-     Certificates blade; set `WEBSITE_LOAD_CERTIFICATES` and
-     `EXO_CERT_THUMBPRINT` to its thumbprint.
-   - Set `EXO_APP_ID` to the Exchange Bridge app's client ID, `EXO_ORGANIZATION`
-     to `summationptyltd.onmicrosoft.com`.
-   - Enable **App Service Authentication** (Easy Auth), configured to require
-     a valid Entra ID token whose audience matches the `MailboxBridge.Call`
-     scope from step 3. This is what actually protects every route — the
-     `"authLevel": "anonymous"` in each `function.json` is intentional and only
-     safe because Easy Auth enforces authentication before a request ever
-     reaches the function code. Skipping this step leaves the bridge open to
-     the internet.
-6. **Test each endpoint directly** (e.g. via `curl` with a token acquired
-   through the Entra ID device-code flow) before wiring the taskpane to it.
+1. ✅ **Azure subscription** created (`Summation Exchange Bridge`, Microsoft
+   Azure Plan, billed to Summation Pty Ltd's own billing account).
+2. ✅ **"Summation Exchange Bridge" app registration** created in Entra ID
+   (client ID `0b1fee8e-5157-4234-8a96-b8fb981aa1b1`), single-tenant, no
+   redirect URI. Certificate generated locally
+   (`New-SelfSignedCertificate`, thumbprint
+   `1CEFB4F1B21952E56CE35F7B08992DEB9385D86F`), public half uploaded to the
+   app registration's Certificates & secrets. `Exchange.ManageAsApp`
+   application permission added and admin-consented.
+3. ✅ **Exposed an API scope on the existing "Summation Outlook Add-in" app
+   registration** (client ID `80497ed0-ecd5-475e-97e0-5c9e90fb8a0d` — this is
+   the app the taskpane signs in with; "Summation Assistant" is just its
+   taskpane branding, not its Entra display name). Scope:
+   `api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/MailboxBridge.Call`, consent
+   type "Admins and users".
+4. ⚠️ **`setup-exchange-rbac.ps1` was run but turned out insufficient** — see
+   "Least privilege on the Exchange side" above. What actually had to be done
+   instead: assign the bridge's service principal the **Exchange
+   Administrator** directory role (Entra ID → Roles & admins → Exchange
+   Administrator → Add assignments → "Summation Exchange Bridge").
+5. ✅ **Function App created**: `summation-exchange-bridge`, Consumption
+   (Windows), PowerShell 7.6, Australia East, Application Insights enabled,
+   resource group `summation-exchange-bridge-rg`. Basic authentication is
+   disabled on it (the secure default), so deployment used Azure CLI
+   (`az functionapp deployment source config-zip`, authenticated via `az
+   login`) rather than a publish-profile/FTP method.
+   - Code deployed from this folder; all three functions confirmed present
+     (`GetMailboxPermissions`, `GrantMailboxPermission`,
+     `RevokeMailboxPermission`) at their expected routes.
+   - Certificate's private half (`.pfx`) uploaded via the Function App's
+     Certificates blade.
+   - App settings set: `EXO_APP_ID`, `EXO_ORGANIZATION`
+     (`summationptyltd.onmicrosoft.com`), `EXO_CERT_THUMBPRINT`,
+     `WEBSITE_LOAD_CERTIFICATES` (same thumbprint).
+   - **App Service Authentication (Easy Auth) enabled**: Microsoft provider,
+     existing app registration "Summation Outlook Add-in", client application
+     requirement "Allow requests only from this application itself", tenant
+     requirement restricted to Summation's own tenant, "Require
+     authentication" with unauthenticated requests returning 401. Note this
+     flow generates a client secret on the "Summation Outlook Add-in" app
+     registration, stored only in the Function App's own configuration —
+     this doesn't affect or get used by the taskpane's own public/PKCE MSAL
+     sign-in flow.
+6. ✅ **Tested directly** (before touching the taskpane at all): a full
+   grant → verify → revoke → verify round trip against a real project
+   mailbox left no lasting change, and an anonymous request after enabling
+   Easy Auth correctly returned 401.
 
 ## Cost
 
@@ -147,11 +203,15 @@ team), realistic expected cost is **$0/month**, plus fractions of a cent for
 the required linked Storage Account. See [Azure Functions
 pricing](https://azure.microsoft.com/en-us/pricing/details/functions/).
 
-## What's still needed after this is deployed
+## What's still needed
 
 - Wire `taskpane.html` to actually call these three endpoints (not done —
-  deliberately held back until this bridge is live and tested standalone).
+  deliberately held back until this bridge was live and tested standalone,
+  which is now the case).
 - Decide the UI for "Manage Outlook Shared Mailboxes" (the two-pane layout
   already discussed) and the un-mapping step in Convert Active to Archive.
-- Optional: turn on Application Insights on the Function App for an audit
-  trail of who granted/revoked what and when.
+- Optional cleanup: delete the inert `SummationMailboxPermissionManager`
+  custom role and `SummationProjectMailboxes` scope (see above).
+- Application Insights is already enabled on the Function App — worth
+  checking its logs once real usage starts, to confirm grant/revoke actions
+  are showing up as expected for audit purposes.
