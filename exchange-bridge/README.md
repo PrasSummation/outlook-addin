@@ -125,7 +125,7 @@ Worth deleting at some point for clarity (`Remove-ManagementRoleAssignment`,
 | Method | Route | Body / Query | Returns |
 |---|---|---|---|
 | `GET` | `/api/mailbox-permissions?mailbox=<smtp>` | — | `{ mailbox, members: [{ user, accessRights, isInherited }] }` |
-| `POST` | `/api/mailbox-permissions/grant` | `{ mailbox, user }` | `{ mailbox, user, action: "granted" }` |
+| `POST` | `/api/mailbox-permissions/grant` | `{ mailbox, user, autoMapping? }` (autoMapping defaults to `true`) | `{ mailbox, user, action: "granted", autoMapping }` |
 | `POST` | `/api/mailbox-permissions/revoke` | `{ mailbox, user }` | `{ mailbox, user, action: "revoked" }` |
 
 Every endpoint rejects (`403`) any `mailbox` that doesn't match the project

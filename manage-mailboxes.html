@@ -48,6 +48,9 @@
     .arrows button:hover{background:var(--green-pale);border-color:var(--green);color:var(--green-dark)}
     .arrows button:disabled{opacity:.4;cursor:not-allowed}
     .arrows button:disabled:hover{background:#fff;border-color:var(--grey-200);color:var(--grey-600)}
+    .automapping-toggle{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--grey-500);
+      margin-top:8px;cursor:pointer;white-space:nowrap}
+    .automapping-toggle input{accent-color:var(--green);margin:0}
 
     .radio-row{display:flex;gap:16px;margin-bottom:12px}
     .radio-row label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--grey-900)}
@@ -100,6 +103,10 @@
       <div class="arrows">
         <button id="removeButton" title="Revoke access" disabled>&rarr;</button>
         <button id="addButton" title="Grant access" disabled>&larr;</button>
+        <label class="automapping-toggle" title="When granting access: automatically add this mailbox to your Outlook (recommended), or grant access only, without auto-adding it.">
+          <input type="checkbox" id="autoMappingCheckbox" checked />
+          Automap
+        </label>
       </div>
 
       <div class="pane">
@@ -235,11 +242,11 @@
         return response.json();
     }
 
-    async function grantMailboxPermissionViaBridge(mailbox, user, token) {
+    async function grantMailboxPermissionViaBridge(mailbox, user, token, autoMapping) {
         const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions/grant`, {
             method: "POST",
             headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ mailbox, user })
+            body: JSON.stringify({ mailbox, user, autoMapping })
         });
         if (!response.ok) {
             const errorText = await response.text();
@@ -392,14 +399,17 @@
 
     async function handleAdd() {
         if (!selectedAvailable) return;
-        if (!confirm(`Grant yourself Full Access to "${selectedAvailable.name}"?`)) return;
+        const autoMapping = document.getElementById("autoMappingCheckbox").checked;
+        if (!confirm(`Grant yourself Full Access to "${selectedAvailable.name}"${autoMapping ? "" : " (without automapping)"}?`)) return;
 
         document.getElementById("addButton").disabled = true;
         updateStatus(`Granting access to ${selectedAvailable.name}...`);
         try {
             const token = await signInAndGetToken(bridgeRequest, true);
-            await grantMailboxPermissionViaBridge(selectedAvailable.mail, currentUserEmail, token);
-            updateStatus(`Access granted. It may take a while to actually appear in Outlook, and Outlook's own display limit may keep it hidden regardless.`);
+            await grantMailboxPermissionViaBridge(selectedAvailable.mail, currentUserEmail, token, autoMapping);
+            updateStatus(autoMapping
+                ? `Access granted. It may take a while to actually appear in Outlook, and Outlook's own display limit may keep it hidden regardless.`
+                : `Access granted without automapping — it won't be added to your Outlook automatically; add it yourself via "Open another mailbox" if you want it visible.`);
             await loadData();
         } catch (err) {
             console.error("Failed to add mailbox:", err);
