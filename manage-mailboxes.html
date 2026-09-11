@@ -270,15 +270,23 @@
             const mailboxes = await getSharedMailboxes(graphToken);
 
             const bridgeToken = await signInAndGetToken(bridgeRequest, true);
-            allMailboxes = await Promise.all(mailboxes.map(async m => {
-                try {
-                    const data = await getMailboxPermissionsViaBridge(m.mail, bridgeToken);
-                    const isMapped = data.members.some(member => member.user.toLowerCase() === currentUserEmail.toLowerCase());
-                    return { ...m, isMapped, error: null };
-                } catch (err) {
-                    return { ...m, isMapped: false, error: err.message };
-                }
-            }));
+            const results = [];
+            const BATCH_SIZE = 10;
+            for (let i = 0; i < mailboxes.length; i += BATCH_SIZE) {
+                const batch = mailboxes.slice(i, i + BATCH_SIZE);
+                updateStatus(`Checking mailboxes ${i + 1}-${Math.min(i + BATCH_SIZE, mailboxes.length)} of ${mailboxes.length}...`);
+                const batchResults = await Promise.all(batch.map(async m => {
+                    try {
+                        const data = await getMailboxPermissionsViaBridge(m.mail, bridgeToken);
+                        const isMapped = data.members.some(member => member.user.toLowerCase() === currentUserEmail.toLowerCase());
+                        return { ...m, isMapped, error: null };
+                    } catch (err) {
+                        return { ...m, isMapped: false, error: err.message };
+                    }
+                }));
+                results.push(...batchResults);
+            }
+            allMailboxes = results;
 
             renderMappedList();
             renderAvailableList();

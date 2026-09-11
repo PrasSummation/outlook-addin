@@ -17,7 +17,14 @@ function Test-SummationUserAddress {
 
 # Exchange Online sessions can go stale between invocations on a warm instance,
 # so check-and-reconnect rather than assuming profile.ps1's connection is still good.
+# Also explicitly (re-)import the module rather than trusting it's already loaded in
+# this runspace: under heavy concurrent load, Azure can spin up new instances faster
+# than the platform's managed-dependency install finishes, and a request landing on
+# one of those mid-install gets "Get-MailboxPermission is not recognized" even though
+# Get-ConnectionInformation (also from this module) appeared to work moments earlier.
 function Connect-IfNeeded {
+    Import-Module ExchangeOnlineManagement -ErrorAction Stop
+
     if (Get-ConnectionInformation -ErrorAction SilentlyContinue) {
         return
     }
