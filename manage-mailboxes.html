@@ -282,7 +282,17 @@
 
             renderMappedList();
             renderAvailableList();
-            updateStatus("");
+
+            const failures = allMailboxes.filter(m => m.error);
+            if (failures.length > 0) {
+                updateStatus(
+                    `Warning: could not check ${failures.length} of ${allMailboxes.length} mailboxes (shown as "not mapped" as a fallback). ` +
+                    `First error: ${failures[0].error}`,
+                    true
+                );
+            } else {
+                updateStatus("");
+            }
         } catch (err) {
             console.error("Failed to load mailboxes:", err);
             updateStatus(`Error: ${err.message}`, true);
