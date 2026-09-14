@@ -70,12 +70,18 @@
     .result-item.selectable{display:flex;align-items:center;gap:8px;cursor:pointer}
     .result-item.selectable input{accent-color:var(--amber);margin:0;flex:none}
     .attention-actions{margin-top:10px}
-    #enableAutomapButton{padding:8px 16px;font:600 12.5px var(--font-body);color:#fff;background:var(--amber);
+    .action-button{padding:8px 16px;font:600 12.5px var(--font-body);color:#fff;background:var(--amber);
       border:1px solid var(--amber);border-radius:4px;cursor:pointer}
-    #enableAutomapButton:hover{opacity:.9}
-    #enableAutomapButton:disabled{opacity:.5;cursor:not-allowed}
-    #automapActionStatus{font-size:12px;color:var(--grey-600);margin-top:8px;white-space:pre-wrap}
-    #automapActionStatus.error{color:#B3261E}
+    .action-button:hover{opacity:.9}
+    .action-button:disabled{opacity:.5;cursor:not-allowed}
+    .action-button.neutral{background:var(--grey-500);border-color:var(--grey-500)}
+    #automapActionStatus, #unmapActionStatus{font-size:12px;color:var(--grey-600);margin-top:8px;white-space:pre-wrap}
+    #automapActionStatus.error, #unmapActionStatus.error{color:#B3261E}
+
+    #mailboxLimitStatus{font-size:12.5px;margin-top:8px}
+    #mailboxLimitStatus.limit-ok{color:var(--grey-500)}
+    #mailboxLimitStatus.limit-warning{color:var(--amber);font-weight:600}
+    #mailboxLimitStatus.limit-error{color:#B3261E;font-weight:600}
 
     .page-footer{margin-top:22px;font-size:12px;color:var(--grey-500)}
     .page-footer div{margin-bottom:4px}
@@ -111,6 +117,7 @@
       </div>
       <input type="file" id="localExportInput" accept="application/json,.json" />
       <div id="localExportStatus">No file loaded yet.</div>
+      <div id="mailboxLimitStatus"></div>
     </div>
 
     <div id="reconciliationResults"></div>
@@ -143,6 +150,8 @@
     let exchangeLoaded = false;
     let localExport = null;
     const selectedForAutomap = new Set();
+    const selectedForUnmap = new Set();
+    const MAILBOX_DISPLAY_LIMIT = 32;
 
     window.addEventListener("load", () => {
         document.getElementById("signInButton").addEventListener("click", handleLogin);
@@ -266,6 +275,7 @@
     async function loadExchangeAccess() {
         exchangeLoaded = false;
         selectedForAutomap.clear();
+        selectedForUnmap.clear();
         updateStatus("Checking your Exchange permissions...");
         try {
             const graphToken = await signInAndGetToken(graphRequest, true);
@@ -339,9 +349,11 @@
                 }
                 localExport = parsed;
                 selectedForAutomap.clear();
+                selectedForUnmap.clear();
                 statusEl.className = "";
                 statusEl.textContent = `Loaded ${parsed.mailboxes.length} mailbox(es) from your Outlook` +
                     (parsed.exportedAtUtc ? `, exported ${new Date(parsed.exportedAtUtc).toLocaleString()}.` : ".");
+                renderMailboxLimitStatus(parsed.mailboxes.length);
                 renderReconciliation();
             } catch (err) {
                 statusEl.className = "error";
@@ -353,6 +365,22 @@
             statusEl.textContent = "Could not read the selected file.";
         };
         reader.readAsText(file);
+    }
+
+    // Outlook only reliably shows up to ~32 additional mailboxes in the folder pane; beyond
+    // that it can silently stop displaying more, with no warning to the user.
+    function renderMailboxLimitStatus(count) {
+        const el = document.getElementById("mailboxLimitStatus");
+        if (count >= MAILBOX_DISPLAY_LIMIT) {
+            el.className = "limit-error";
+            el.textContent = `${count} of ~${MAILBOX_DISPLAY_LIMIT} mailboxes Outlook will show — you've reached (or exceeded) the limit. Outlook may be silently hiding some of these; consider removing automapping for any you don't actively need visible.`;
+        } else if (count >= MAILBOX_DISPLAY_LIMIT - 4) {
+            el.className = "limit-warning";
+            el.textContent = `${count} of ~${MAILBOX_DISPLAY_LIMIT} mailboxes Outlook will show — approaching the limit.`;
+        } else {
+            el.className = "limit-ok";
+            el.textContent = `${count} of ~${MAILBOX_DISPLAY_LIMIT} mailboxes currently visible in your Outlook.`;
+        }
     }
 
     function renderGroup(className, title, items, hint) {
@@ -385,7 +413,7 @@
         myAccess.forEach(m => {
             const match = findLocalMatch(m);
             if (match) {
-                confirmed.push(m.name);
+                confirmed.push(m);
                 matchedLocalEntries.add(match);
             } else {
                 grantedNotVisible.push(m);
@@ -397,8 +425,7 @@
         const localUncheckable = unmatchedLocal.filter(entry => !looksLikeProjectMailbox(entry)).map(entry => entry.displayName);
 
         let html = "";
-        html += renderGroup("confirmed", "&#9989; Confirmed &mdash; access granted and visible in your Outlook", confirmed,
-            "These match up: you have Full Access permission and the mailbox is genuinely present in your Outlook right now.");
+        html += renderConfirmedGroup(confirmed);
         html += renderAttentionGroup(grantedNotVisible);
         html += renderGroup("unaccounted", "&#8505;&#65039; Visible in your Outlook, but no Full Access permission on record", localOnly,
             "These are showing up in your Outlook profile, but this bridge doesn't show Full Access granted for you on them &mdash; could be Send As access, an older/manual setup, or a naming mismatch.");
@@ -414,8 +441,79 @@
                 renderReconciliation();
             });
         });
+        container.querySelectorAll('input[data-unmap-mailbox]').forEach(cb => {
+            cb.addEventListener("change", () => {
+                if (cb.checked) selectedForUnmap.add(cb.dataset.unmapMailbox);
+                else selectedForUnmap.delete(cb.dataset.unmapMailbox);
+                renderReconciliation();
+            });
+        });
         const enableButton = document.getElementById("enableAutomapButton");
         if (enableButton) enableButton.addEventListener("click", handleEnableAutomap);
+        const disableButton = document.getElementById("disableAutomapButton");
+        if (disableButton) disableButton.addEventListener("click", handleDisableAutomap);
+    }
+
+    function renderConfirmedGroup(entries) {
+        let html = `<div class="pane confirmed">
+            <h2>&#9989; Confirmed &mdash; access granted and visible in your Outlook <span class="count">(${entries.length})</span></h2>
+            <div class="hint">You have Full Access permission and the mailbox is genuinely present in your Outlook right now. Select any below to turn off automapping &mdash; this keeps your Full Access permission but stops Exchange from auto-adding it to your Outlook.</div>`;
+        if (entries.length === 0) {
+            html += `<div class="empty-message">None.</div>`;
+        } else {
+            html += `<div class="result-list">` + entries.map(m => `
+                <label class="result-item selectable">
+                    <input type="checkbox" data-unmap-mailbox="${m.mail}" ${selectedForUnmap.has(m.mail) ? "checked" : ""} />
+                    <span>${m.name}</span>
+                </label>
+            `).join("") + `</div>
+            <div class="attention-actions">
+                <button id="disableAutomapButton" class="action-button neutral" ${selectedForUnmap.size === 0 ? "disabled" : ""}>Remove Automapping for Selected (${selectedForUnmap.size})</button>
+            </div>
+            <div id="unmapActionStatus"></div>`;
+        }
+        html += `</div>`;
+        return html;
+    }
+
+    async function handleDisableAutomap() {
+        const button = document.getElementById("disableAutomapButton");
+        const statusEl = document.getElementById("unmapActionStatus");
+        const mailboxes = Array.from(selectedForUnmap);
+        if (mailboxes.length === 0) return;
+
+        if (!confirm(
+            `Remove automapping for ${mailboxes.length} mailbox(es)? Your Full Access permission stays the same — ` +
+            `${mailboxes.length > 1 ? "they" : "it"} just won't be forced back into your Outlook automatically. ` +
+            `It can still take a while to disappear, and you may need to remove ${mailboxes.length > 1 ? "them" : "it"} manually if it lingers.`
+        )) return;
+
+        button.disabled = true;
+        try {
+            const token = await signInAndGetToken(bridgeRequest, true);
+            const results = [];
+            for (const mailbox of mailboxes) {
+                statusEl.className = "";
+                statusEl.textContent = `Removing automapping for ${mailbox}...`;
+                try {
+                    await grantMailboxPermissionViaBridge(mailbox, currentUserEmail, token, false);
+                    results.push({ mailbox, error: null });
+                } catch (err) {
+                    results.push({ mailbox, error: err.message });
+                }
+            }
+            const failed = results.filter(r => r.error);
+            statusEl.className = failed.length > 0 ? "error" : "";
+            statusEl.textContent = failed.length === 0
+                ? `Done. Automapping removed for ${results.length} mailbox(es) — it can take a while to actually disappear from Outlook, and you may need to remove it manually if it lingers.`
+                : `${results.length - failed.length} of ${results.length} succeeded. First error: ${failed[0].error}`;
+            selectedForUnmap.clear();
+            renderReconciliation();
+        } catch (err) {
+            statusEl.className = "error";
+            statusEl.textContent = `Error: ${err.message}`;
+            button.disabled = false;
+        }
     }
 
     function renderAttentionGroup(entries) {
@@ -432,7 +530,7 @@
                 </label>
             `).join("") + `</div>
             <div class="attention-actions">
-                <button id="enableAutomapButton" ${selectedForAutomap.size === 0 ? "disabled" : ""}>Enable Automapping for Selected (${selectedForAutomap.size})</button>
+                <button id="enableAutomapButton" class="action-button" ${selectedForAutomap.size === 0 ? "disabled" : ""}>Enable Automapping for Selected (${selectedForAutomap.size})</button>
             </div>
             <div id="automapActionStatus"></div>`;
         }
