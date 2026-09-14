@@ -2,7 +2,7 @@
 # this bridge exists to do exactly three things (list/grant/revoke Full Access
 # on project mailboxes), not to proxy arbitrary Exchange Online PowerShell.
 
-$ProjectMailboxPattern = '^[a-zA-Z]{5}\d{5}_.+@summation\.au$'
+$ProjectMailboxPattern = '^[a-zA-Z]{5}\d{5}[_-].+@summation\.au$'
 $SummationUserPattern = '^[^@]+@summation\.au$'
 
 function Test-ProjectMailboxAddress {

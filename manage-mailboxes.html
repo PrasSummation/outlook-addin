@@ -232,14 +232,14 @@
     // Project mailbox names are COMBO + YYNNN + "_" + name (e.g. SUPER24007_ProjectName).
     // Sorting by this descending gives "latest projects first".
     function extractProjectNumber(name) {
-        const match = /^[a-zA-Z]{5}(\d{5})_/.exec(name || "");
+        const match = /^[a-zA-Z]{5}(\d{5})[_-]/.exec(name || "");
         return match ? parseInt(match[1], 10) : -Infinity;
     }
 
     async function getSharedMailboxes(token) {
         const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses&$top=999";
         const users = await graphGetAll(url, token);
-        const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}_.*@summation\.au$/i;
+        const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}[_-].*@summation\.au$/i;
         return users
             .filter(user => user.assignedLicenses.length === 0 && user.mail && projectMailboxRegex.test(user.mail))
             .map(user => ({ name: user.mail.split("@")[0], mail: user.mail, combo: user.mail.slice(0, 5).toUpperCase() }))

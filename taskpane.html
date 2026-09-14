@@ -303,7 +303,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.15";
+    const APP_VERSION = "9.16";
 
     let msalInstance;
     let folderEntries = [];
@@ -503,7 +503,7 @@
     // Sorting by this descending gives "latest projects first" without depending on locale string
     // comparison, which breaks once Perth (PER) and Adelaide (ADL) entries are interleaved.
     function extractProjectNumber(name) {
-        const match = /^[a-zA-Z]{5}(\d{5})_/.exec(name || "");
+        const match = /^[a-zA-Z]{5}(\d{5})[_-]/.exec(name || "");
         return match ? parseInt(match[1], 10) : -Infinity;
     }
 
@@ -573,7 +573,7 @@
     async function getSharedMailboxes(token) {
         const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses&$top=999";
         const users = await graphGetAll(url, token);
-        const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}_.*@summation\.au$/i;
+        const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}[_-].*@summation\.au$/i;
         const sharedMailboxes = users.filter(user =>
             user.assignedLicenses.length === 0 && user.mail && projectMailboxRegex.test(user.mail)
         );
@@ -713,7 +713,7 @@
     async function getStaffByDepartment(department, token) {
         const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,department,assignedLicenses,accountEnabled&$top=999";
         const users = await graphGetAll(url, token);
-        const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}_.*@summation\.au$/i;
+        const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}[_-].*@summation\.au$/i;
         return users
             .filter(u => u.assignedLicenses.length > 0 && u.accountEnabled !== false)
             .map(u => ({ name: u.displayName, mail: u.mail || u.userPrincipalName, department: (u.department || "").trim() }))
