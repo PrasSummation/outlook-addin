@@ -78,15 +78,15 @@
 
     /* ── Action tiles ──────────────────────────────────────────────────── */
     #topActions{display:block;margin:0 0 18px}
-    #newProjectButton,#convertProjectButton,#convertToArchiveButton,#searchMailboxButton,#manageMembersButton{width:100%;margin:0 0 9px;padding:11px 12px;
+    #newProjectButton,#convertProjectButton,#convertToArchiveButton,#createSharedMailboxButton,#searchMailboxButton,#manageMembersButton{width:100%;margin:0 0 9px;padding:11px 12px;
       background:#fff;border:1px solid var(--grey-200);border-radius:10px;
       font-weight:400;color:inherit;transition:box-shadow 180ms ease,transform 180ms ease}
-    #newProjectButton:hover,#convertProjectButton:hover,#convertToArchiveButton:hover,#searchMailboxButton:hover,#manageMembersButton:hover{background:#fff;
+    #newProjectButton:hover,#convertProjectButton:hover,#convertToArchiveButton:hover,#createSharedMailboxButton:hover,#searchMailboxButton:hover,#manageMembersButton:hover{background:#fff;
       border-color:var(--grey-200);transform:translateY(-2px);box-shadow:0 6px 14px rgba(0,0,0,.09)}
     .tile{display:flex;align-items:center;gap:11px;text-align:left}
     .tile .ico{flex:none;display:flex;align-items:center;justify-content:center;
       width:28px;height:28px;border-radius:4px;background:var(--green-pale)}
-    #convertProjectButton .tile .ico,#convertToArchiveButton .tile .ico,#searchMailboxButton .tile .ico,#manageMembersButton .tile .ico{background:var(--grey-100)}
+    #convertProjectButton .tile .ico,#convertToArchiveButton .tile .ico,#createSharedMailboxButton .tile .ico,#searchMailboxButton .tile .ico,#manageMembersButton .tile .ico{background:var(--grey-100)}
     .tile .txt{display:block}
     .tile .txt b{display:block;font-size:13px;font-weight:600;color:var(--grey-900)}
     .tile .txt i{display:block;font-style:normal;font-size:10.5px;color:var(--grey-400);margin-top:2px}
@@ -169,6 +169,7 @@
       <button id="newProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.5"><path d="M7 2v10M2 7h10"/></svg></span><span class="txt"><b>New BD project</b><i>Allocate the next number and file this email</i></span></span></button>
       <button id="convertProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2 7h10M8.5 3.5 12 7l-3.5 3.5"/></svg></span><span class="txt"><b>Change BD to Active project</b><i>Move an Archive folder into Active</i></span></span></button>
       <button id="convertToArchiveButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M12 7H2M5.5 3.5 2 7l3.5 3.5"/></svg></span><span class="txt"><b>Convert Active to Archive</b><i>Move a project folder from Active into Archive</i></span></span></button>
+      <button id="createSharedMailboxButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><rect x="1.5" y="3" width="11" height="8" rx="1.5"/><path d="M1.8 3.8 7 7.5l5.2-3.7"/></svg></span><span class="txt"><b>Create Shared Mailbox</b><i>Create a project mailbox and add a team as members</i></span></span></button>
       <button id="searchMailboxButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><circle cx="6" cy="6" r="4"/><path d="M9.5 9.5 13 13"/></svg></span><span class="txt"><b>Search Shared Mailbox Online</b><i>Find any project mailbox and open it in Outlook Web</i></span></span></button>
       <button id="manageMembersButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><rect x="1.5" y="3" width="4.5" height="8" rx="1"/><rect x="8" y="3" width="4.5" height="8" rx="1"/><path d="M6 5.5h2M6 8.5h2"/></svg></span><span class="txt"><b>Manage Shared Mailbox Members</b><i>Add team members to project mailboxes in bulk</i></span></span></button>
     </div>
@@ -283,6 +284,49 @@
       </div>
     </div>
 
+    <div id="createSharedMailboxWizard" style="display: none;">
+      <button id="csmBackToBrowserButton" class="small-button secondary-button">&larr; Back</button>
+
+      <div id="csmStepSetup">
+        <label>Service</label>
+        <div class="radio-row">
+          <label><input type="radio" name="csmService" value="Sustainability" checked /> Sustainability</label>
+          <label><input type="radio" name="csmService" value="Energy" /> Energy</label>
+          <label><input type="radio" name="csmService" value="Other" /> Other</label>
+        </div>
+        <label for="csmFilterBox">Search Archive &amp; Active project folders</label>
+        <input type="text" id="csmFilterBox" placeholder="Type to search..." />
+        <div id="csmFolderList"></div>
+
+        <hr style="margin-top: 16px; margin-bottom: 16px;">
+        <label for="csmCustomName">Or enter a custom mailbox name</label>
+        <input type="text" id="csmCustomName" placeholder="e.g., SUPER26099_New Project" />
+        <div class="hint">Tip: prefix with a project code (e.g. SUPER26099_) so it's recognized as a project mailbox.</div>
+        <button id="csmUseCustomNameButton" class="small-button">Use This Name</button>
+
+        <div id="csmSetupStatus"></div>
+      </div>
+
+      <div id="csmStepMembers" style="display: none;">
+        <div id="csmMembersSummary"></div>
+        <label>Add as members</label>
+        <div class="radio-row">
+          <label><input type="radio" name="csmTeam" value="Sustainability" checked /> Sustainability team</label>
+          <label><input type="radio" name="csmTeam" value="Energy" /> Energy team</label>
+          <label><input type="radio" name="csmTeam" value="All" /> All (both teams)</label>
+        </div>
+        <div id="csmMembersStatus"></div>
+        <button id="csmStopRetryButton" class="secondary-button" style="display:none;" title="Show the result now with whatever access grants have succeeded so far; any still failing can be retried later via Manage Shared Mailbox Members.">Stop Waiting</button>
+        <button id="csmCreateButton">Create &amp; Add Members</button>
+        <button id="csmBackToSetupButton" class="secondary-button">&larr; Choose a Different Name</button>
+      </div>
+
+      <div id="csmStepResult" style="display: none;">
+        <div id="csmResultSummary"></div>
+        <button id="csmStartOverButton">Create Another</button>
+      </div>
+    </div>
+
     <div id="searchMailboxWizard" style="display: none;">
       <button id="smBackToBrowserButton" class="small-button secondary-button">&larr; Back</button>
 
@@ -303,7 +347,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.16";
+    const APP_VERSION = "9.17";
 
     let msalInstance;
     let folderEntries = [];
@@ -398,6 +442,17 @@
         document.getElementById("caBackToBrowseButton").addEventListener("click", () => showConvertToArchiveStep("browse"));
         document.getElementById("caConfirmButton").addEventListener("click", handleConvertToArchiveConfirm);
         document.getElementById("caStartOverButton").addEventListener("click", openConvertToArchiveWizard);
+
+        document.getElementById("createSharedMailboxButton").addEventListener("click", openCreateSharedMailboxWizard);
+        document.getElementById("csmBackToBrowserButton").addEventListener("click", closeCreateSharedMailboxWizard);
+        document.getElementById("csmFilterBox").addEventListener("input", () => renderCsmFolderList(document.getElementById("csmFilterBox").value));
+        document.querySelectorAll('input[name="csmService"]').forEach(el =>
+            el.addEventListener("change", () => renderCsmFolderList(document.getElementById("csmFilterBox").value))
+        );
+        document.getElementById("csmUseCustomNameButton").addEventListener("click", handleCsmUseCustomName);
+        document.getElementById("csmCreateButton").addEventListener("click", handleCsmCreate);
+        document.getElementById("csmBackToSetupButton").addEventListener("click", () => showCsmStep("setup"));
+        document.getElementById("csmStartOverButton").addEventListener("click", handleCsmStartOver);
         document.getElementById("searchMailboxButton").addEventListener("click", openSearchMailboxWizard);
         document.getElementById("smBackToBrowserButton").addEventListener("click", closeSearchMailboxWizard);
         document.getElementById("smFilterBox").addEventListener("input", () => renderSharedMailboxSearchList(document.getElementById("smFilterBox").value));
@@ -710,15 +765,16 @@
     // Entra ID Department field -> which project mailboxes that team should get access to.
     const DEPARTMENT_BY_COMBO_PREFIX = { SU: "Sustainability", EN: "Energy" };
 
-    async function getStaffByDepartment(department, token) {
+    async function getStaffByDepartments(departments, token) {
         const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,department,assignedLicenses,accountEnabled&$top=999";
         const users = await graphGetAll(url, token);
         const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}[_-].*@summation\.au$/i;
+        const wanted = new Set(departments.map(d => d.toLowerCase()));
         return users
             .filter(u => u.assignedLicenses.length > 0 && u.accountEnabled !== false)
             .map(u => ({ name: u.displayName, mail: u.mail || u.userPrincipalName, department: (u.department || "").trim() }))
             .filter(u => u.mail && !projectMailboxRegex.test(u.mail))
-            .filter(u => u.department.toLowerCase() === department.toLowerCase());
+            .filter(u => wanted.has(u.department.toLowerCase()));
     }
 
     async function grantMailboxPermissionViaBridge(mailbox, user, token, autoMapping) {
@@ -746,30 +802,15 @@
         });
     }
 
-    // Creates the project mailbox for a folder just converted from Archive to Active, and
-    // grants Full Access (without automapping, per policy) to every licensed staff member
-    // whose Entra ID Department matches the project's service. The mailbox account itself
-    // provisions on Exchange over the following minutes, so grants attempted immediately can
-    // fail even though the mailbox will exist shortly — this keeps retrying failed grants
-    // (not the ones that already succeeded) until they all land, a sane attempt cap is hit,
-    // or the user clicks "Stop Waiting" to see the result immediately.
-    async function createProjectMailboxAndGrantMembers(entry) {
-        const statusEl = document.getElementById("cvConfirmStatus");
-        const stopButton = document.getElementById("cvStopRetryButton");
-        const result = { mailboxName: entry.name, mailbox: null, mailboxError: null, service: null, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
-        result.service = DEPARTMENT_BY_COMBO_PREFIX[entry.combo.slice(0, 2)] || null;
-
-        statusEl.textContent = "Creating project mailbox...";
-        try {
-            const dwToken = await signInAndGetToken(directoryWriteRequest, true);
-            if (!dwToken) throw new Error("Could not get permission to create mailboxes.");
-            result.mailbox = await createMailboxAccount(entry.name, dwToken);
-        } catch (err) {
-            result.mailboxError = err.message;
-            return result;
-        }
-
-        if (!result.service) return result;
+    // Grants Full Access (without automapping, per policy) to every licensed staff member
+    // whose Entra ID Department matches one of `departments`, on `mailbox`. The mailbox
+    // account itself provisions on Exchange over the following minutes, so grants attempted
+    // immediately can fail even though the mailbox will exist shortly — this keeps retrying
+    // failed grants (not ones that already succeeded) until they all land, a sane attempt cap
+    // is hit, or the user clicks "Stop Waiting" (wired to `stopButton`) to see the result now.
+    async function grantDepartmentAccessWithRetry(mailbox, departments, statusEl, stopButton) {
+        const result = { grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
+        if (departments.length === 0) return result;
 
         let stopRequested = false;
         const stopHandler = () => { stopRequested = true; };
@@ -777,9 +818,9 @@
         stopButton.style.display = "inline-block";
 
         try {
-            statusEl.textContent = `Looking up ${result.service} team members...`;
+            statusEl.textContent = `Looking up ${departments.join(" & ")} team member(s)...`;
             const graphToken = await signInAndGetToken(graphRequest, true);
-            const staff = await getStaffByDepartment(result.service, graphToken);
+            const staff = await getStaffByDepartments(departments, graphToken);
             const bridgeToken = await signInAndGetToken(bridgeRequest, true);
 
             const grantState = new Map(staff.map(m => [m.mail, { member: m.name, error: "pending" }]));
@@ -799,7 +840,7 @@
                     const batch = pending.slice(i, i + BATCH_SIZE);
                     await Promise.all(batch.map(async member => {
                         try {
-                            await grantMailboxPermissionViaBridge(result.mailbox, member.mail, bridgeToken, false);
+                            await grantMailboxPermissionViaBridge(mailbox, member.mail, bridgeToken, false);
                             grantState.set(member.mail, { member: member.name, error: null });
                         } catch (err) {
                             grantState.set(member.mail, { member: member.name, error: err.message });
@@ -830,6 +871,49 @@
         return result;
     }
 
+    // Creates the project mailbox for a folder just converted from Archive to Active, then
+    // infers the service from its combo prefix and grants that team access.
+    async function createProjectMailboxAndGrantMembers(entry) {
+        const statusEl = document.getElementById("cvConfirmStatus");
+        const stopButton = document.getElementById("cvStopRetryButton");
+        const result = { mailboxName: entry.name, mailbox: null, mailboxError: null, service: null, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
+        result.service = DEPARTMENT_BY_COMBO_PREFIX[entry.combo.slice(0, 2)] || null;
+
+        statusEl.textContent = "Creating project mailbox...";
+        try {
+            const dwToken = await signInAndGetToken(directoryWriteRequest, true);
+            if (!dwToken) throw new Error("Could not get permission to create mailboxes.");
+            result.mailbox = await createMailboxAccount(entry.name, dwToken);
+        } catch (err) {
+            result.mailboxError = err.message;
+            return result;
+        }
+
+        if (!result.service) return result;
+
+        const grantResult = await grantDepartmentAccessWithRetry(result.mailbox, [result.service], statusEl, stopButton);
+        Object.assign(result, grantResult);
+        return result;
+    }
+
+    function renderGrantResultsHtml(label, grants, grantsError, stoppedByUser, gaveUp) {
+        if (grantsError) {
+            return `<div class="warning-box">Could not look up ${label} to add: ${grantsError}. Use Manage Shared Mailbox Members once the mailbox is provisioned.</div>`;
+        }
+        const failed = grants.filter(g => g.error);
+        const succeeded = grants.length - failed.length;
+        let html = `<div class="row">Granted ${label} (${grants.length} member(s)) access without automapping — ${succeeded} succeeded, ${failed.length} still failing.</div>`;
+        if (failed.length > 0) {
+            const reason = stoppedByUser
+                ? "You stopped waiting before all grants landed"
+                : gaveUp
+                    ? "Gave up after repeated retries"
+                    : "Still failing";
+            html += `<div class="warning-box">${reason} — this is expected if the mailbox hasn't finished provisioning yet. Retry via Manage Shared Mailbox Members once it's ready. Still pending: ${failed.map(f => f.member).join(", ")}.</div>`;
+        }
+        return html;
+    }
+
     function renderMailboxResultBox(mailboxResult) {
         const { mailboxName, mailbox, mailboxError, service, grants, grantsError, stoppedByUser, gaveUp } = mailboxResult;
         if (mailboxError) {
@@ -840,20 +924,8 @@
             <div class="row">Microsoft 365 can take several minutes (sometimes longer) to finish provisioning it.</div>`;
         if (!service) {
             html += `<div class="row">Couldn't determine a Sustainability/Energy service from "${mailboxName}", so no team members were added automatically — use Manage Shared Mailbox Members once it's provisioned.</div>`;
-        } else if (grantsError) {
-            html += `<div class="warning-box">Could not look up ${service} team members to add: ${grantsError}. Use Manage Shared Mailbox Members once the mailbox is provisioned.</div>`;
         } else {
-            const failed = grants.filter(g => g.error);
-            const succeeded = grants.length - failed.length;
-            html += `<div class="row">Granted the ${service} team (${grants.length} member(s)) access without automapping — ${succeeded} succeeded, ${failed.length} still failing.</div>`;
-            if (failed.length > 0) {
-                const reason = stoppedByUser
-                    ? "You stopped waiting before all grants landed"
-                    : gaveUp
-                        ? "Gave up after repeated retries"
-                        : "Still failing";
-                html += `<div class="warning-box">${reason} — this is expected if the mailbox hasn't finished provisioning yet. Retry via Manage Shared Mailbox Members once it's ready. Still pending: ${failed.map(f => f.member).join(", ")}.</div>`;
-            }
+            html += renderGrantResultsHtml(`the ${service} team`, grants, grantsError, stoppedByUser, gaveUp);
         }
         html += `</div>`;
         return html;
@@ -910,6 +982,7 @@
         document.getElementById("convertProjectButton").style.display = "none";
         document.getElementById("convertToArchiveButton").style.display = "none";
         document.getElementById("searchMailboxButton").style.display = "none";
+        document.getElementById("createSharedMailboxButton").style.display = "none";
         document.getElementById("newProjectWizard").style.display = "block";
         npState = {};
         document.getElementById("npNameFreeText").value = "";
@@ -924,6 +997,7 @@
         document.getElementById("convertProjectButton").style.display = "block";
         document.getElementById("convertToArchiveButton").style.display = "block";
         document.getElementById("searchMailboxButton").style.display = "block";
+        document.getElementById("createSharedMailboxButton").style.display = "block";
     }
 
     function showWizardStep(step) {
@@ -1351,6 +1425,7 @@
         document.getElementById("convertProjectButton").style.display = "none";
         document.getElementById("convertToArchiveButton").style.display = "none";
         document.getElementById("searchMailboxButton").style.display = "none";
+        document.getElementById("createSharedMailboxButton").style.display = "none";
         document.getElementById("convertWizard").style.display = "block";
         cvState = {};
         document.getElementById("cvFilterBox").value = "";
@@ -1364,6 +1439,7 @@
         document.getElementById("convertProjectButton").style.display = "block";
         document.getElementById("convertToArchiveButton").style.display = "block";
         document.getElementById("searchMailboxButton").style.display = "block";
+        document.getElementById("createSharedMailboxButton").style.display = "block";
     }
 
     function showConvertStep(step) {
@@ -1615,6 +1691,7 @@
         document.getElementById("convertProjectButton").style.display = "none";
         document.getElementById("convertToArchiveButton").style.display = "none";
         document.getElementById("searchMailboxButton").style.display = "none";
+        document.getElementById("createSharedMailboxButton").style.display = "none";
         document.getElementById("convertToArchiveWizard").style.display = "block";
         caState = {};
         document.getElementById("caFilterBox").value = "";
@@ -1628,6 +1705,7 @@
         document.getElementById("convertProjectButton").style.display = "block";
         document.getElementById("convertToArchiveButton").style.display = "block";
         document.getElementById("searchMailboxButton").style.display = "block";
+        document.getElementById("createSharedMailboxButton").style.display = "block";
     }
 
     function showConvertToArchiveStep(step) {
@@ -1835,6 +1913,188 @@
         }
     }
 
+    // ---- Create Shared Mailbox ----
+    // Standalone mailbox creation: pick a name from a combined Archive+Active project folder
+    // search, or type a custom one, then choose which team(s) to add as members.
+
+    let csmState = {};
+    let csmFolderEntries = [];
+
+    function openCreateSharedMailboxWizard() {
+        document.getElementById("folderBrowser").style.display = "none";
+        document.getElementById("newProjectButton").style.display = "none";
+        document.getElementById("convertProjectButton").style.display = "none";
+        document.getElementById("convertToArchiveButton").style.display = "none";
+        document.getElementById("createSharedMailboxButton").style.display = "none";
+        document.getElementById("searchMailboxButton").style.display = "none";
+        document.getElementById("createSharedMailboxWizard").style.display = "block";
+        csmState = {};
+        document.getElementById("csmFilterBox").value = "";
+        document.getElementById("csmCustomName").value = "";
+        document.getElementById("csmSetupStatus").textContent = "";
+        showCsmStep("setup");
+        loadArchiveAndActiveFolderNames();
+    }
+
+    function closeCreateSharedMailboxWizard() {
+        document.getElementById("createSharedMailboxWizard").style.display = "none";
+        document.getElementById("newProjectButton").style.display = "block";
+        document.getElementById("convertProjectButton").style.display = "block";
+        document.getElementById("convertToArchiveButton").style.display = "block";
+        document.getElementById("createSharedMailboxButton").style.display = "block";
+        document.getElementById("searchMailboxButton").style.display = "block";
+    }
+
+    function showCsmStep(step) {
+        document.getElementById("csmStepSetup").style.display = step === "setup" ? "block" : "none";
+        document.getElementById("csmStepMembers").style.display = step === "members" ? "block" : "none";
+        document.getElementById("csmStepResult").style.display = step === "result" ? "block" : "none";
+    }
+
+    async function loadArchiveAndActiveFolderNames() {
+        const status = document.getElementById("csmSetupStatus");
+        status.style.color = "#333";
+        status.textContent = "Loading Archive & Active project folders...";
+        try {
+            const token = await signInAndGetToken(sitesRequest, true);
+            if (!token) throw new Error("Could not get permission to access SharePoint.");
+
+            const archiveCombos = Object.keys(ARCHIVE_BRANCH_PATH);
+            const activeCombos = Object.keys(ACTIVE_BRANCH_PATH);
+            const [archiveResults, activeResults] = await Promise.all([
+                Promise.all(archiveCombos.map(async combo => {
+                    const folders = await listFolders(ARCHIVE_DRIVE_ID, ARCHIVE_BRANCH_PATH[combo], token);
+                    return folders.filter(f => !/template/i.test(f.name)).map(f => ({ name: f.name, combo, source: "Archive" }));
+                })),
+                Promise.all(activeCombos.map(async combo => {
+                    const folders = await listFolders(ACTIVE_DRIVE_ID, ACTIVE_BRANCH_PATH[combo], token);
+                    return folders.filter(f => !/template/i.test(f.name)).map(f => ({ name: f.name, combo, source: "Active" }));
+                }))
+            ]);
+
+            csmFolderEntries = [...archiveResults.flat(), ...activeResults.flat()];
+            renderCsmFolderList(document.getElementById("csmFilterBox").value);
+            status.textContent = "";
+        } catch (err) {
+            console.error("Failed to load Archive/Active project folders:", err);
+            status.textContent = `Error: ${err.message}`;
+            status.style.color = "red";
+        }
+    }
+
+    function renderCsmFolderList(filter) {
+        const list = document.getElementById("csmFolderList");
+        list.innerHTML = "";
+        const selectedService = document.querySelector('input[name="csmService"]:checked').value;
+        const normalizedFilter = (filter || "").toLowerCase();
+        const filtered = csmFolderEntries
+            .filter(entry => serviceFilterMatches(selectedService, entry.combo))
+            .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
+            .sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name));
+
+        if (filtered.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "empty-message";
+            empty.textContent = "No matching project folders found.";
+            list.appendChild(empty);
+            return;
+        }
+
+        filtered.forEach(entry => {
+            const item = document.createElement("div");
+            item.className = "folder-item";
+
+            const name = document.createElement("span");
+            name.className = "name";
+            name.textContent = entry.name;
+            item.appendChild(name);
+
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = `${entry.combo} · ${entry.source}`;
+            item.appendChild(tag);
+
+            item.addEventListener("click", () => selectCsmMailboxName(entry.name));
+            list.appendChild(item);
+        });
+    }
+
+    function selectCsmMailboxName(name) {
+        csmState.mailboxName = name;
+        document.getElementById("csmMembersSummary").innerHTML =
+            `<div class="summary-box"><div class="row"><span class="label">Mailbox name:</span> ${name}</div></div>`;
+        document.getElementById("csmMembersStatus").textContent = "";
+        showCsmStep("members");
+    }
+
+    function handleCsmUseCustomName() {
+        const status = document.getElementById("csmSetupStatus");
+        const value = (document.getElementById("csmCustomName").value || "").trim();
+        if (!value) {
+            status.style.color = "red";
+            status.textContent = "Please enter a mailbox name.";
+            return;
+        }
+        status.textContent = "";
+        selectCsmMailboxName(value);
+    }
+
+    async function handleCsmCreate() {
+        const createButton = document.getElementById("csmCreateButton");
+        const statusEl = document.getElementById("csmMembersStatus");
+        const stopButton = document.getElementById("csmStopRetryButton");
+        const selectedTeam = document.querySelector('input[name="csmTeam"]:checked').value;
+        const departments = selectedTeam === "All" ? ["Sustainability", "Energy"] : [selectedTeam];
+        const teamLabel = selectedTeam === "All" ? "the Sustainability & Energy teams" : `the ${selectedTeam} team`;
+
+        createButton.disabled = true;
+        statusEl.className = "";
+        statusEl.textContent = "Creating project mailbox...";
+
+        const result = { mailbox: null, mailboxError: null, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
+        try {
+            const dwToken = await signInAndGetToken(directoryWriteRequest, true);
+            if (!dwToken) throw new Error("Could not get permission to create mailboxes.");
+            result.mailbox = await createMailboxAccount(csmState.mailboxName, dwToken);
+        } catch (err) {
+            result.mailboxError = err.message;
+            renderCreateMailboxResultStep(result, teamLabel);
+            showCsmStep("result");
+            createButton.disabled = false;
+            return;
+        }
+
+        const grantResult = await grantDepartmentAccessWithRetry(result.mailbox, departments, statusEl, stopButton);
+        Object.assign(result, grantResult);
+
+        renderCreateMailboxResultStep(result, teamLabel);
+        showCsmStep("result");
+        createButton.disabled = false;
+    }
+
+    function renderCreateMailboxResultStep(result, teamLabel) {
+        const container = document.getElementById("csmResultSummary");
+        if (result.mailboxError) {
+            container.innerHTML = `<div class="warning-box">Error: ${result.mailboxError}</div>`;
+            return;
+        }
+        container.innerHTML = `<div class="summary-box">
+            <div class="row"><span class="label">Mailbox created:</span> ${result.mailbox}</div>
+            <div class="row">Microsoft 365 can take several minutes (sometimes longer) to finish provisioning it.</div>
+            ${renderGrantResultsHtml(teamLabel, result.grants, result.grantsError, result.stoppedByUser, result.gaveUp)}
+        </div>`;
+    }
+
+    function handleCsmStartOver() {
+        csmState = {};
+        document.getElementById("csmFilterBox").value = "";
+        document.getElementById("csmCustomName").value = "";
+        document.getElementById("csmSetupStatus").textContent = "";
+        document.getElementById("csmMembersStatus").textContent = "";
+        showCsmStep("setup");
+        renderCsmFolderList("");
+    }
+
     // ---- Search Shared Mailbox Online ----
     // Non-destructive (just opens a mailbox in Outlook Web), so no confirm step needed.
 
@@ -1844,6 +2104,7 @@
         document.getElementById("convertProjectButton").style.display = "none";
         document.getElementById("convertToArchiveButton").style.display = "none";
         document.getElementById("searchMailboxButton").style.display = "none";
+        document.getElementById("createSharedMailboxButton").style.display = "none";
         document.getElementById("searchMailboxWizard").style.display = "block";
         document.getElementById("smFilterBox").value = "";
         loadSharedMailboxesForSearch();
@@ -1855,6 +2116,7 @@
         document.getElementById("convertProjectButton").style.display = "block";
         document.getElementById("convertToArchiveButton").style.display = "block";
         document.getElementById("searchMailboxButton").style.display = "block";
+        document.getElementById("createSharedMailboxButton").style.display = "block";
     }
 
     async function loadSharedMailboxesForSearch() {
