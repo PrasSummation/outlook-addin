@@ -67,6 +67,16 @@
     .pane.uncheckable{background:var(--grey-50);border-color:var(--grey-200)}
     .pane.uncheckable h2{color:var(--grey-500)}
 
+    .result-item.selectable{display:flex;align-items:center;gap:8px;cursor:pointer}
+    .result-item.selectable input{accent-color:var(--amber);margin:0;flex:none}
+    .attention-actions{margin-top:10px}
+    #enableAutomapButton{padding:8px 16px;font:600 12.5px var(--font-body);color:#fff;background:var(--amber);
+      border:1px solid var(--amber);border-radius:4px;cursor:pointer}
+    #enableAutomapButton:hover{opacity:.9}
+    #enableAutomapButton:disabled{opacity:.5;cursor:not-allowed}
+    #automapActionStatus{font-size:12px;color:var(--grey-600);margin-top:8px;white-space:pre-wrap}
+    #automapActionStatus.error{color:#B3261E}
+
     .page-footer{margin-top:22px;font-size:12px;color:var(--grey-500)}
     .page-footer div{margin-bottom:4px}
   </style>
@@ -132,6 +142,7 @@
     let exchangeMailboxes = [];
     let exchangeLoaded = false;
     let localExport = null;
+    const selectedForAutomap = new Set();
 
     window.addEventListener("load", () => {
         document.getElementById("signInButton").addEventListener("click", handleLogin);
@@ -239,8 +250,22 @@
         return response.json();
     }
 
+    async function grantMailboxPermissionViaBridge(mailbox, user, token, autoMapping) {
+        const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions/grant`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ mailbox, user, autoMapping })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
+        }
+        return response.json();
+    }
+
     async function loadExchangeAccess() {
         exchangeLoaded = false;
+        selectedForAutomap.clear();
         updateStatus("Checking your Exchange permissions...");
         try {
             const graphToken = await signInAndGetToken(graphRequest, true);
@@ -313,6 +338,7 @@
                     throw new Error("This doesn't look like a mailbox export (missing a 'mailboxes' array).");
                 }
                 localExport = parsed;
+                selectedForAutomap.clear();
                 statusEl.className = "";
                 statusEl.textContent = `Loaded ${parsed.mailboxes.length} mailbox(es) from your Outlook` +
                     (parsed.exportedAtUtc ? `, exported ${new Date(parsed.exportedAtUtc).toLocaleString()}.` : ".");
@@ -362,7 +388,7 @@
                 confirmed.push(m.name);
                 matchedLocalEntries.add(match);
             } else {
-                grantedNotVisible.push(m.name);
+                grantedNotVisible.push(m);
             }
         });
 
@@ -373,14 +399,85 @@
         let html = "";
         html += renderGroup("confirmed", "&#9989; Confirmed &mdash; access granted and visible in your Outlook", confirmed,
             "These match up: you have Full Access permission and the mailbox is genuinely present in your Outlook right now.");
-        html += renderGroup("attention", "&#9888;&#65039; Granted, but not currently visible in your Outlook", grantedNotVisible,
-            "Exchange shows you have Full Access, but it wasn't found in your latest local export. It may not have automapped yet, may have been removed locally, or Outlook's own mailbox display limit may be hiding it.");
+        html += renderAttentionGroup(grantedNotVisible);
         html += renderGroup("unaccounted", "&#8505;&#65039; Visible in your Outlook, but no Full Access permission on record", localOnly,
             "These are showing up in your Outlook profile, but this bridge doesn't show Full Access granted for you on them &mdash; could be Send As access, an older/manual setup, or a naming mismatch.");
         html += renderGroup("uncheckable", "Visible in your Outlook, but not checkable via this bridge", localUncheckable,
             "This bridge only manages mailboxes matching the project naming convention, so it can't confirm your permission status on these &mdash; but they genuinely are showing up in your Outlook. This is exactly the kind of non-conforming mailbox this whole export exists to surface.");
 
         container.innerHTML = html;
+
+        container.querySelectorAll('input[data-mailbox]').forEach(cb => {
+            cb.addEventListener("change", () => {
+                if (cb.checked) selectedForAutomap.add(cb.dataset.mailbox);
+                else selectedForAutomap.delete(cb.dataset.mailbox);
+                renderReconciliation();
+            });
+        });
+        const enableButton = document.getElementById("enableAutomapButton");
+        if (enableButton) enableButton.addEventListener("click", handleEnableAutomap);
+    }
+
+    function renderAttentionGroup(entries) {
+        let html = `<div class="pane attention">
+            <h2>&#9888;&#65039; Granted, but not currently visible in your Outlook <span class="count">(${entries.length})</span></h2>
+            <div class="hint">Exchange shows you have Full Access, but it wasn't found in your latest local export. It may not have automapped yet, may have been removed locally, or Outlook's own mailbox display limit may be hiding it. Select any below to re-enable automapping for them.</div>`;
+        if (entries.length === 0) {
+            html += `<div class="empty-message">None.</div>`;
+        } else {
+            html += `<div class="result-list">` + entries.map(m => `
+                <label class="result-item selectable">
+                    <input type="checkbox" data-mailbox="${m.mail}" ${selectedForAutomap.has(m.mail) ? "checked" : ""} />
+                    <span>${m.name}</span>
+                </label>
+            `).join("") + `</div>
+            <div class="attention-actions">
+                <button id="enableAutomapButton" ${selectedForAutomap.size === 0 ? "disabled" : ""}>Enable Automapping for Selected (${selectedForAutomap.size})</button>
+            </div>
+            <div id="automapActionStatus"></div>`;
+        }
+        html += `</div>`;
+        return html;
+    }
+
+    async function handleEnableAutomap() {
+        const button = document.getElementById("enableAutomapButton");
+        const statusEl = document.getElementById("automapActionStatus");
+        const mailboxes = Array.from(selectedForAutomap);
+        if (mailboxes.length === 0) return;
+
+        if (!confirm(
+            `Re-grant Full Access with automapping enabled for ${mailboxes.length} mailbox(es)? ` +
+            `This nudges Exchange to add ${mailboxes.length > 1 ? "them" : "it"} back into your Outlook, ` +
+            `but it can still take a while (or need Outlook to refresh) to actually appear.`
+        )) return;
+
+        button.disabled = true;
+        try {
+            const token = await signInAndGetToken(bridgeRequest, true);
+            const results = [];
+            for (const mailbox of mailboxes) {
+                statusEl.className = "";
+                statusEl.textContent = `Enabling automapping for ${mailbox}...`;
+                try {
+                    await grantMailboxPermissionViaBridge(mailbox, currentUserEmail, token, true);
+                    results.push({ mailbox, error: null });
+                } catch (err) {
+                    results.push({ mailbox, error: err.message });
+                }
+            }
+            const failed = results.filter(r => r.error);
+            statusEl.className = failed.length > 0 ? "error" : "";
+            statusEl.textContent = failed.length === 0
+                ? `Done. Automapping enabled for ${results.length} mailbox(es) — it can take a while to actually show up in Outlook. Re-export from the Email Filer later to confirm.`
+                : `${results.length - failed.length} of ${results.length} succeeded. First error: ${failed[0].error}`;
+            selectedForAutomap.clear();
+            renderReconciliation();
+        } catch (err) {
+            statusEl.className = "error";
+            statusEl.textContent = `Error: ${err.message}`;
+            button.disabled = false;
+        }
     }
   </script>
 </body>
