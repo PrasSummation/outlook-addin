@@ -438,20 +438,30 @@
             cb.addEventListener("change", () => {
                 if (cb.checked) selectedForAutomap.add(cb.dataset.mailbox);
                 else selectedForAutomap.delete(cb.dataset.mailbox);
-                renderReconciliation();
+                updateActionButton("enableAutomapButton", selectedForAutomap.size, "Enable Automapping for Selected");
             });
         });
         container.querySelectorAll('input[data-unmap-mailbox]').forEach(cb => {
             cb.addEventListener("change", () => {
                 if (cb.checked) selectedForUnmap.add(cb.dataset.unmapMailbox);
                 else selectedForUnmap.delete(cb.dataset.unmapMailbox);
-                renderReconciliation();
+                updateActionButton("disableAutomapButton", selectedForUnmap.size, "Remove Automapping for Selected");
             });
         });
         const enableButton = document.getElementById("enableAutomapButton");
         if (enableButton) enableButton.addEventListener("click", handleEnableAutomap);
         const disableButton = document.getElementById("disableAutomapButton");
         if (disableButton) disableButton.addEventListener("click", handleDisableAutomap);
+    }
+
+    // Updates just the action button in place — checkbox toggles must never rebuild the
+    // result lists (that was resetting each list's scroll position and stealing focus on
+    // every click, making it impossible to select several items down a long list).
+    function updateActionButton(buttonId, selectedCount, label) {
+        const btn = document.getElementById(buttonId);
+        if (!btn) return;
+        btn.disabled = selectedCount === 0;
+        btn.textContent = `${label} (${selectedCount})`;
     }
 
     function renderConfirmedGroup(entries) {
