@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Manage Shared Mailbox Members</title>
+  <script type="text/javascript" src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
+  <style>
+    :root{
+      --green:#408F4E; --green-dark:#2D6B38; --green-pale:#EDF7EE;
+      --grey-900:#2B2B2B; --grey-600:#646464; --grey-400:#909090;
+      --grey-500:#787878; --grey-300:#B4B4B4; --grey-200:#DCDCDC; --grey-100:#EFEFEF; --grey-50:#F7F7F7;
+      --font-display:'Bahnschrift','DIN Alternate','Segoe UI',sans-serif;
+      --font-body:'Calibri','Segoe UI',system-ui,sans-serif;
+      --font-mono:'Consolas','Courier New',monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;padding:0;background:#fff;font-family:var(--font-body);
+         font-size:14px;line-height:1.5;color:var(--grey-600);-webkit-font-smoothing:antialiased}
+    a{color:var(--green-dark);text-decoration:none}
+    a:hover{color:var(--green);text-decoration:underline}
+
+    #brandBar{background:var(--grey-900);padding:16px 28px;display:flex;align-items:center;gap:12px}
+    #brandBar img{width:32px;height:32px}
+    #brandBar .word{font-family:var(--font-display);font-size:15px;font-weight:600;color:#fff;letter-spacing:.14em}
+    #brandBar .sub{font-size:11px;color:var(--grey-400);letter-spacing:.05em}
+
+    #signInPrompt{padding:80px 24px;text-align:center}
+    #signInPrompt p{margin:0 0 20px;font-size:14px;color:var(--grey-600)}
+    #signInButton{padding:10px 24px;font:600 14px var(--font-body);color:#fff;background:var(--green);
+      border:1px solid var(--green);border-radius:4px;cursor:pointer}
+    #signInButton:hover{background:var(--green-dark)}
+
+    #appBody{max-width:1000px;margin:0 auto;padding:28px}
+    .page-header h1{font-family:var(--font-display);font-size:20px;color:var(--grey-900);margin:0 0 4px}
+    .page-header p{margin:0 0 20px;font-size:13px;color:var(--grey-500)}
+
+    #status{font-size:13px;color:var(--grey-600);white-space:pre-wrap;margin-bottom:14px;min-height:1.4em}
+    #status.error{color:#B3261E}
+
+    .dual-pane{display:flex;gap:18px;align-items:flex-start}
+    .pane{flex:1;min-width:0;border:1px solid var(--grey-200);border-radius:10px;padding:16px;background:#fff}
+    .pane h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--grey-400);margin:0 0 10px}
+    .pane h2 .count{text-transform:none;letter-spacing:0;color:var(--green-dark);font-weight:600}
+
+    .radio-row{display:flex;gap:16px;margin-bottom:12px}
+    .radio-row label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--grey-900)}
+    .radio-row input{accent-color:var(--green)}
+
+    input[type=text]{display:block;width:100%;margin:0 0 10px;padding:8px 10px;
+      font:400 13px var(--font-body);color:var(--grey-900);background:#fff;
+      border:1.5px solid var(--grey-200);border-radius:4px}
+    input[type=text]:focus{outline:none;border-color:var(--green)}
+
+    .check-list{border:1px solid var(--grey-200);border-radius:8px;max-height:420px;overflow-y:auto}
+    .check-item{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--grey-100);
+      cursor:pointer;font-size:13px}
+    .check-item:last-child{border-bottom:none}
+    .check-item:hover{background:var(--grey-50)}
+    .check-item.selected{background:var(--green-pale)}
+    .check-item input{accent-color:var(--green);margin:0;flex:none}
+    .check-item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .check-item .tag{flex:none;font-family:var(--font-mono);font-size:10px;color:var(--grey-400)}
+    .group-heading{padding:8px 11px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+      color:var(--grey-400);background:var(--grey-50)}
+    .empty-message{padding:14px;color:var(--grey-400);font-size:12px}
+
+    .action-bar{display:flex;align-items:center;gap:16px;margin-top:18px;padding-top:16px;border-top:1px solid var(--grey-200)}
+    .action-bar .summary{flex:1;font-size:13px;color:var(--grey-600)}
+    .automapping-toggle{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--grey-500);
+      cursor:pointer;white-space:nowrap;flex:none}
+    .automapping-toggle input{accent-color:var(--green);margin:0}
+    #confirmButton{padding:10px 22px;font:600 13px var(--font-body);color:#fff;background:var(--green);
+      border:1px solid var(--green);border-radius:4px;cursor:pointer;flex:none}
+    #confirmButton:hover{background:var(--green-dark)}
+    #confirmButton:disabled{opacity:.5;cursor:not-allowed;background:var(--grey-300);border-color:var(--grey-300)}
+
+    .page-footer{margin-top:22px;font-size:12px;color:var(--grey-500)}
+  </style>
+</head>
+<body>
+  <div id="brandBar">
+    <img src="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" alt="Summation" />
+    <div>
+      <div class="word">SUMMATION</div>
+      <div class="sub">Manage Shared Mailbox Members</div>
+    </div>
+  </div>
+
+  <div id="signInPrompt">
+    <p>Please sign in to manage shared mailbox members.</p>
+    <button id="signInButton">Sign In</button>
+  </div>
+
+  <div id="appBody" style="display:none;">
+    <div class="page-header">
+      <h1>Manage Shared Mailbox Members</h1>
+      <p>Select one or more project mailboxes and one or more team members, then grant Full Access to all of them in one go.</p>
+    </div>
+    <div id="status"></div>
+
+    <div class="dual-pane">
+      <div class="pane">
+        <h2>Filter Projects <span class="count" id="projectCount"></span></h2>
+        <div class="radio-row">
+          <label><input type="radio" name="service" value="Sustainability" checked /> Sustainability</label>
+          <label><input type="radio" name="service" value="Energy" /> Energy</label>
+          <label><input type="radio" name="service" value="Other" /> Other</label>
+        </div>
+        <input type="text" id="projectFilterBox" placeholder="Filter project mailboxes..." />
+        <div id="projectList" class="check-list"></div>
+      </div>
+
+      <div class="pane">
+        <h2>Team Members <span class="count" id="memberCount"></span></h2>
+        <div id="memberList" class="check-list"></div>
+      </div>
+    </div>
+
+    <div class="action-bar">
+      <label class="automapping-toggle" title="When granting access: automatically add each mailbox to the member's Outlook (recommended), or grant access only, without auto-adding it.">
+        <input type="checkbox" id="autoMappingCheckbox" checked />
+        Automap
+      </label>
+      <div class="summary" id="summaryLine">Select at least one project and one team member.</div>
+      <button id="confirmButton" disabled>Confirm</button>
+    </div>
+
+    <div class="page-footer">
+      Need to review or revoke someone's existing access instead?
+      <a href="https://prassummation.github.io/outlook-addin/manage-mailboxes.html" target="_blank" rel="noopener">Open the mailbox access review tool &rarr;</a>
+    </div>
+  </div>
+
+  <script>
+    const BRIDGE_URL = "https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net";
+    const PROJECT_MAILBOX_REGEX = /^[a-zA-Z]{5}\d{5}_.*@summation\.au$/i;
+
+    const msalConfig = {
+      auth: {
+        clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
+        authority: "https://login.microsoftonline.com/ecb5f458-9548-4e8b-96f3-904f1828f931",
+        redirectUri: window.location.origin + window.location.pathname
+      },
+      cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+    };
+
+    const graphRequest = { scopes: ["User.Read", "Directory.Read.All"] };
+    const bridgeRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/MailboxBridge.Call"] };
+
+    let msalInstance;
+    let allProjects = [];
+    let allStaff = [];
+    const selectedProjectMails = new Set();
+    const selectedMemberMails = new Set();
+
+    window.addEventListener("load", () => {
+        document.getElementById("signInButton").addEventListener("click", handleLogin);
+        document.getElementById("projectFilterBox").addEventListener("input", renderProjectList);
+        document.querySelectorAll('input[name="service"]').forEach(el => el.addEventListener("change", renderProjectList));
+        document.getElementById("confirmButton").addEventListener("click", handleConfirm);
+
+        msalInstance = new msal.PublicClientApplication(msalConfig);
+        attemptSilentSignIn();
+    });
+
+    function showApp(show) {
+        document.getElementById("appBody").style.display = show ? "block" : "none";
+        document.getElementById("signInPrompt").style.display = show ? "none" : "block";
+    }
+
+    async function signInAndGetToken(request, isUserAction) {
+        const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+        if (account) {
+            try {
+                const silentResponse = await msalInstance.acquireTokenSilent({ ...request, account });
+                return silentResponse.accessToken;
+            } catch (error) {
+                if (error instanceof msal.InteractionRequiredAuthError && isUserAction) {
+                    const interactiveResponse = await msalInstance.acquireTokenPopup(request);
+                    return interactiveResponse.accessToken;
+                }
+                throw error;
+            }
+        }
+        if (isUserAction) {
+            const loginResponse = await msalInstance.loginPopup(request);
+            msalInstance.setActiveAccount(loginResponse.account);
+            return loginResponse.accessToken;
+        }
+        return null;
+    }
+
+    async function handleLogin() {
+        try {
+            const loginResponse = await msalInstance.loginPopup(graphRequest);
+            msalInstance.setActiveAccount(loginResponse.account);
+            await afterSignIn();
+        } catch (err) {
+            updateStatus(`Sign in failed: ${err.message}`, true);
+        }
+    }
+
+    async function attemptSilentSignIn() {
+        try {
+            const token = await signInAndGetToken(graphRequest, false);
+            if (token) await afterSignIn();
+            else showApp(false);
+        } catch (err) {
+            showApp(false);
+        }
+    }
+
+    async function afterSignIn() {
+        showApp(true);
+        await loadData();
+    }
+
+    function updateStatus(message, isError) {
+        const el = document.getElementById("status");
+        el.textContent = message;
+        el.className = isError ? "error" : "";
+    }
+
+    async function graphGet(url, token) {
+        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    // Follows @odata.nextLink so results aren't silently capped at one page's $top.
+    async function graphGetAll(url, token) {
+        let results = [];
+        let nextUrl = url;
+        while (nextUrl) {
+            const data = await graphGet(nextUrl, token);
+            results = results.concat(data.value);
+            nextUrl = data["@odata.nextLink"] || null;
+        }
+        return results;
+    }
+
+    async function getProjectMailboxes(token) {
+        const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses&$top=999";
+        const users = await graphGetAll(url, token);
+        return users
+            .filter(u => u.assignedLicenses.length === 0 && u.mail && PROJECT_MAILBOX_REGEX.test(u.mail))
+            .map(u => {
+                const localPart = u.mail.split("@")[0];
+                const combo = localPart.slice(0, 5).toUpperCase();
+                const projectNumber = parseInt(localPart.slice(5, 10), 10);
+                return { name: localPart, mail: u.mail, combo, projectNumber };
+            })
+            .sort((a, b) => b.projectNumber - a.projectNumber);
+    }
+
+    async function getStaffMembers(token) {
+        const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,department,assignedLicenses,accountEnabled&$top=999";
+        const users = await graphGetAll(url, token);
+        return users
+            .filter(u => u.assignedLicenses.length > 0 && u.accountEnabled !== false)
+            .map(u => ({ name: u.displayName, mail: u.mail || u.userPrincipalName, department: (u.department || "").trim() }))
+            .filter(u => u.mail && !PROJECT_MAILBOX_REGEX.test(u.mail))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    async function grantMailboxPermissionViaBridge(mailbox, user, token, autoMapping) {
+        const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions/grant`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ mailbox, user, autoMapping })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function loadData() {
+        updateStatus("Loading projects and team members...");
+        selectedProjectMails.clear();
+        selectedMemberMails.clear();
+        try {
+            const token = await signInAndGetToken(graphRequest, true);
+            const [projects, staff] = await Promise.all([
+                getProjectMailboxes(token),
+                getStaffMembers(token)
+            ]);
+            allProjects = projects;
+            allStaff = staff;
+            renderProjectList();
+            renderMemberList();
+            updateSummary();
+            updateStatus("");
+        } catch (err) {
+            console.error("Failed to load data:", err);
+            updateStatus(`Error: ${err.message}`, true);
+        }
+    }
+
+    function renderProjectList() {
+        const list = document.getElementById("projectList");
+        list.innerHTML = "";
+        const selectedService = document.querySelector('input[name="service"]:checked').value;
+        const filterText = (document.getElementById("projectFilterBox").value || "").toLowerCase();
+
+        const filtered = allProjects
+            .filter(p => {
+                if (selectedService === "Energy") return p.combo.startsWith("EN");
+                if (selectedService === "Sustainability") return p.combo.startsWith("SU");
+                return !p.combo.startsWith("EN") && !p.combo.startsWith("SU");
+            })
+            .filter(p => p.name.toLowerCase().includes(filterText));
+
+        if (filtered.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "empty-message";
+            empty.textContent = "No matching project mailboxes found.";
+            list.appendChild(empty);
+            return;
+        }
+
+        filtered.forEach(entry => {
+            const item = document.createElement("label");
+            item.className = "check-item" + (selectedProjectMails.has(entry.mail) ? " selected" : "");
+            item.title = entry.mail;
+
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = selectedProjectMails.has(entry.mail);
+            checkbox.addEventListener("change", () => {
+                if (checkbox.checked) selectedProjectMails.add(entry.mail);
+                else selectedProjectMails.delete(entry.mail);
+                item.classList.toggle("selected", checkbox.checked);
+                updateSummary();
+            });
+            item.appendChild(checkbox);
+
+            const name = document.createElement("span");
+            name.className = "name";
+            name.textContent = entry.name;
+            item.appendChild(name);
+
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = entry.combo;
+            item.appendChild(tag);
+
+            list.appendChild(item);
+        });
+    }
+
+    function renderMemberList() {
+        const list = document.getElementById("memberList");
+        list.innerHTML = "";
+
+        if (allStaff.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "empty-message";
+            empty.textContent = "No team members found.";
+            list.appendChild(empty);
+            return;
+        }
+
+        const groups = {};
+        allStaff.forEach(m => {
+            const key = m.department || "Unspecified";
+            (groups[key] = groups[key] || []).push(m);
+        });
+        const groupNames = Object.keys(groups).sort((a, b) => {
+            if (a === "Unspecified") return 1;
+            if (b === "Unspecified") return -1;
+            return a.localeCompare(b);
+        });
+
+        groupNames.forEach(groupName => {
+            const heading = document.createElement("div");
+            heading.className = "group-heading";
+            heading.textContent = groupName;
+            list.appendChild(heading);
+
+            groups[groupName].forEach(entry => {
+                const item = document.createElement("label");
+                item.className = "check-item" + (selectedMemberMails.has(entry.mail) ? " selected" : "");
+                item.title = entry.mail;
+
+                const checkbox = document.createElement("input");
+                checkbox.type = "checkbox";
+                checkbox.checked = selectedMemberMails.has(entry.mail);
+                checkbox.addEventListener("change", () => {
+                    if (checkbox.checked) selectedMemberMails.add(entry.mail);
+                    else selectedMemberMails.delete(entry.mail);
+                    item.classList.toggle("selected", checkbox.checked);
+                    updateSummary();
+                });
+                item.appendChild(checkbox);
+
+                const name = document.createElement("span");
+                name.className = "name";
+                name.textContent = entry.name;
+                item.appendChild(name);
+
+                list.appendChild(item);
+            });
+        });
+    }
+
+    function updateSummary() {
+        const projectCount = selectedProjectMails.size;
+        const memberCount = selectedMemberMails.size;
+        document.getElementById("projectCount").textContent = projectCount ? `(${projectCount} selected)` : "";
+        document.getElementById("memberCount").textContent = memberCount ? `(${memberCount} selected)` : "";
+
+        const total = projectCount * memberCount;
+        document.getElementById("summaryLine").textContent = total > 0
+            ? `${projectCount} project(s) × ${memberCount} member(s) = ${total} grant(s)`
+            : "Select at least one project and one team member.";
+        document.getElementById("confirmButton").disabled = total === 0;
+    }
+
+    async function handleConfirm() {
+        const projects = allProjects.filter(p => selectedProjectMails.has(p.mail));
+        const members = allStaff.filter(m => selectedMemberMails.has(m.mail));
+        if (projects.length === 0 || members.length === 0) return;
+
+        const autoMapping = document.getElementById("autoMappingCheckbox").checked;
+        const pairs = [];
+        projects.forEach(p => members.forEach(m => pairs.push({ project: p, member: m })));
+
+        if (!confirm(
+            `Grant Full Access for ${members.length} team member(s) on ${projects.length} project mailbox(es) ` +
+            `— ${pairs.length} grant(s) total${autoMapping ? "" : " (without automapping)"}. Continue?`
+        )) return;
+
+        const confirmButton = document.getElementById("confirmButton");
+        confirmButton.disabled = true;
+
+        try {
+            const token = await signInAndGetToken(bridgeRequest, true);
+            const results = [];
+            const BATCH_SIZE = 10;
+            for (let i = 0; i < pairs.length; i += BATCH_SIZE) {
+                const batch = pairs.slice(i, i + BATCH_SIZE);
+                updateStatus(`Granting access ${i + 1}-${Math.min(i + BATCH_SIZE, pairs.length)} of ${pairs.length}...`);
+                const batchResults = await Promise.all(batch.map(async ({ project, member }) => {
+                    try {
+                        await grantMailboxPermissionViaBridge(project.mail, member.mail, token, autoMapping);
+                        return { project, member, error: null };
+                    } catch (err) {
+                        return { project, member, error: err.message };
+                    }
+                }));
+                results.push(...batchResults);
+            }
+
+            const failures = results.filter(r => r.error);
+            if (failures.length === 0) {
+                updateStatus(`Done — granted access for ${results.length} project/member combination(s).`);
+            } else {
+                updateStatus(
+                    `Granted ${results.length - failures.length} of ${results.length}. ${failures.length} failed — first error: ${failures[0].error}`,
+                    true
+                );
+            }
+        } catch (err) {
+            console.error("Failed to grant access:", err);
+            updateStatus(`Error: ${err.message}`, true);
+        }
+
+        confirmButton.disabled = false;
+        updateSummary();
+    }
+  </script>
+</body>
+</html>
