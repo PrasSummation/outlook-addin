@@ -60,8 +60,9 @@
     .check-item input{accent-color:var(--green);margin:0;flex:none}
     .check-item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .check-item .tag{flex:none;font-family:var(--font-mono);font-size:10px;color:var(--grey-400)}
-    .group-heading{padding:8px 11px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
-      color:var(--grey-400);background:var(--grey-50)}
+    .group-heading{display:flex;align-items:center;gap:8px;padding:8px 11px;font-size:11px;text-transform:uppercase;
+      letter-spacing:.05em;color:var(--grey-400);background:var(--grey-50);cursor:pointer}
+    .group-heading input{accent-color:var(--green);margin:0;flex:none}
     .empty-message{padding:14px;color:var(--grey-400);font-size:12px}
 
     .action-bar{display:flex;align-items:center;gap:16px;margin-top:18px;padding-top:16px;border-top:1px solid var(--grey-200)}
@@ -370,12 +371,33 @@
         });
 
         groupNames.forEach(groupName => {
-            const heading = document.createElement("div");
+            const groupMembers = groups[groupName];
+            const selectedInGroup = groupMembers.filter(m => selectedMemberMails.has(m.mail)).length;
+
+            const heading = document.createElement("label");
             heading.className = "group-heading";
-            heading.textContent = groupName;
+
+            const groupCheckbox = document.createElement("input");
+            groupCheckbox.type = "checkbox";
+            groupCheckbox.checked = selectedInGroup === groupMembers.length;
+            groupCheckbox.indeterminate = selectedInGroup > 0 && selectedInGroup < groupMembers.length;
+            groupCheckbox.addEventListener("change", () => {
+                groupMembers.forEach(m => {
+                    if (groupCheckbox.checked) selectedMemberMails.add(m.mail);
+                    else selectedMemberMails.delete(m.mail);
+                });
+                renderMemberList();
+                updateSummary();
+            });
+            heading.appendChild(groupCheckbox);
+
+            const groupName_ = document.createElement("span");
+            groupName_.textContent = groupName;
+            heading.appendChild(groupName_);
+
             list.appendChild(heading);
 
-            groups[groupName].forEach(entry => {
+            groupMembers.forEach(entry => {
                 const item = document.createElement("label");
                 item.className = "check-item" + (selectedMemberMails.has(entry.mail) ? " selected" : "");
                 item.title = entry.mail;
@@ -386,7 +408,7 @@
                 checkbox.addEventListener("change", () => {
                     if (checkbox.checked) selectedMemberMails.add(entry.mail);
                     else selectedMemberMails.delete(entry.mail);
-                    item.classList.toggle("selected", checkbox.checked);
+                    renderMemberList();
                     updateSummary();
                 });
                 item.appendChild(checkbox);
