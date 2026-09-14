@@ -243,6 +243,7 @@
       <div id="cvStepConfirm" style="display: none;">
         <div id="cvConfirmSummary"></div>
         <div id="cvConfirmStatus"></div>
+        <button id="cvStopRetryButton" class="secondary-button" style="display:none;" title="Show the result now with whatever access grants have succeeded so far; any still failing can be retried later via Manage Shared Mailbox Members.">Stop Waiting</button>
         <button id="cvConfirmButton">Confirm &amp; Convert</button>
         <button id="cvBackToBrowseButton" class="secondary-button">&larr; Choose a Different Folder</button>
       </div>
@@ -302,7 +303,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.14";
+    const APP_VERSION = "9.15";
 
     let msalInstance;
     let folderEntries = [];
@@ -733,14 +734,29 @@
         return response.json();
     }
 
+    function waitUnless(ms, isStopped) {
+        return new Promise(resolve => {
+            const start = Date.now();
+            const interval = setInterval(() => {
+                if (isStopped() || Date.now() - start >= ms) {
+                    clearInterval(interval);
+                    resolve();
+                }
+            }, 500);
+        });
+    }
+
     // Creates the project mailbox for a folder just converted from Archive to Active, and
     // grants Full Access (without automapping, per policy) to every licensed staff member
     // whose Entra ID Department matches the project's service. The mailbox account itself
     // provisions on Exchange over the following minutes, so grants attempted immediately can
-    // fail even though the mailbox will exist shortly — that's surfaced per-member, not hidden.
+    // fail even though the mailbox will exist shortly — this keeps retrying failed grants
+    // (not the ones that already succeeded) until they all land, a sane attempt cap is hit,
+    // or the user clicks "Stop Waiting" to see the result immediately.
     async function createProjectMailboxAndGrantMembers(entry) {
         const statusEl = document.getElementById("cvConfirmStatus");
-        const result = { mailboxName: entry.name, mailbox: null, mailboxError: null, service: null, grants: [], grantsError: null };
+        const stopButton = document.getElementById("cvStopRetryButton");
+        const result = { mailboxName: entry.name, mailbox: null, mailboxError: null, service: null, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
         result.service = DEPARTMENT_BY_COMBO_PREFIX[entry.combo.slice(0, 2)] || null;
 
         statusEl.textContent = "Creating project mailbox...";
@@ -755,35 +771,67 @@
 
         if (!result.service) return result;
 
+        let stopRequested = false;
+        const stopHandler = () => { stopRequested = true; };
+        stopButton.addEventListener("click", stopHandler);
+        stopButton.style.display = "inline-block";
+
         try {
             statusEl.textContent = `Looking up ${result.service} team members...`;
             const graphToken = await signInAndGetToken(graphRequest, true);
             const staff = await getStaffByDepartment(result.service, graphToken);
             const bridgeToken = await signInAndGetToken(bridgeRequest, true);
 
+            const grantState = new Map(staff.map(m => [m.mail, { member: m.name, error: "pending" }]));
             const BATCH_SIZE = 10;
-            for (let i = 0; i < staff.length; i += BATCH_SIZE) {
-                const batch = staff.slice(i, i + BATCH_SIZE);
-                statusEl.textContent = `Granting mailbox access ${i + 1}-${Math.min(i + BATCH_SIZE, staff.length)} of ${staff.length}...`;
-                const batchResults = await Promise.all(batch.map(async member => {
-                    try {
-                        await grantMailboxPermissionViaBridge(result.mailbox, member.mail, bridgeToken, false);
-                        return { member: member.name, error: null };
-                    } catch (err) {
-                        return { member: member.name, error: err.message };
-                    }
-                }));
-                result.grants.push(...batchResults);
+            const MAX_ATTEMPTS = 20;
+            const RETRY_DELAY_MS = 15000;
+
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS && !stopRequested; attempt++) {
+                const pending = staff.filter(m => grantState.get(m.mail).error);
+                if (pending.length === 0) break;
+
+                statusEl.textContent = attempt === 1
+                    ? `Granting mailbox access to ${pending.length} team member(s)...`
+                    : `Retrying ${pending.length} failed grant(s) — attempt ${attempt} of ${MAX_ATTEMPTS} (mailbox may still be provisioning)...`;
+
+                for (let i = 0; i < pending.length && !stopRequested; i += BATCH_SIZE) {
+                    const batch = pending.slice(i, i + BATCH_SIZE);
+                    await Promise.all(batch.map(async member => {
+                        try {
+                            await grantMailboxPermissionViaBridge(result.mailbox, member.mail, bridgeToken, false);
+                            grantState.set(member.mail, { member: member.name, error: null });
+                        } catch (err) {
+                            grantState.set(member.mail, { member: member.name, error: err.message });
+                        }
+                    }));
+                }
+
+                const stillPending = staff.filter(m => grantState.get(m.mail).error);
+                if (stillPending.length === 0 || stopRequested) break;
+
+                if (attempt < MAX_ATTEMPTS) {
+                    statusEl.textContent = `${stillPending.length} of ${staff.length} still failing — waiting to retry (attempt ${attempt + 1} of ${MAX_ATTEMPTS})...`;
+                    await waitUnless(RETRY_DELAY_MS, () => stopRequested);
+                } else {
+                    result.gaveUp = true;
+                }
             }
+
+            result.stoppedByUser = stopRequested;
+            result.grants = staff.map(m => grantState.get(m.mail));
         } catch (err) {
             result.grantsError = err.message;
         }
+
+        stopButton.removeEventListener("click", stopHandler);
+        stopButton.style.display = "none";
 
         return result;
     }
 
     function renderMailboxResultBox(mailboxResult) {
-        const { mailboxName, mailbox, mailboxError, service, grants, grantsError } = mailboxResult;
+        const { mailboxName, mailbox, mailboxError, service, grants, grantsError, stoppedByUser, gaveUp } = mailboxResult;
         if (mailboxError) {
             return `<div class="warning-box">Project mailbox not created: ${mailboxError}</div>`;
         }
@@ -797,9 +845,14 @@
         } else {
             const failed = grants.filter(g => g.error);
             const succeeded = grants.length - failed.length;
-            html += `<div class="row">Granted the ${service} team (${grants.length} member(s)) access without automapping — ${succeeded} succeeded now, ${failed.length} failed.</div>`;
+            html += `<div class="row">Granted the ${service} team (${grants.length} member(s)) access without automapping — ${succeeded} succeeded, ${failed.length} still failing.</div>`;
             if (failed.length > 0) {
-                html += `<div class="warning-box">Failures are expected if the mailbox hasn't finished provisioning yet (${failed.map(f => f.member).join(", ")}). Retry via Manage Shared Mailbox Members once it's ready.</div>`;
+                const reason = stoppedByUser
+                    ? "You stopped waiting before all grants landed"
+                    : gaveUp
+                        ? "Gave up after repeated retries"
+                        : "Still failing";
+                html += `<div class="warning-box">${reason} — this is expected if the mailbox hasn't finished provisioning yet. Retry via Manage Shared Mailbox Members once it's ready. Still pending: ${failed.map(f => f.member).join(", ")}.</div>`;
             }
         }
         html += `</div>`;

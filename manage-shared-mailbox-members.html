@@ -299,7 +299,8 @@
         const list = document.getElementById("projectList");
         list.innerHTML = "";
         const selectedService = document.querySelector('input[name="service"]:checked').value;
-        const filterText = (document.getElementById("projectFilterBox").value || "").toLowerCase();
+        // Mailbox names never contain spaces, so strip them from the query too.
+        const filterText = (document.getElementById("projectFilterBox").value || "").toLowerCase().replace(/\s+/g, "");
 
         const filtered = allProjects
             .filter(p => {
