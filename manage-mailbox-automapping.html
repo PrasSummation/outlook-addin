@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Manage Mailbox Automapping</title>
+  <script type="text/javascript" src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
+  <style>
+    :root{
+      --green:#408F4E; --green-dark:#2D6B38; --green-pale:#EDF7EE;
+      --amber:#8A6D1D; --amber-pale:#FBF3DD;
+      --blue:#2D5F8B; --blue-pale:#E9F1F8;
+      --grey-900:#2B2B2B; --grey-600:#646464; --grey-400:#909090;
+      --grey-500:#787878; --grey-300:#B4B4B4; --grey-200:#DCDCDC; --grey-100:#EFEFEF; --grey-50:#F7F7F7;
+      --font-display:'Bahnschrift','DIN Alternate','Segoe UI',sans-serif;
+      --font-body:'Calibri','Segoe UI',system-ui,sans-serif;
+      --font-mono:'Consolas','Courier New',monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;padding:0;background:#fff;font-family:var(--font-body);
+         font-size:14px;line-height:1.5;color:var(--grey-600);-webkit-font-smoothing:antialiased}
+    a{color:var(--green-dark);text-decoration:none}
+    a:hover{color:var(--green);text-decoration:underline}
+
+    #brandBar{background:var(--grey-900);padding:16px 28px;display:flex;align-items:center;gap:12px}
+    #brandBar img{width:32px;height:32px}
+    #brandBar .word{font-family:var(--font-display);font-size:15px;font-weight:600;color:#fff;letter-spacing:.14em}
+    #brandBar .sub{font-size:11px;color:var(--grey-400);letter-spacing:.05em}
+
+    #signInPrompt{padding:80px 24px;text-align:center}
+    #signInPrompt p{margin:0 0 20px;font-size:14px;color:var(--grey-600)}
+    #signInButton{padding:10px 24px;font:600 14px var(--font-body);color:#fff;background:var(--green);
+      border:1px solid var(--green);border-radius:4px;cursor:pointer}
+    #signInButton:hover{background:var(--green-dark)}
+
+    #appBody{max-width:820px;margin:0 auto;padding:28px}
+    .page-header h1{font-family:var(--font-display);font-size:20px;color:var(--grey-900);margin:0 0 4px}
+    .page-header p{margin:0 0 20px;font-size:13px;color:var(--grey-500)}
+
+    #status{font-size:13px;color:var(--grey-600);white-space:pre-wrap;margin-bottom:14px;min-height:1.4em}
+    #status.error{color:#B3261E}
+
+    .pane{border:1px solid var(--grey-200);border-radius:10px;padding:16px;background:#fff;margin-bottom:16px}
+    .pane h2{font-size:14px;color:var(--grey-900);margin:0 0 6px;display:flex;align-items:center;gap:8px}
+    .pane h2 .count{font-size:12px;font-weight:400;color:var(--grey-400)}
+    .hint{font-size:12px;color:var(--grey-500);margin:0 0 10px}
+
+    .step-pane{border:1px solid var(--grey-200);border-radius:10px;padding:16px;background:var(--grey-50);margin-bottom:20px}
+    .step-pane h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--grey-400);margin:0 0 10px}
+    .step-pane .instructions{font-size:13px;color:var(--grey-600);margin:0 0 12px}
+    .step-pane .instructions code{font-family:var(--font-mono);font-size:12px;background:var(--grey-100);
+      padding:1px 5px;border-radius:3px}
+    #localExportInput{font-size:13px}
+    #localExportStatus{font-size:12.5px;color:var(--grey-500);margin-top:8px}
+    #localExportStatus.error{color:#B3261E}
+    #refreshExchangeLink{font-size:12px;margin-left:10px}
+
+    .result-list{border:1px solid var(--grey-200);border-radius:8px;max-height:260px;overflow-y:auto}
+    .result-item{padding:8px 11px;border-bottom:1px solid var(--grey-100);font-size:13px;color:var(--grey-900)}
+    .result-item:last-child{border-bottom:none}
+    .empty-message{padding:12px;color:var(--grey-400);font-size:12px}
+
+    .pane.confirmed h2{color:var(--green-dark)}
+    .pane.attention{background:var(--amber-pale);border-color:#E0C878}
+    .pane.attention h2{color:var(--amber)}
+    .pane.unaccounted{background:var(--blue-pale);border-color:#B9D2E6}
+    .pane.unaccounted h2{color:var(--blue)}
+
+    .page-footer{margin-top:22px;font-size:12px;color:var(--grey-500)}
+    .page-footer div{margin-bottom:4px}
+  </style>
+</head>
+<body>
+  <div id="brandBar">
+    <img src="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" alt="Summation" />
+    <div>
+      <div class="word">SUMMATION</div>
+      <div class="sub">Manage Mailbox Automapping</div>
+    </div>
+  </div>
+
+  <div id="signInPrompt">
+    <p>Please sign in to check your mailbox automapping.</p>
+    <button id="signInButton">Sign In</button>
+  </div>
+
+  <div id="appBody" style="display:none;">
+    <div class="page-header">
+      <h1>Manage Mailbox Automapping</h1>
+      <p>Reconciles what Exchange says you have Full Access to against what's actually showing up in your real Outlook right now — the two can drift apart, and neither Graph nor Exchange Online can tell you that on their own.</p>
+    </div>
+    <div id="status"></div>
+
+    <div class="step-pane">
+      <h2>Step 1 &middot; Load your local Outlook export</h2>
+      <div class="instructions">
+        In the Summation Email Filer, use <b>Manage Shared Mailbox Automapping</b> to export your
+        current Outlook mailbox list, then select the exported file below
+        (usually <code>Downloads\summation-mailbox-automapping.json</code>).
+      </div>
+      <input type="file" id="localExportInput" accept="application/json,.json" />
+      <div id="localExportStatus">No file loaded yet.</div>
+    </div>
+
+    <div id="reconciliationResults"></div>
+
+    <div class="page-footer">
+      <div>Need to grant or revoke access instead? <a href="https://prassummation.github.io/outlook-addin/manage-shared-mailbox-members.html" target="_blank" rel="noopener">Open Manage Shared Mailbox Members &rarr;</a></div>
+      <div>Managing your own access one mailbox at a time? <a href="https://prassummation.github.io/outlook-addin/manage-mailboxes.html" target="_blank" rel="noopener">Open the mailbox access review tool &rarr;</a></div>
+    </div>
+  </div>
+
+  <script>
+    const BRIDGE_URL = "https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net";
+    const PROJECT_MAILBOX_REGEX = /^[a-zA-Z]{5}\d{5}_.*@summation\.au$/i;
+
+    const msalConfig = {
+      auth: {
+        clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
+        authority: "https://login.microsoftonline.com/ecb5f458-9548-4e8b-96f3-904f1828f931",
+        redirectUri: window.location.origin + window.location.pathname
+      },
+      cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+    };
+
+    const graphRequest = { scopes: ["User.Read", "Directory.Read.All"] };
+    const bridgeRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/MailboxBridge.Call"] };
+
+    let msalInstance;
+    let currentUserEmail = "";
+    let exchangeMailboxes = [];
+    let exchangeLoaded = false;
+    let localExport = null;
+
+    window.addEventListener("load", () => {
+        document.getElementById("signInButton").addEventListener("click", handleLogin);
+        document.getElementById("localExportInput").addEventListener("change", handleLocalExportFile);
+
+        msalInstance = new msal.PublicClientApplication(msalConfig);
+        attemptSilentSignIn();
+    });
+
+    function showApp(show) {
+        document.getElementById("appBody").style.display = show ? "block" : "none";
+        document.getElementById("signInPrompt").style.display = show ? "none" : "block";
+    }
+
+    async function signInAndGetToken(request, isUserAction) {
+        const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+        if (account) {
+            try {
+                const silentResponse = await msalInstance.acquireTokenSilent({ ...request, account });
+                return silentResponse.accessToken;
+            } catch (error) {
+                if (error instanceof msal.InteractionRequiredAuthError && isUserAction) {
+                    const interactiveResponse = await msalInstance.acquireTokenPopup(request);
+                    return interactiveResponse.accessToken;
+                }
+                throw error;
+            }
+        }
+        if (isUserAction) {
+            const loginResponse = await msalInstance.loginPopup(request);
+            msalInstance.setActiveAccount(loginResponse.account);
+            return loginResponse.accessToken;
+        }
+        return null;
+    }
+
+    async function handleLogin() {
+        try {
+            const loginResponse = await msalInstance.loginPopup(graphRequest);
+            msalInstance.setActiveAccount(loginResponse.account);
+            await afterSignIn();
+        } catch (err) {
+            updateStatus(`Sign in failed: ${err.message}`, true);
+        }
+    }
+
+    async function attemptSilentSignIn() {
+        try {
+            const token = await signInAndGetToken(graphRequest, false);
+            if (token) await afterSignIn();
+            else showApp(false);
+        } catch (err) {
+            showApp(false);
+        }
+    }
+
+    async function afterSignIn() {
+        currentUserEmail = msalInstance.getActiveAccount().username;
+        showApp(true);
+        await loadExchangeAccess();
+    }
+
+    function updateStatus(message, isError) {
+        const el = document.getElementById("status");
+        el.textContent = message;
+        el.className = isError ? "error" : "";
+    }
+
+    async function graphGet(url, token) {
+        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function graphGetAll(url, token) {
+        let results = [];
+        let nextUrl = url;
+        while (nextUrl) {
+            const data = await graphGet(nextUrl, token);
+            results = results.concat(data.value);
+            nextUrl = data["@odata.nextLink"] || null;
+        }
+        return results;
+    }
+
+    async function getSharedMailboxes(token) {
+        const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses&$top=999";
+        const users = await graphGetAll(url, token);
+        return users
+            .filter(u => u.assignedLicenses.length === 0 && u.mail && PROJECT_MAILBOX_REGEX.test(u.mail))
+            .map(u => ({ name: u.mail.split("@")[0], mail: u.mail }));
+    }
+
+    async function getMailboxPermissionsViaBridge(mailbox, token) {
+        const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions?mailbox=${encodeURIComponent(mailbox)}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function loadExchangeAccess() {
+        exchangeLoaded = false;
+        updateStatus("Checking your Exchange permissions...");
+        try {
+            const graphToken = await signInAndGetToken(graphRequest, true);
+            const mailboxes = await getSharedMailboxes(graphToken);
+
+            const bridgeToken = await signInAndGetToken(bridgeRequest, true);
+            const results = [];
+            const BATCH_SIZE = 10;
+            for (let i = 0; i < mailboxes.length; i += BATCH_SIZE) {
+                const batch = mailboxes.slice(i, i + BATCH_SIZE);
+                updateStatus(`Checking Exchange permissions ${i + 1}-${Math.min(i + BATCH_SIZE, mailboxes.length)} of ${mailboxes.length}...`);
+                const batchResults = await Promise.all(batch.map(async m => {
+                    try {
+                        const data = await getMailboxPermissionsViaBridge(m.mail, bridgeToken);
+                        const hasAccess = data.members.some(member => member.user.toLowerCase() === currentUserEmail.toLowerCase());
+                        return { ...m, hasAccess, error: null };
+                    } catch (err) {
+                        return { ...m, hasAccess: false, error: err.message };
+                    }
+                }));
+                results.push(...batchResults);
+            }
+            exchangeMailboxes = results;
+            exchangeLoaded = true;
+
+            const failures = exchangeMailboxes.filter(m => m.error);
+            updateStatus(failures.length > 0
+                ? `Warning: could not check ${failures.length} of ${exchangeMailboxes.length} mailboxes. First error: ${failures[0].error}`
+                : "", failures.length > 0);
+            renderReconciliation();
+        } catch (err) {
+            console.error("Failed to load Exchange access:", err);
+            updateStatus(`Error: ${err.message}`, true);
+        }
+    }
+
+    function normalize(s) {
+        return (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+
+    function findLocalMatch(exchangeEntry) {
+        if (!localExport) return null;
+        const targetMail = exchangeEntry.mail.toLowerCase();
+        const targetNorm = normalize(exchangeEntry.name);
+        return localExport.mailboxes.find(m =>
+            (m.smtpAddress && m.smtpAddress.toLowerCase() === targetMail) ||
+            normalize(m.displayName) === targetNorm
+        ) || null;
+    }
+
+    function handleLocalExportFile(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const statusEl = document.getElementById("localExportStatus");
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const parsed = JSON.parse(reader.result);
+                if (!parsed || !Array.isArray(parsed.mailboxes)) {
+                    throw new Error("This doesn't look like a mailbox export (missing a 'mailboxes' array).");
+                }
+                localExport = parsed;
+                statusEl.className = "";
+                statusEl.textContent = `Loaded ${parsed.mailboxes.length} mailbox(es) from your Outlook` +
+                    (parsed.exportedAtUtc ? `, exported ${new Date(parsed.exportedAtUtc).toLocaleString()}.` : ".");
+                renderReconciliation();
+            } catch (err) {
+                statusEl.className = "error";
+                statusEl.textContent = `Could not read file: ${err.message}`;
+            }
+        };
+        reader.onerror = () => {
+            statusEl.className = "error";
+            statusEl.textContent = "Could not read the selected file.";
+        };
+        reader.readAsText(file);
+    }
+
+    function renderGroup(className, title, items, hint) {
+        let html = `<div class="pane ${className}">
+            <h2>${title} <span class="count">(${items.length})</span></h2>
+            <div class="hint">${hint}</div>`;
+        if (items.length === 0) {
+            html += `<div class="empty-message">None.</div>`;
+        } else {
+            html += `<div class="result-list">` +
+                items.map(name => `<div class="result-item">${name}</div>`).join("") +
+                `</div>`;
+        }
+        html += `</div>`;
+        return html;
+    }
+
+    function renderReconciliation() {
+        const container = document.getElementById("reconciliationResults");
+        if (!exchangeLoaded || !localExport) {
+            container.innerHTML = "";
+            return;
+        }
+
+        const myAccess = exchangeMailboxes.filter(m => m.hasAccess);
+        const confirmed = [];
+        const grantedNotVisible = [];
+        const matchedLocalEntries = new Set();
+
+        myAccess.forEach(m => {
+            const match = findLocalMatch(m);
+            if (match) {
+                confirmed.push(m.name);
+                matchedLocalEntries.add(match);
+            } else {
+                grantedNotVisible.push(m.name);
+            }
+        });
+
+        const localOnly = localExport.mailboxes
+            .filter(entry => !matchedLocalEntries.has(entry))
+            .map(entry => entry.displayName);
+
+        let html = "";
+        html += renderGroup("confirmed", "&#9989; Confirmed &mdash; access granted and visible in your Outlook", confirmed,
+            "These match up: you have Full Access permission and the mailbox is genuinely present in your Outlook right now.");
+        html += renderGroup("attention", "&#9888;&#65039; Granted, but not currently visible in your Outlook", grantedNotVisible,
+            "Exchange shows you have Full Access, but it wasn't found in your latest local export. It may not have automapped yet, may have been removed locally, or Outlook's own mailbox display limit may be hiding it.");
+        html += renderGroup("unaccounted", "&#8505;&#65039; Visible in your Outlook, but no Full Access permission on record", localOnly,
+            "These are showing up in your Outlook profile, but this bridge doesn't show Full Access granted for you on them &mdash; could be Send As access, an older/manual setup, or a naming mismatch.");
+
+        container.innerHTML = html;
+    }
+  </script>
+</body>
+</html>
