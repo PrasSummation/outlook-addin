@@ -64,6 +64,8 @@
     .pane.attention h2{color:var(--amber)}
     .pane.unaccounted{background:var(--blue-pale);border-color:#B9D2E6}
     .pane.unaccounted h2{color:var(--blue)}
+    .pane.uncheckable{background:var(--grey-50);border-color:var(--grey-200)}
+    .pane.uncheckable h2{color:var(--grey-500)}
 
     .page-footer{margin-top:22px;font-size:12px;color:var(--grey-500)}
     .page-footer div{margin-bottom:4px}
@@ -289,6 +291,16 @@
         ) || null;
     }
 
+    // The bridge itself refuses (403) any mailbox that doesn't match the project naming
+    // convention, by design (Test-ProjectMailboxAddress) — so for a non-conforming local
+    // entry we never actually get a permission answer, and must not report that as "no
+    // access", since we simply couldn't ask. Best-effort: test the real SMTP if we have
+    // it, otherwise a looser check against the normalized display name.
+    function looksLikeProjectMailbox(entry) {
+        if (entry.smtpAddress) return PROJECT_MAILBOX_REGEX.test(entry.smtpAddress);
+        return /^[a-z]{5}\d{5}/.test(normalize(entry.displayName));
+    }
+
     function handleLocalExportFile(event) {
         const file = event.target.files[0];
         if (!file) return;
@@ -354,9 +366,9 @@
             }
         });
 
-        const localOnly = localExport.mailboxes
-            .filter(entry => !matchedLocalEntries.has(entry))
-            .map(entry => entry.displayName);
+        const unmatchedLocal = localExport.mailboxes.filter(entry => !matchedLocalEntries.has(entry));
+        const localOnly = unmatchedLocal.filter(looksLikeProjectMailbox).map(entry => entry.displayName);
+        const localUncheckable = unmatchedLocal.filter(entry => !looksLikeProjectMailbox(entry)).map(entry => entry.displayName);
 
         let html = "";
         html += renderGroup("confirmed", "&#9989; Confirmed &mdash; access granted and visible in your Outlook", confirmed,
@@ -365,6 +377,8 @@
             "Exchange shows you have Full Access, but it wasn't found in your latest local export. It may not have automapped yet, may have been removed locally, or Outlook's own mailbox display limit may be hiding it.");
         html += renderGroup("unaccounted", "&#8505;&#65039; Visible in your Outlook, but no Full Access permission on record", localOnly,
             "These are showing up in your Outlook profile, but this bridge doesn't show Full Access granted for you on them &mdash; could be Send As access, an older/manual setup, or a naming mismatch.");
+        html += renderGroup("uncheckable", "Visible in your Outlook, but not checkable via this bridge", localUncheckable,
+            "This bridge only manages mailboxes matching the project naming convention, so it can't confirm your permission status on these &mdash; but they genuinely are showing up in your Outlook. This is exactly the kind of non-conforming mailbox this whole export exists to surface.");
 
         container.innerHTML = html;
     }
