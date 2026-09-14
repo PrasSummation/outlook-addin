@@ -167,7 +167,7 @@
     <div id="topActions">
       <div class="section-label">Actions</div>
       <button id="newProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.5"><path d="M7 2v10M2 7h10"/></svg></span><span class="txt"><b>New BD project</b><i>Allocate the next number and file this email</i></span></span></button>
-      <button id="convertProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2 7h10M8.5 3.5 12 7l-3.5 3.5"/></svg></span><span class="txt"><b>Convert BD to project</b><i>Move an Archive folder into Active</i></span></span></button>
+      <button id="convertProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2 7h10M8.5 3.5 12 7l-3.5 3.5"/></svg></span><span class="txt"><b>Change BD to Active project</b><i>Move an Archive folder into Active</i></span></span></button>
       <button id="convertToArchiveButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M12 7H2M5.5 3.5 2 7l3.5 3.5"/></svg></span><span class="txt"><b>Convert Active to Archive</b><i>Move a project folder from Active into Archive</i></span></span></button>
       <button id="searchMailboxButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><circle cx="6" cy="6" r="4"/><path d="M9.5 9.5 13 13"/></svg></span><span class="txt"><b>Search Shared Mailbox Online</b><i>Find any project mailbox and open it in Outlook Web</i></span></span></button>
       <button id="manageMembersButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><rect x="1.5" y="3" width="4.5" height="8" rx="1"/><rect x="8" y="3" width="4.5" height="8" rx="1"/><path d="M6 5.5h2M6 8.5h2"/></svg></span><span class="txt"><b>Manage Shared Mailbox Members</b><i>Add team members to project mailboxes in bulk</i></span></span></button>
@@ -232,6 +232,7 @@
         <div class="radio-row">
           <label><input type="radio" name="cvService" value="Sustainability" checked /> Sustainability</label>
           <label><input type="radio" name="cvService" value="Energy" /> Energy</label>
+          <label><input type="radio" name="cvService" value="Other" /> Other</label>
         </div>
         <label for="cvFilterBox">Filter archive project folders</label>
         <input type="text" id="cvFilterBox" placeholder="Type to filter..." />
@@ -260,6 +261,7 @@
         <div class="radio-row">
           <label><input type="radio" name="caService" value="Sustainability" checked /> Sustainability</label>
           <label><input type="radio" name="caService" value="Energy" /> Energy</label>
+          <label><input type="radio" name="caService" value="Other" /> Other</label>
         </div>
         <label for="caFilterBox">Filter active project folders</label>
         <input type="text" id="caFilterBox" placeholder="Type to filter..." />
@@ -287,6 +289,7 @@
       <div class="radio-row">
         <label><input type="radio" name="smService" value="Sustainability" checked /> Sustainability</label>
         <label><input type="radio" name="smService" value="Energy" /> Energy</label>
+        <label><input type="radio" name="smService" value="Other" /> Other</label>
       </div>
       <label for="smFilterBox">Search shared mailboxes</label>
       <input type="text" id="smFilterBox" placeholder="Type to search..." />
@@ -299,7 +302,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.13";
+    const APP_VERSION = "9.14";
 
     let msalInstance;
     let folderEntries = [];
@@ -353,6 +356,11 @@
         scopes: ["Directory.ReadWrite.All"]
     };
     // Only requested on demand, when using the New Project wizard.
+    const bridgeRequest = {
+        scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/MailboxBridge.Call"]
+    };
+    const BRIDGE_URL = "https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net";
+
     const sitesRequest = {
         scopes: ["Sites.Selected"]
     };
@@ -478,6 +486,32 @@
         return response.json();
     }
 
+    // Follows @odata.nextLink so results aren't silently capped at one page's $top.
+    async function graphGetAll(url, token) {
+        let results = [];
+        let nextUrl = url;
+        while (nextUrl) {
+            const data = await graphGet(nextUrl, token);
+            results = results.concat(data.value);
+            nextUrl = data["@odata.nextLink"] || null;
+        }
+        return results;
+    }
+
+    // Project folder/mailbox names are COMBO + YYNNN + "_" + name (e.g. SUPER24007_ProjectName).
+    // Sorting by this descending gives "latest projects first" without depending on locale string
+    // comparison, which breaks once Perth (PER) and Adelaide (ADL) entries are interleaved.
+    function extractProjectNumber(name) {
+        const match = /^[a-zA-Z]{5}(\d{5})_/.exec(name || "");
+        return match ? parseInt(match[1], 10) : -Infinity;
+    }
+
+    function serviceFilterMatches(selectedService, combo) {
+        if (selectedService === "Energy") return combo.startsWith("EN");
+        if (selectedService === "Sustainability") return combo.startsWith("SU");
+        return !combo.startsWith("EN") && !combo.startsWith("SU");
+    }
+
     async function loadFolders() {
         updateStatus("Loading project folders...");
         try {
@@ -537,14 +571,17 @@
     // Shared/project mailboxes are represented by a single entry for their Inbox.
     async function getSharedMailboxes(token) {
         const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses&$top=999";
-        const data = await graphGet(url, token);
+        const users = await graphGetAll(url, token);
         const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}_.*@summation\.au$/i;
-        const sharedMailboxes = data.value.filter(user =>
+        const sharedMailboxes = users.filter(user =>
             user.assignedLicenses.length === 0 && user.mail && projectMailboxRegex.test(user.mail)
         );
         return sharedMailboxes
-            .map(user => ({ path: [user.mail.split("@")[0], "Inbox"], depth: 0, type: "shared", mail: user.mail }))
-            .sort((a, b) => a.path[0].localeCompare(b.path[0]));
+            .map(user => {
+                const localPart = user.mail.split("@")[0];
+                return { path: [localPart, "Inbox"], depth: 0, type: "shared", mail: user.mail, combo: localPart.slice(0, 5).toUpperCase() };
+            })
+            .sort((a, b) => extractProjectNumber(b.path[0]) - extractProjectNumber(a.path[0]));
     }
 
     function renderFolderList(filter) {
@@ -617,6 +654,35 @@
         document.getElementById("createStatusMessage").style.color = isError ? "red" : "#333";
     }
 
+    // Creates the Graph user object a project mailbox rides on. Returns its SMTP address.
+    // Shared by the manual "Create New Shared Mailbox" button and the automatic mailbox
+    // creation in the BD-to-Active conversion below.
+    async function createMailboxAccount(mailboxName, token) {
+        const mailNickname = mailboxName.replace(/[^a-zA-Z0-9_]/g, '');
+        if (mailNickname.length === 0) {
+            throw new Error("Mailbox name contains only invalid characters.");
+        }
+        const tempPassword = "TempP@ssword" + Math.floor(Math.random() * 10000);
+        const userDetails = {
+            accountEnabled: true,
+            displayName: mailboxName,
+            mailNickname: mailNickname,
+            userPrincipalName: `${mailNickname}@summation.au`,
+            passwordProfile: { forceChangePasswordNextSignIn: false, password: tempPassword }
+        };
+
+        const response = await fetch("https://graph.microsoft.com/v1.0/users", {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(userDetails)
+        });
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error.message || "Failed to create mailbox.");
+        }
+        return `${mailNickname}@summation.au`;
+    }
+
     async function createSharedMailbox() {
         const mailboxName = document.getElementById("newMailboxName").value;
         if (!mailboxName || mailboxName.trim().length === 0) {
@@ -631,36 +697,113 @@
                 return;
             }
 
-            const mailNickname = mailboxName.replace(/[^a-zA-Z0-9_]/g, '');
-            if (mailNickname.length === 0) {
-                updateCreateStatus("Mailbox name contains only invalid characters.", true);
-                return;
-            }
-            const tempPassword = "TempP@ssword" + Math.floor(Math.random() * 10000);
-            const userDetails = {
-                accountEnabled: true,
-                displayName: mailboxName,
-                mailNickname: mailNickname,
-                userPrincipalName: `${mailNickname}@summation.au`,
-                passwordProfile: { forceChangePasswordNextSignIn: false, password: tempPassword }
-            };
-
-            const createUrl = "https://graph.microsoft.com/v1.0/users";
-            const response = await fetch(createUrl, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify(userDetails)
-            });
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error.message || "Failed to create mailbox.");
-            }
+            await createMailboxAccount(mailboxName, token);
 
             updateCreateStatus("Mailbox account created. Microsoft 365 can take several minutes (sometimes longer) to finish provisioning the mailbox before it appears in this list or can receive mail. Use the ↻ refresh button below to check back later.");
         } catch (err) {
             console.error("Failed to create shared mailbox:", err);
             updateCreateStatus(`Error: ${err.message}`, true);
         }
+    }
+
+    // Entra ID Department field -> which project mailboxes that team should get access to.
+    const DEPARTMENT_BY_COMBO_PREFIX = { SU: "Sustainability", EN: "Energy" };
+
+    async function getStaffByDepartment(department, token) {
+        const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,department,assignedLicenses,accountEnabled&$top=999";
+        const users = await graphGetAll(url, token);
+        const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}_.*@summation\.au$/i;
+        return users
+            .filter(u => u.assignedLicenses.length > 0 && u.accountEnabled !== false)
+            .map(u => ({ name: u.displayName, mail: u.mail || u.userPrincipalName, department: (u.department || "").trim() }))
+            .filter(u => u.mail && !projectMailboxRegex.test(u.mail))
+            .filter(u => u.department.toLowerCase() === department.toLowerCase());
+    }
+
+    async function grantMailboxPermissionViaBridge(mailbox, user, token, autoMapping) {
+        const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions/grant`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ mailbox, user, autoMapping })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    // Creates the project mailbox for a folder just converted from Archive to Active, and
+    // grants Full Access (without automapping, per policy) to every licensed staff member
+    // whose Entra ID Department matches the project's service. The mailbox account itself
+    // provisions on Exchange over the following minutes, so grants attempted immediately can
+    // fail even though the mailbox will exist shortly — that's surfaced per-member, not hidden.
+    async function createProjectMailboxAndGrantMembers(entry) {
+        const statusEl = document.getElementById("cvConfirmStatus");
+        const result = { mailboxName: entry.name, mailbox: null, mailboxError: null, service: null, grants: [], grantsError: null };
+        result.service = DEPARTMENT_BY_COMBO_PREFIX[entry.combo.slice(0, 2)] || null;
+
+        statusEl.textContent = "Creating project mailbox...";
+        try {
+            const dwToken = await signInAndGetToken(directoryWriteRequest, true);
+            if (!dwToken) throw new Error("Could not get permission to create mailboxes.");
+            result.mailbox = await createMailboxAccount(entry.name, dwToken);
+        } catch (err) {
+            result.mailboxError = err.message;
+            return result;
+        }
+
+        if (!result.service) return result;
+
+        try {
+            statusEl.textContent = `Looking up ${result.service} team members...`;
+            const graphToken = await signInAndGetToken(graphRequest, true);
+            const staff = await getStaffByDepartment(result.service, graphToken);
+            const bridgeToken = await signInAndGetToken(bridgeRequest, true);
+
+            const BATCH_SIZE = 10;
+            for (let i = 0; i < staff.length; i += BATCH_SIZE) {
+                const batch = staff.slice(i, i + BATCH_SIZE);
+                statusEl.textContent = `Granting mailbox access ${i + 1}-${Math.min(i + BATCH_SIZE, staff.length)} of ${staff.length}...`;
+                const batchResults = await Promise.all(batch.map(async member => {
+                    try {
+                        await grantMailboxPermissionViaBridge(result.mailbox, member.mail, bridgeToken, false);
+                        return { member: member.name, error: null };
+                    } catch (err) {
+                        return { member: member.name, error: err.message };
+                    }
+                }));
+                result.grants.push(...batchResults);
+            }
+        } catch (err) {
+            result.grantsError = err.message;
+        }
+
+        return result;
+    }
+
+    function renderMailboxResultBox(mailboxResult) {
+        const { mailboxName, mailbox, mailboxError, service, grants, grantsError } = mailboxResult;
+        if (mailboxError) {
+            return `<div class="warning-box">Project mailbox not created: ${mailboxError}</div>`;
+        }
+        let html = `<div class="summary-box">
+            <div class="row"><span class="label">Project mailbox created:</span> ${mailbox}</div>
+            <div class="row">Microsoft 365 can take several minutes (sometimes longer) to finish provisioning it.</div>`;
+        if (!service) {
+            html += `<div class="row">Couldn't determine a Sustainability/Energy service from "${mailboxName}", so no team members were added automatically — use Manage Shared Mailbox Members once it's provisioned.</div>`;
+        } else if (grantsError) {
+            html += `<div class="warning-box">Could not look up ${service} team members to add: ${grantsError}. Use Manage Shared Mailbox Members once the mailbox is provisioned.</div>`;
+        } else {
+            const failed = grants.filter(g => g.error);
+            const succeeded = grants.length - failed.length;
+            html += `<div class="row">Granted the ${service} team (${grants.length} member(s)) access without automapping — ${succeeded} succeeded now, ${failed.length} failed.</div>`;
+            if (failed.length > 0) {
+                html += `<div class="warning-box">Failures are expected if the mailbox hasn't finished provisioning yet (${failed.map(f => f.member).join(", ")}). Retry via Manage Shared Mailbox Members once it's ready.</div>`;
+            }
+        }
+        html += `</div>`;
+        return html;
     }
 
     // ---- New Project wizard ----
@@ -1208,12 +1351,11 @@
         const list = document.getElementById("cvFolderList");
         list.innerHTML = "";
         const selectedService = document.querySelector('input[name="cvService"]:checked').value;
-        const servicePrefix = selectedService === "Energy" ? "EN" : "SU";
         const normalizedFilter = (filter || "").toLowerCase();
         const filtered = archiveFolderEntries
-            .filter(entry => entry.combo.startsWith(servicePrefix))
+            .filter(entry => serviceFilterMatches(selectedService, entry.combo))
             .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
-            .sort((a, b) => b.name.localeCompare(a.name));
+            .sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name));
 
         if (filtered.length === 0) {
             const empty = document.createElement("div");
@@ -1318,7 +1460,7 @@
         }
     }
 
-    function renderConvertResultStep(success, errorMessage) {
+    function renderConvertResultStep(success, errorMessage, mailboxResult) {
         const container = document.getElementById("cvResultSummary");
         if (errorMessage) {
             container.innerHTML = `<div class="warning-box">Error: ${errorMessage}</div>`;
@@ -1339,6 +1481,9 @@
             html += `<div class="row">Original removed from Archive.</div>`;
         }
         html += `</div>`;
+        if (mailboxResult) {
+            html += renderMailboxResultBox(mailboxResult);
+        }
         container.innerHTML = html;
 
         const copyButton = document.getElementById("cvCopyLinkButton");
@@ -1392,7 +1537,9 @@
                 deleteError = err.message;
             }
 
-            renderConvertResultStep({ folderName: selectedEntry.name, webUrl: newActiveItem.webUrl, deleteError }, null);
+            const mailboxResult = await createProjectMailboxAndGrantMembers(selectedEntry);
+
+            renderConvertResultStep({ folderName: selectedEntry.name, webUrl: newActiveItem.webUrl, deleteError }, null, mailboxResult);
             showConvertStep("result");
         } catch (err) {
             console.error("Failed to convert folder:", err);
@@ -1468,12 +1615,11 @@
         const list = document.getElementById("caFolderList");
         list.innerHTML = "";
         const selectedService = document.querySelector('input[name="caService"]:checked').value;
-        const servicePrefix = selectedService === "Energy" ? "EN" : "SU";
         const normalizedFilter = (filter || "").toLowerCase();
         const filtered = activeFolderEntries
-            .filter(entry => entry.combo.startsWith(servicePrefix))
+            .filter(entry => serviceFilterMatches(selectedService, entry.combo))
             .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
-            .sort((a, b) => b.name.localeCompare(a.name));
+            .sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name));
 
         if (filtered.length === 0) {
             const empty = document.createElement("div");
@@ -1680,10 +1826,9 @@
         const list = document.getElementById("smMailboxList");
         list.innerHTML = "";
         const selectedService = document.querySelector('input[name="smService"]:checked').value;
-        const servicePrefix = selectedService === "Energy" ? "EN" : "SU";
         const normalizedFilter = (filter || "").toLowerCase();
         const filtered = sharedMailboxSearchEntries
-            .filter(entry => entry.path[0].toUpperCase().startsWith(servicePrefix))
+            .filter(entry => serviceFilterMatches(selectedService, entry.combo))
             .filter(entry => entry.path[0].toLowerCase().includes(normalizedFilter));
 
         if (filtered.length === 0) {

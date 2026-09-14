@@ -66,9 +66,6 @@
 
     .action-bar{display:flex;align-items:center;gap:16px;margin-top:18px;padding-top:16px;border-top:1px solid var(--grey-200)}
     .action-bar .summary{flex:1;font-size:13px;color:var(--grey-600)}
-    .automapping-toggle{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--grey-500);
-      cursor:pointer;white-space:nowrap;flex:none}
-    .automapping-toggle input{accent-color:var(--green);margin:0}
     #confirmButton{padding:10px 22px;font:600 13px var(--font-body);color:#fff;background:var(--green);
       border:1px solid var(--green);border-radius:4px;cursor:pointer;flex:none}
     #confirmButton:hover{background:var(--green-dark)}
@@ -117,10 +114,6 @@
     </div>
 
     <div class="action-bar">
-      <label class="automapping-toggle" title="When granting access: automatically add each mailbox to the member's Outlook (recommended), or grant access only, without auto-adding it.">
-        <input type="checkbox" id="autoMappingCheckbox" checked />
-        Automap
-      </label>
       <div class="summary" id="summaryLine">Select at least one project and one team member.</div>
       <button id="confirmButton" disabled>Confirm</button>
     </div>
@@ -426,13 +419,14 @@
         const members = allStaff.filter(m => selectedMemberMails.has(m.mail));
         if (projects.length === 0 || members.length === 0) return;
 
-        const autoMapping = document.getElementById("autoMappingCheckbox").checked;
+        // Shared mailboxes default to no automapping — members add them to Outlook themselves if wanted.
+        const autoMapping = false;
         const pairs = [];
         projects.forEach(p => members.forEach(m => pairs.push({ project: p, member: m })));
 
         if (!confirm(
             `Grant Full Access for ${members.length} team member(s) on ${projects.length} project mailbox(es) ` +
-            `— ${pairs.length} grant(s) total${autoMapping ? "" : " (without automapping)"}. Continue?`
+            `— ${pairs.length} grant(s) total (without automapping). Continue?`
         )) return;
 
         const confirmButton = document.getElementById("confirmButton");

@@ -103,10 +103,6 @@
       <div class="arrows">
         <button id="removeButton" title="Revoke access" disabled>&rarr;</button>
         <button id="addButton" title="Grant access" disabled>&larr;</button>
-        <label class="automapping-toggle" title="When granting access: automatically add this mailbox to your Outlook (recommended), or grant access only, without auto-adding it.">
-          <input type="checkbox" id="autoMappingCheckbox" checked />
-          Automap
-        </label>
       </div>
 
       <div class="pane">
@@ -221,14 +217,33 @@
         return response.json();
     }
 
+    // Follows @odata.nextLink so results aren't silently capped at one page's $top.
+    async function graphGetAll(url, token) {
+        let results = [];
+        let nextUrl = url;
+        while (nextUrl) {
+            const data = await graphGet(nextUrl, token);
+            results = results.concat(data.value);
+            nextUrl = data["@odata.nextLink"] || null;
+        }
+        return results;
+    }
+
+    // Project mailbox names are COMBO + YYNNN + "_" + name (e.g. SUPER24007_ProjectName).
+    // Sorting by this descending gives "latest projects first".
+    function extractProjectNumber(name) {
+        const match = /^[a-zA-Z]{5}(\d{5})_/.exec(name || "");
+        return match ? parseInt(match[1], 10) : -Infinity;
+    }
+
     async function getSharedMailboxes(token) {
         const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses&$top=999";
-        const data = await graphGet(url, token);
+        const users = await graphGetAll(url, token);
         const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}_.*@summation\.au$/i;
-        return data.value
+        return users
             .filter(user => user.assignedLicenses.length === 0 && user.mail && projectMailboxRegex.test(user.mail))
             .map(user => ({ name: user.mail.split("@")[0], mail: user.mail, combo: user.mail.slice(0, 5).toUpperCase() }))
-            .sort((a, b) => a.name.localeCompare(b.name));
+            .sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name));
     }
 
     async function getMailboxPermissionsViaBridge(mailbox, token) {
@@ -399,17 +414,16 @@
 
     async function handleAdd() {
         if (!selectedAvailable) return;
-        const autoMapping = document.getElementById("autoMappingCheckbox").checked;
-        if (!confirm(`Grant yourself Full Access to "${selectedAvailable.name}"${autoMapping ? "" : " (without automapping)"}?`)) return;
+        // Shared mailboxes default to no automapping — add it yourself via "Open another mailbox" if wanted.
+        const autoMapping = false;
+        if (!confirm(`Grant yourself Full Access to "${selectedAvailable.name}" (without automapping)?`)) return;
 
         document.getElementById("addButton").disabled = true;
         updateStatus(`Granting access to ${selectedAvailable.name}...`);
         try {
             const token = await signInAndGetToken(bridgeRequest, true);
             await grantMailboxPermissionViaBridge(selectedAvailable.mail, currentUserEmail, token, autoMapping);
-            updateStatus(autoMapping
-                ? `Access granted. It may take a while to actually appear in Outlook, and Outlook's own display limit may keep it hidden regardless.`
-                : `Access granted without automapping — it won't be added to your Outlook automatically; add it yourself via "Open another mailbox" if you want it visible.`);
+            updateStatus(`Access granted without automapping — it won't be added to your Outlook automatically; add it yourself via "Open another mailbox" if you want it visible.`);
             await loadData();
         } catch (err) {
             console.error("Failed to add mailbox:", err);
