@@ -347,7 +347,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.17";
+    const APP_VERSION = "9.18";
 
     let msalInstance;
     let folderEntries = [];
@@ -710,6 +710,12 @@
         document.getElementById("createStatusMessage").style.color = isError ? "red" : "#333";
     }
 
+    // The address a mailbox name resolves to, independent of whether creation succeeds —
+    // needed so a later "already exists" conflict can still be resolved to the same address.
+    function deriveMailboxAddress(mailboxName) {
+        return `${mailboxName.replace(/[^a-zA-Z0-9_]/g, '')}@summation.au`;
+    }
+
     // Creates the Graph user object a project mailbox rides on. Returns its SMTP address.
     // Shared by the manual "Create New Shared Mailbox" button and the automatic mailbox
     // creation in the BD-to-Active conversion below.
@@ -872,11 +878,14 @@
     }
 
     // Creates the project mailbox for a folder just converted from Archive to Active, then
-    // infers the service from its combo prefix and grants that team access.
+    // infers the service from its combo prefix and grants that team access. If the account
+    // already exists (e.g. a previous attempt created it but a member grant didn't finish
+    // before the mailbox had provisioned), skips straight to granting instead of failing —
+    // a retry here shouldn't require deleting and recreating the account.
     async function createProjectMailboxAndGrantMembers(entry) {
         const statusEl = document.getElementById("cvConfirmStatus");
         const stopButton = document.getElementById("cvStopRetryButton");
-        const result = { mailboxName: entry.name, mailbox: null, mailboxError: null, service: null, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
+        const result = { mailboxName: entry.name, mailbox: null, mailboxError: null, mailboxAlreadyExisted: false, service: null, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
         result.service = DEPARTMENT_BY_COMBO_PREFIX[entry.combo.slice(0, 2)] || null;
 
         statusEl.textContent = "Creating project mailbox...";
@@ -885,8 +894,13 @@
             if (!dwToken) throw new Error("Could not get permission to create mailboxes.");
             result.mailbox = await createMailboxAccount(entry.name, dwToken);
         } catch (err) {
-            result.mailboxError = err.message;
-            return result;
+            if (/already exists/i.test(err.message)) {
+                result.mailbox = deriveMailboxAddress(entry.name);
+                result.mailboxAlreadyExisted = true;
+            } else {
+                result.mailboxError = err.message;
+                return result;
+            }
         }
 
         if (!result.service) return result;
@@ -915,13 +929,15 @@
     }
 
     function renderMailboxResultBox(mailboxResult) {
-        const { mailboxName, mailbox, mailboxError, service, grants, grantsError, stoppedByUser, gaveUp } = mailboxResult;
+        const { mailboxName, mailbox, mailboxError, mailboxAlreadyExisted, service, grants, grantsError, stoppedByUser, gaveUp } = mailboxResult;
         if (mailboxError) {
             return `<div class="warning-box">Project mailbox not created: ${mailboxError}</div>`;
         }
         let html = `<div class="summary-box">
-            <div class="row"><span class="label">Project mailbox created:</span> ${mailbox}</div>
-            <div class="row">Microsoft 365 can take several minutes (sometimes longer) to finish provisioning it.</div>`;
+            <div class="row"><span class="label">Project mailbox:</span> ${mailbox}</div>
+            <div class="row">${mailboxAlreadyExisted
+                ? "This mailbox already existed (from a previous attempt) — skipped creation and went straight to granting access."
+                : "Microsoft 365 can take several minutes (sometimes longer) to finish provisioning it."}</div>`;
         if (!service) {
             html += `<div class="row">Couldn't determine a Sustainability/Energy service from "${mailboxName}", so no team members were added automatically — use Manage Shared Mailbox Members once it's provisioned.</div>`;
         } else {
@@ -2051,17 +2067,25 @@
         statusEl.className = "";
         statusEl.textContent = "Creating project mailbox...";
 
-        const result = { mailbox: null, mailboxError: null, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
+        const result = { mailbox: null, mailboxError: null, mailboxAlreadyExisted: false, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
         try {
             const dwToken = await signInAndGetToken(directoryWriteRequest, true);
             if (!dwToken) throw new Error("Could not get permission to create mailboxes.");
             result.mailbox = await createMailboxAccount(csmState.mailboxName, dwToken);
         } catch (err) {
-            result.mailboxError = err.message;
-            renderCreateMailboxResultStep(result, teamLabel);
-            showCsmStep("result");
-            createButton.disabled = false;
-            return;
+            if (/already exists/i.test(err.message)) {
+                // Most likely this mailbox was created by an earlier attempt whose member
+                // grants didn't finish (e.g. the mailbox hadn't provisioned yet) — proceed
+                // straight to granting instead of treating this as a failure.
+                result.mailbox = deriveMailboxAddress(csmState.mailboxName);
+                result.mailboxAlreadyExisted = true;
+            } else {
+                result.mailboxError = err.message;
+                renderCreateMailboxResultStep(result, teamLabel);
+                showCsmStep("result");
+                createButton.disabled = false;
+                return;
+            }
         }
 
         const grantResult = await grantDepartmentAccessWithRetry(result.mailbox, departments, statusEl, stopButton);
@@ -2079,8 +2103,10 @@
             return;
         }
         container.innerHTML = `<div class="summary-box">
-            <div class="row"><span class="label">Mailbox created:</span> ${result.mailbox}</div>
-            <div class="row">Microsoft 365 can take several minutes (sometimes longer) to finish provisioning it.</div>
+            <div class="row"><span class="label">Mailbox:</span> ${result.mailbox}</div>
+            <div class="row">${result.mailboxAlreadyExisted
+                ? "This mailbox already existed (from a previous attempt) — skipped creation and went straight to granting access."
+                : "Microsoft 365 can take several minutes (sometimes longer) to finish provisioning it."}</div>
             ${renderGrantResultsHtml(teamLabel, result.grants, result.grantsError, result.stoppedByUser, result.gaveUp)}
         </div>`;
     }
