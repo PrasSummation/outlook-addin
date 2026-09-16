@@ -1,21 +1,22 @@
 # Exchange Online bridge
 
-**Status: deployed and verified working (2026-09-11).** Live at
+**Status: deployed and in active use (last updated 2026-09-17).** Live at
 `https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net`,
-in resource group `summation-exchange-bridge-rg`. All three endpoints were
-exercised directly against real Exchange data (a full grant → verify →
-revoke → verify round trip left no lasting change), and anonymous access is
-confirmed blocked (401) now that Easy Auth is enabled. Nothing in
-`taskpane.html` calls it yet — that's the one remaining step, deliberately
-held back until the bridge was proven solid standalone.
+in resource group `summation-exchange-bridge-rg`. `taskpane.html`,
+`manage-mailboxes.html`, `manage-shared-mailbox-members.html`, and
+`manage-mailbox-automapping.html` all call it now — the two-pane UI, the bulk
+member-add wizard, mailbox creation, and the automapping reconciliation page
+are all real, shipped features, not just planned ones.
 
-A small Azure Function that does the three things Microsoft Graph cannot do at
-all: list, grant, and revoke **Full Access** permission on a project shared
-mailbox. This is what unblocks:
-
-- Reviewing/managing who has access to a shared mailbox
-- A real "un-map from Outlook" step when converting a project from Active to Archive
-- The planned "Manage Outlook Shared Mailboxes" two-pane UI
+A small Azure Function that does the things Microsoft Graph cannot do at all:
+list, grant, and revoke **Full Access** permission on a project shared
+mailbox, and — as of 2026-09-17 — actually **create** one. The creation
+endpoint exists because the original approach (a bare Graph `POST /users`
+call, assuming Exchange would provision a mailbox for it on its own) turned
+out not to work in this tenant at all: one such mailbox sat completely
+unrecognized by Exchange — not even as a generic recipient — two full days
+after creation. `New-Mailbox -Shared` creates a real, immediately usable
+mailbox directly, with no such wait.
 
 ## Why this exists
 
@@ -125,12 +126,15 @@ Worth deleting at some point for clarity (`Remove-ManagementRoleAssignment`,
 | Method | Route | Body / Query | Returns |
 |---|---|---|---|
 | `GET` | `/api/mailbox-permissions?mailbox=<smtp>` | — | `{ mailbox, members: [{ user, accessRights, isInherited }] }` |
-| `POST` | `/api/mailbox-permissions/grant` | `{ mailbox, user, autoMapping? }` (autoMapping defaults to `true`) | `{ mailbox, user, action: "granted", autoMapping }` |
+| `POST` | `/api/mailbox-permissions/grant` | `{ mailbox, user, autoMapping? }` (autoMapping defaults to `true`; every client in this repo now passes `false` explicitly — automapping-off is the house default) | `{ mailbox, user, action: "granted", autoMapping }` |
 | `POST` | `/api/mailbox-permissions/revoke` | `{ mailbox, user }` | `{ mailbox, user, action: "revoked" }` |
+| `POST` | `/api/shared-mailboxes` | `{ mailbox, displayName }` | `200` `{ mailbox, displayName, action: "created" }`, or `409` `{ mailbox, error }` if a recipient with that address already exists (not treated as a failure by any client — they proceed to granting members) |
 
 Every endpoint rejects (`403`) any `mailbox` that doesn't match the project
-naming convention and any `user` that isn't a `summation.au` address, before
-touching Exchange at all.
+naming convention (`^[a-zA-Z]{5}\d{5}[_-].+@summation\.au$` — broadened in
+2026-09-16 to accept a hyphen as well as the original underscore, after real
+export data turned up legacy mailboxes using "CODE - Name") and any `user`
+that isn't a `summation.au` address, before touching Exchange at all.
 
 **Note on AutoMapping:** `Get-MailboxPermission` doesn't return a clean
 AutoMapping on/off flag — that state lives in an AD attribute the cmdlet
@@ -205,13 +209,16 @@ pricing](https://azure.microsoft.com/en-us/pricing/details/functions/).
 
 ## What's still needed
 
-- Wire `taskpane.html` to actually call these three endpoints (not done —
-  deliberately held back until this bridge was live and tested standalone,
-  which is now the case).
-- Decide the UI for "Manage Outlook Shared Mailboxes" (the two-pane layout
-  already discussed) and the un-mapping step in Convert Active to Archive.
 - Optional cleanup: delete the inert `SummationMailboxPermissionManager`
   custom role and `SummationProjectMailboxes` scope (see above).
 - Application Insights is already enabled on the Function App — worth
-  checking its logs once real usage starts, to confirm grant/revoke actions
-  are showing up as expected for audit purposes.
+  checking its logs periodically to confirm grant/revoke/create actions are
+  showing up as expected for audit purposes.
+- The `CreateSharedMailbox` function's `-Name` parameter is the mailbox's
+  local-part alias (no spaces); `-DisplayName` carries the human-readable
+  name. Worth a periodic sanity check that `Get-Recipient` pre-checks are
+  still catching real conflicts cleanly — the very first live test hit a
+  transient Exchange directory-replication lag (a just-deleted account's
+  address briefly still refused as "in use" by `New-Mailbox`, even though
+  Azure AD and Exchange's own recipient search both already showed it gone)
+  that resolved itself on a simple retry a short time later.

@@ -347,7 +347,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.18";
+    const APP_VERSION = "9.19";
 
     let msalInstance;
     let folderEntries = [];
@@ -395,10 +395,6 @@
     // Scopes for Microsoft Graph
     const graphRequest = {
         scopes: ["User.Read", "Mail.Read", "Directory.Read.All"]
-    };
-    // Only requested on demand, when creating a shared mailbox.
-    const directoryWriteRequest = {
-        scopes: ["Directory.ReadWrite.All"]
     };
     // Only requested on demand, when using the New Project wizard.
     const bridgeRequest = {
@@ -716,33 +712,27 @@
         return `${mailboxName.replace(/[^a-zA-Z0-9_]/g, '')}@summation.au`;
     }
 
-    // Creates the Graph user object a project mailbox rides on. Returns its SMTP address.
-    // Shared by the manual "Create New Shared Mailbox" button and the automatic mailbox
-    // creation in the BD-to-Active conversion below.
-    async function createMailboxAccount(mailboxName, token) {
-        const mailNickname = mailboxName.replace(/[^a-zA-Z0-9_]/g, '');
-        if (mailNickname.length === 0) {
-            throw new Error("Mailbox name contains only invalid characters.");
-        }
-        const tempPassword = "TempP@ssword" + Math.floor(Math.random() * 10000);
-        const userDetails = {
-            accountEnabled: true,
-            displayName: mailboxName,
-            mailNickname: mailNickname,
-            userPrincipalName: `${mailNickname}@summation.au`,
-            passwordProfile: { forceChangePasswordNextSignIn: false, password: tempPassword }
-        };
-
-        const response = await fetch("https://graph.microsoft.com/v1.0/users", {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(userDetails)
+    // Creates a real Exchange shared mailbox via the bridge's New-Mailbox -Shared endpoint.
+    // A bare Graph user object (the old approach) is never actually provisioned into a
+    // working mailbox by this tenant — confirmed by one sitting unrecognized by Exchange,
+    // not even as a generic recipient, two full days after creation. Returns
+    // { mailbox, alreadyExisted } rather than throwing on a 409, since "this address is
+    // already a real mailbox" isn't a failure — the caller should just proceed to granting.
+    async function createSharedMailboxViaBridge(mailboxName, token) {
+        const mailbox = deriveMailboxAddress(mailboxName);
+        const response = await fetch(`${BRIDGE_URL}/api/shared-mailboxes`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ mailbox, displayName: mailboxName })
         });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error.message || "Failed to create mailbox.");
+        if (response.status === 409) {
+            return { mailbox, alreadyExisted: true };
         }
-        return `${mailNickname}@summation.au`;
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
+        }
+        return { mailbox, alreadyExisted: false };
     }
 
     async function createSharedMailbox() {
@@ -753,15 +743,17 @@
         }
         updateCreateStatus(`Creating shared mailbox "${mailboxName}"...`);
         try {
-            const token = await signInAndGetToken(directoryWriteRequest, true);
+            const token = await signInAndGetToken(bridgeRequest, true);
             if (!token) {
                 updateCreateStatus("Could not get permission to create mailboxes.", true);
                 return;
             }
 
-            await createMailboxAccount(mailboxName, token);
+            const result = await createSharedMailboxViaBridge(mailboxName, token);
 
-            updateCreateStatus("Mailbox account created. Microsoft 365 can take several minutes (sometimes longer) to finish provisioning the mailbox before it appears in this list or can receive mail. Use the ↻ refresh button below to check back later.");
+            updateCreateStatus(result.alreadyExisted
+                ? `A mailbox at ${result.mailbox} already exists — nothing new was created.`
+                : `Shared mailbox created: ${result.mailbox}. It's a real Exchange mailbox, ready to use now. Use the ↻ refresh button below to see it in this list.`);
         } catch (err) {
             console.error("Failed to create shared mailbox:", err);
             updateCreateStatus(`Error: ${err.message}`, true);
@@ -890,17 +882,14 @@
 
         statusEl.textContent = "Creating project mailbox...";
         try {
-            const dwToken = await signInAndGetToken(directoryWriteRequest, true);
-            if (!dwToken) throw new Error("Could not get permission to create mailboxes.");
-            result.mailbox = await createMailboxAccount(entry.name, dwToken);
+            const bridgeToken = await signInAndGetToken(bridgeRequest, true);
+            if (!bridgeToken) throw new Error("Could not get permission to create mailboxes.");
+            const created = await createSharedMailboxViaBridge(entry.name, bridgeToken);
+            result.mailbox = created.mailbox;
+            result.mailboxAlreadyExisted = created.alreadyExisted;
         } catch (err) {
-            if (/already exists/i.test(err.message)) {
-                result.mailbox = deriveMailboxAddress(entry.name);
-                result.mailboxAlreadyExisted = true;
-            } else {
-                result.mailboxError = err.message;
-                return result;
-            }
+            result.mailboxError = err.message;
+            return result;
         }
 
         if (!result.service) return result;
@@ -937,9 +926,9 @@
             <div class="row"><span class="label">Project mailbox:</span> ${mailbox}</div>
             <div class="row">${mailboxAlreadyExisted
                 ? "This mailbox already existed (from a previous attempt) — skipped creation and went straight to granting access."
-                : "Microsoft 365 can take several minutes (sometimes longer) to finish provisioning it."}</div>`;
+                : "Created as a real Exchange shared mailbox — ready to use now."}</div>`;
         if (!service) {
-            html += `<div class="row">Couldn't determine a Sustainability/Energy service from "${mailboxName}", so no team members were added automatically — use Manage Shared Mailbox Members once it's provisioned.</div>`;
+            html += `<div class="row">Couldn't determine a Sustainability/Energy service from "${mailboxName}", so no team members were added automatically — use Manage Shared Mailbox Members to add them.</div>`;
         } else {
             html += renderGrantResultsHtml(`the ${service} team`, grants, grantsError, stoppedByUser, gaveUp);
         }
@@ -2069,23 +2058,17 @@
 
         const result = { mailbox: null, mailboxError: null, mailboxAlreadyExisted: false, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
         try {
-            const dwToken = await signInAndGetToken(directoryWriteRequest, true);
-            if (!dwToken) throw new Error("Could not get permission to create mailboxes.");
-            result.mailbox = await createMailboxAccount(csmState.mailboxName, dwToken);
+            const bridgeToken = await signInAndGetToken(bridgeRequest, true);
+            if (!bridgeToken) throw new Error("Could not get permission to create mailboxes.");
+            const created = await createSharedMailboxViaBridge(csmState.mailboxName, bridgeToken);
+            result.mailbox = created.mailbox;
+            result.mailboxAlreadyExisted = created.alreadyExisted;
         } catch (err) {
-            if (/already exists/i.test(err.message)) {
-                // Most likely this mailbox was created by an earlier attempt whose member
-                // grants didn't finish (e.g. the mailbox hadn't provisioned yet) — proceed
-                // straight to granting instead of treating this as a failure.
-                result.mailbox = deriveMailboxAddress(csmState.mailboxName);
-                result.mailboxAlreadyExisted = true;
-            } else {
-                result.mailboxError = err.message;
-                renderCreateMailboxResultStep(result, teamLabel);
-                showCsmStep("result");
-                createButton.disabled = false;
-                return;
-            }
+            result.mailboxError = err.message;
+            renderCreateMailboxResultStep(result, teamLabel);
+            showCsmStep("result");
+            createButton.disabled = false;
+            return;
         }
 
         const grantResult = await grantDepartmentAccessWithRetry(result.mailbox, departments, statusEl, stopButton);
@@ -2106,7 +2089,7 @@
             <div class="row"><span class="label">Mailbox:</span> ${result.mailbox}</div>
             <div class="row">${result.mailboxAlreadyExisted
                 ? "This mailbox already existed (from a previous attempt) — skipped creation and went straight to granting access."
-                : "Microsoft 365 can take several minutes (sometimes longer) to finish provisioning it."}</div>
+                : "Created as a real Exchange shared mailbox — ready to use now."}</div>
             ${renderGrantResultsHtml(teamLabel, result.grants, result.grantsError, result.stoppedByUser, result.gaveUp)}
         </div>`;
     }
