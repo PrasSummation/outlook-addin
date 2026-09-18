@@ -60,6 +60,10 @@
     .check-item input{accent-color:var(--green);margin:0;flex:none}
     .check-item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .check-item .tag{flex:none;font-family:var(--font-mono);font-size:10px;color:var(--grey-400)}
+    .grant-status{flex:none;font-size:11px;font-family:var(--font-mono);white-space:nowrap;margin-left:8px}
+    .grant-status.pending{color:var(--grey-400)}
+    .grant-status.success{color:var(--green-dark)}
+    .grant-status.failure{color:#B3261E}
     .group-heading{display:flex;align-items:center;gap:8px;padding:8px 11px;font-size:11px;text-transform:uppercase;
       letter-spacing:.05em;color:var(--grey-400);background:var(--grey-50);cursor:pointer}
     .group-heading input{accent-color:var(--green);margin:0;flex:none}
@@ -419,9 +423,41 @@
                 name.textContent = entry.name;
                 item.appendChild(name);
 
+                const status = document.createElement("span");
+                status.className = "grant-status";
+                status.dataset.memberStatus = entry.mail;
+                item.appendChild(status);
+
                 list.appendChild(item);
             });
         });
+    }
+
+    function clearMemberGrantStatuses() {
+        document.querySelectorAll(".grant-status").forEach(el => {
+            el.className = "grant-status";
+            el.textContent = "";
+            el.removeAttribute("title");
+        });
+    }
+
+    function updateMemberGrantStatus(mail, progress) {
+        const el = document.querySelector(`[data-member-status="${mail}"]`);
+        if (!el) return;
+        const done = progress.succeeded + progress.failed;
+        if (done < progress.total) {
+            el.className = "grant-status pending";
+            el.textContent = `${done}/${progress.total}…`;
+            el.removeAttribute("title");
+        } else if (progress.failed === 0) {
+            el.className = "grant-status success";
+            el.textContent = "✓ done";
+            el.title = `Granted access to all ${progress.total} selected project(s).`;
+        } else {
+            el.className = "grant-status failure";
+            el.textContent = `✗ ${progress.failed}/${progress.total} failed`;
+            el.title = `Failed for: ${progress.failedProjects.join(", ")}`;
+        }
     }
 
     function updateSummary() {
@@ -455,6 +491,13 @@
         const confirmButton = document.getElementById("confirmButton");
         confirmButton.disabled = true;
 
+        clearMemberGrantStatuses();
+        const memberProgress = new Map();
+        members.forEach(m => {
+            memberProgress.set(m.mail, { total: projects.length, succeeded: 0, failed: 0, failedProjects: [] });
+            updateMemberGrantStatus(m.mail, memberProgress.get(m.mail));
+        });
+
         try {
             const token = await signInAndGetToken(bridgeRequest, true);
             const results = [];
@@ -463,10 +506,16 @@
                 const batch = pairs.slice(i, i + BATCH_SIZE);
                 updateStatus(`Granting access ${i + 1}-${Math.min(i + BATCH_SIZE, pairs.length)} of ${pairs.length}...`);
                 const batchResults = await Promise.all(batch.map(async ({ project, member }) => {
+                    const progress = memberProgress.get(member.mail);
                     try {
                         await grantMailboxPermissionViaBridge(project.mail, member.mail, token, autoMapping);
+                        progress.succeeded++;
+                        updateMemberGrantStatus(member.mail, progress);
                         return { project, member, error: null };
                     } catch (err) {
+                        progress.failed++;
+                        progress.failedProjects.push(project.name);
+                        updateMemberGrantStatus(member.mail, progress);
                         return { project, member, error: err.message };
                     }
                 }));
