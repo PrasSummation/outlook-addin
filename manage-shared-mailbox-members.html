@@ -264,6 +264,17 @@
             .sort((a, b) => a.name.localeCompare(b.name));
     }
 
+    async function getMailboxPermissionsViaBridge(mailbox, token) {
+        const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions?mailbox=${encodeURIComponent(mailbox)}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
+        }
+        return response.json();
+    }
+
     async function grantMailboxPermissionViaBridge(mailbox, user, token, autoMapping) {
         const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions/grant`, {
             method: "POST",
@@ -335,6 +346,7 @@
                 else selectedProjectMails.delete(entry.mail);
                 item.classList.toggle("selected", checkbox.checked);
                 updateSummary();
+                checkExistingMembersForSingleProject();
             });
             item.appendChild(checkbox);
 
@@ -350,6 +362,39 @@
 
             list.appendChild(item);
         });
+    }
+
+    // When exactly one project is selected, pre-check whoever already has Full Access to it —
+    // a convenience for the common "add one more person to this project" case. Deliberately
+    // additive only (never unchecks anything) and skipped entirely once more than one project
+    // is selected, since "who's already a member" isn't a single well-defined set across many.
+    async function checkExistingMembersForSingleProject() {
+        if (selectedProjectMails.size !== 1) return;
+        const mailbox = Array.from(selectedProjectMails)[0];
+
+        try {
+            const token = await signInAndGetToken(bridgeRequest, true);
+            updateStatus(`Checking existing members of ${mailbox}...`);
+            const data = await getMailboxPermissionsViaBridge(mailbox, token);
+
+            let addedAny = false;
+            data.members.forEach(member => {
+                const staffMatch = allStaff.find(s => s.mail.toLowerCase() === member.user.toLowerCase());
+                if (staffMatch && !selectedMemberMails.has(staffMatch.mail)) {
+                    selectedMemberMails.add(staffMatch.mail);
+                    addedAny = true;
+                }
+            });
+
+            updateStatus("");
+            if (addedAny) {
+                renderMemberList();
+                updateSummary();
+            }
+        } catch (err) {
+            console.error("Failed to check existing members:", err);
+            updateStatus(`Could not check existing members: ${err.message}`, true);
+        }
     }
 
     function renderMemberList() {
