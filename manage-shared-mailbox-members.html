@@ -64,6 +64,7 @@
     .grant-status.pending{color:var(--grey-400)}
     .grant-status.success{color:var(--green-dark)}
     .grant-status.failure{color:#B3261E}
+    .grant-status.unchanged{color:var(--grey-400);font-style:italic}
     .group-heading{display:flex;align-items:center;gap:8px;padding:8px 11px;font-size:11px;text-transform:uppercase;
       letter-spacing:.05em;color:var(--grey-400);background:var(--grey-50);cursor:pointer}
     .group-heading input{accent-color:var(--green);margin:0;flex:none}
@@ -96,7 +97,7 @@
   <div id="appBody" style="display:none;">
     <div class="page-header">
       <h1>Manage Shared Mailbox Members</h1>
-      <p>Select one or more project mailboxes and one or more team members, then grant Full Access to all of them in one go.</p>
+      <p>Select one or more project mailboxes and check who should have access. Confirm only changes what's different from current access — checked-but-missing members get granted, unchecked-but-current members get revoked, everyone else is left alone.</p>
     </div>
     <div id="status"></div>
 
@@ -119,7 +120,7 @@
     </div>
 
     <div class="action-bar">
-      <div class="summary" id="summaryLine">Select at least one project and one team member.</div>
+      <div class="summary" id="summaryLine">Select at least one project.</div>
       <button id="confirmButton" disabled>Confirm</button>
     </div>
 
@@ -280,6 +281,19 @@
             method: "POST",
             headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
             body: JSON.stringify({ mailbox, user, autoMapping })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function revokeMailboxPermissionViaBridge(mailbox, user, token) {
+        const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions/revoke`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ mailbox, user })
         });
         if (!response.ok) {
             const errorText = await response.text();
@@ -486,6 +500,17 @@
         });
     }
 
+    function markMemberNoChangeNeeded(mail) {
+        const el = document.querySelector(`[data-member-status="${mail}"]`);
+        if (!el) return;
+        el.className = "grant-status unchanged";
+        el.textContent = "= no changes needed";
+        el.removeAttribute("title");
+    }
+
+    // progress.total/succeeded/failed count actual actions (grants + revokes) for this
+    // member — not every selected project, since projects already in the right state for
+    // this member need no action at all and shouldn't show as "pending".
     function updateMemberGrantStatus(mail, progress) {
         const el = document.querySelector(`[data-member-status="${mail}"]`);
         if (!el) return;
@@ -497,11 +522,11 @@
         } else if (progress.failed === 0) {
             el.className = "grant-status success";
             el.textContent = "✓ done";
-            el.title = `Granted access to all ${progress.total} selected project(s).`;
+            el.title = `${progress.succeeded} change(s) applied successfully.`;
         } else {
             el.className = "grant-status failure";
             el.textContent = `✗ ${progress.failed}/${progress.total} failed`;
-            el.title = `Failed for: ${progress.failedProjects.join(", ")}`;
+            el.title = `Failed: ${progress.failedActions.join(", ")}`;
         }
     }
 
@@ -511,74 +536,157 @@
         document.getElementById("projectCount").textContent = projectCount ? `(${projectCount} selected)` : "";
         document.getElementById("memberCount").textContent = memberCount ? `(${memberCount} selected)` : "";
 
-        const total = projectCount * memberCount;
-        document.getElementById("summaryLine").textContent = total > 0
-            ? `${projectCount} project(s) × ${memberCount} member(s) = ${total} grant(s)`
-            : "Select at least one project and one team member.";
-        document.getElementById("confirmButton").disabled = total === 0;
+        // Only an upper bound — Confirm only actions what's actually different from current
+        // membership, so the real grant/revoke counts are computed (and shown) at that point.
+        document.getElementById("summaryLine").textContent = projectCount > 0
+            ? `${projectCount} project(s) selected, ${memberCount} member(s) checked — Confirm will only change what's different from current access.`
+            : "Select at least one project.";
+        document.getElementById("confirmButton").disabled = projectCount === 0;
+    }
+
+    // Fetches current membership for every selected project (one GET per project, batched)
+    // so Confirm can act only on what's actually changing, rather than blindly re-granting
+    // everyone checked regardless of whether they already have access.
+    async function fetchCurrentMembership(projects, token) {
+        const membershipByProject = new Map();
+        const BATCH_SIZE = 10;
+        for (let i = 0; i < projects.length; i += BATCH_SIZE) {
+            const batch = projects.slice(i, i + BATCH_SIZE);
+            updateStatus(`Checking current membership ${i + 1}-${Math.min(i + BATCH_SIZE, projects.length)} of ${projects.length}...`);
+            await Promise.all(batch.map(async project => {
+                try {
+                    const data = await getMailboxPermissionsViaBridge(project.mail, token);
+                    membershipByProject.set(project.mail, new Set(data.members.map(m => m.user.toLowerCase())));
+                } catch (err) {
+                    // Treat as "unknown membership" rather than failing the whole run — this
+                    // project's actions will be skipped below and reported, not guessed at.
+                    membershipByProject.set(project.mail, null);
+                }
+            }));
+        }
+        return membershipByProject;
     }
 
     async function handleConfirm() {
         const projects = allProjects.filter(p => selectedProjectMails.has(p.mail));
-        const members = allStaff.filter(m => selectedMemberMails.has(m.mail));
-        if (projects.length === 0 || members.length === 0) return;
-
-        // Shared mailboxes default to no automapping — members add them to Outlook themselves if wanted.
-        const autoMapping = false;
-        const pairs = [];
-        projects.forEach(p => members.forEach(m => pairs.push({ project: p, member: m })));
-
-        if (!confirm(
-            `Grant Full Access for ${members.length} team member(s) on ${projects.length} project mailbox(es) ` +
-            `— ${pairs.length} grant(s) total (without automapping). Continue?`
-        )) return;
+        if (projects.length === 0) return;
 
         const confirmButton = document.getElementById("confirmButton");
         confirmButton.disabled = true;
+        updateStatus("Checking current membership...");
+
+        let token;
+        let membershipByProject;
+        try {
+            token = await signInAndGetToken(bridgeRequest, true);
+            membershipByProject = await fetchCurrentMembership(projects, token);
+        } catch (err) {
+            console.error("Failed to check current membership:", err);
+            updateStatus(`Error: ${err.message}`, true);
+            confirmButton.disabled = false;
+            return;
+        }
+
+        // Diff: only a grant for someone checked-but-not-yet-a-member, or a revoke for
+        // someone a-member-but-now-unchecked, counts as an action. Anyone whose checked
+        // state already matches reality needs nothing done.
+        const actions = [];
+        const unreachableProjects = [];
+        projects.forEach(project => {
+            const currentMembers = membershipByProject.get(project.mail);
+            if (currentMembers === null) {
+                unreachableProjects.push(project.name);
+                return;
+            }
+            allStaff.forEach(member => {
+                const isChecked = selectedMemberMails.has(member.mail);
+                const isCurrentMember = currentMembers.has(member.mail.toLowerCase());
+                if (isChecked && !isCurrentMember) {
+                    actions.push({ type: "grant", project, member });
+                } else if (!isChecked && isCurrentMember) {
+                    actions.push({ type: "revoke", project, member });
+                }
+            });
+        });
+
+        if (actions.length === 0) {
+            updateStatus(unreachableProjects.length > 0
+                ? `Couldn't check current membership for: ${unreachableProjects.join(", ")}. No other changes needed.`
+                : "No changes needed — everyone checked already has access, and no one unchecked currently has access.");
+            confirmButton.disabled = false;
+            return;
+        }
+
+        const grantCount = actions.filter(a => a.type === "grant").length;
+        const revokeCount = actions.filter(a => a.type === "revoke").length;
+        const summaryParts = [];
+        if (grantCount > 0) summaryParts.push(`grant access for ${grantCount}`);
+        if (revokeCount > 0) summaryParts.push(`revoke access for ${revokeCount}`);
+        let confirmMessage = `This will ${summaryParts.join(" and ")} project/member combination(s) (without automapping on any new grants).`;
+        if (unreachableProjects.length > 0) {
+            confirmMessage += ` Couldn't check current membership for: ${unreachableProjects.join(", ")} — no changes will be made for those.`;
+        }
+        confirmMessage += " Continue?";
+
+        if (!confirm(confirmMessage)) {
+            confirmButton.disabled = false;
+            updateStatus("");
+            return;
+        }
+
+        // Shared mailboxes default to no automapping — members add them to Outlook themselves if wanted.
+        const autoMapping = false;
 
         clearMemberGrantStatuses();
         const memberProgress = new Map();
-        members.forEach(m => {
-            memberProgress.set(m.mail, { total: projects.length, succeeded: 0, failed: 0, failedProjects: [] });
-            updateMemberGrantStatus(m.mail, memberProgress.get(m.mail));
+        actions.forEach(({ member }) => {
+            if (!memberProgress.has(member.mail)) {
+                memberProgress.set(member.mail, { total: 0, succeeded: 0, failed: 0, failedActions: [] });
+            }
+            memberProgress.get(member.mail).total++;
         });
+        memberProgress.forEach((progress, mail) => updateMemberGrantStatus(mail, progress));
+        allStaff
+            .filter(m => !memberProgress.has(m.mail) && (selectedMemberMails.has(m.mail) || projects.some(p => {
+                const current = membershipByProject.get(p.mail);
+                return current && current.has(m.mail.toLowerCase());
+            })))
+            .forEach(m => markMemberNoChangeNeeded(m.mail));
 
-        try {
-            const token = await signInAndGetToken(bridgeRequest, true);
-            const results = [];
-            const BATCH_SIZE = 10;
-            for (let i = 0; i < pairs.length; i += BATCH_SIZE) {
-                const batch = pairs.slice(i, i + BATCH_SIZE);
-                updateStatus(`Granting access ${i + 1}-${Math.min(i + BATCH_SIZE, pairs.length)} of ${pairs.length}...`);
-                const batchResults = await Promise.all(batch.map(async ({ project, member }) => {
-                    const progress = memberProgress.get(member.mail);
-                    try {
+        const results = [];
+        const BATCH_SIZE = 10;
+        for (let i = 0; i < actions.length; i += BATCH_SIZE) {
+            const batch = actions.slice(i, i + BATCH_SIZE);
+            updateStatus(`Applying changes ${i + 1}-${Math.min(i + BATCH_SIZE, actions.length)} of ${actions.length}...`);
+            const batchResults = await Promise.all(batch.map(async ({ type, project, member }) => {
+                const progress = memberProgress.get(member.mail);
+                try {
+                    if (type === "grant") {
                         await grantMailboxPermissionViaBridge(project.mail, member.mail, token, autoMapping);
-                        progress.succeeded++;
-                        updateMemberGrantStatus(member.mail, progress);
-                        return { project, member, error: null };
-                    } catch (err) {
-                        progress.failed++;
-                        progress.failedProjects.push(project.name);
-                        updateMemberGrantStatus(member.mail, progress);
-                        return { project, member, error: err.message };
+                    } else {
+                        await revokeMailboxPermissionViaBridge(project.mail, member.mail, token);
                     }
-                }));
-                results.push(...batchResults);
-            }
+                    progress.succeeded++;
+                    updateMemberGrantStatus(member.mail, progress);
+                    return { type, project, member, error: null };
+                } catch (err) {
+                    progress.failed++;
+                    progress.failedActions.push(`${type} on ${project.name}`);
+                    updateMemberGrantStatus(member.mail, progress);
+                    return { type, project, member, error: err.message };
+                }
+            }));
+            results.push(...batchResults);
+        }
 
-            const failures = results.filter(r => r.error);
-            if (failures.length === 0) {
-                updateStatus(`Done — granted access for ${results.length} project/member combination(s).`);
-            } else {
-                updateStatus(
-                    `Granted ${results.length - failures.length} of ${results.length}. ${failures.length} failed — first error: ${failures[0].error}`,
-                    true
-                );
-            }
-        } catch (err) {
-            console.error("Failed to grant access:", err);
-            updateStatus(`Error: ${err.message}`, true);
+        const failures = results.filter(r => r.error);
+        if (failures.length === 0) {
+            updateStatus(`Done — ${grantCount} grant(s) and ${revokeCount} revoke(s) applied successfully.`);
+        } else {
+            updateStatus(
+                `Applied ${results.length - failures.length} of ${results.length} change(s). ${failures.length} failed — first error: ${failures[0].error}`,
+                true
+            );
         }
 
         confirmButton.disabled = false;
