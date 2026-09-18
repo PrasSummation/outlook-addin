@@ -359,6 +359,13 @@
                 if (checkbox.checked) selectedProjectMails.add(entry.mail);
                 else selectedProjectMails.delete(entry.mail);
                 item.classList.toggle("selected", checkbox.checked);
+
+                // Any change to which project(s) are selected invalidates the current member
+                // selection — it may have come from a different project's pre-checked members
+                // (or from the user's own prior choices for a different combination), and
+                // carrying it over risks granting/revoking against the wrong context.
+                selectedMemberMails.clear();
+                renderMemberList();
                 updateSummary();
                 checkExistingMembersForSingleProject();
             });
