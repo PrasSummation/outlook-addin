@@ -78,15 +78,15 @@
 
     /* ── Action tiles ──────────────────────────────────────────────────── */
     #topActions{display:block;margin:0 0 18px}
-    #newProjectButton,#convertProjectButton,#convertToArchiveButton,#createSharedMailboxButton,#searchMailboxButton,#manageMembersButton{width:100%;margin:0 0 9px;padding:11px 12px;
+    #newProjectButton,#convertProjectButton,#convertToArchiveButton,#createSharedMailboxButton,#searchMailboxButton,#manageMembersButton,#syncEmailsButton{width:100%;margin:0 0 9px;padding:11px 12px;
       background:#fff;border:1px solid var(--grey-200);border-radius:10px;
       font-weight:400;color:inherit;transition:box-shadow 180ms ease,transform 180ms ease}
-    #newProjectButton:hover,#convertProjectButton:hover,#convertToArchiveButton:hover,#createSharedMailboxButton:hover,#searchMailboxButton:hover,#manageMembersButton:hover{background:#fff;
+    #newProjectButton:hover,#convertProjectButton:hover,#convertToArchiveButton:hover,#createSharedMailboxButton:hover,#searchMailboxButton:hover,#manageMembersButton:hover,#syncEmailsButton:hover{background:#fff;
       border-color:var(--grey-200);transform:translateY(-2px);box-shadow:0 6px 14px rgba(0,0,0,.09)}
     .tile{display:flex;align-items:center;gap:11px;text-align:left}
     .tile .ico{flex:none;display:flex;align-items:center;justify-content:center;
       width:28px;height:28px;border-radius:4px;background:var(--green-pale)}
-    #convertProjectButton .tile .ico,#convertToArchiveButton .tile .ico,#createSharedMailboxButton .tile .ico,#searchMailboxButton .tile .ico,#manageMembersButton .tile .ico{background:var(--grey-100)}
+    #convertProjectButton .tile .ico,#convertToArchiveButton .tile .ico,#createSharedMailboxButton .tile .ico,#searchMailboxButton .tile .ico,#manageMembersButton .tile .ico,#syncEmailsButton .tile .ico{background:var(--grey-100)}
     .tile .txt{display:block}
     .tile .txt b{display:block;font-size:13px;font-weight:600;color:var(--grey-900)}
     .tile .txt i{display:block;font-style:normal;font-size:10.5px;color:var(--grey-400);margin-top:2px}
@@ -172,6 +172,8 @@
       <button id="createSharedMailboxButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><rect x="1.5" y="3" width="11" height="8" rx="1.5"/><path d="M1.8 3.8 7 7.5l5.2-3.7"/></svg></span><span class="txt"><b>Create Shared Mailbox</b><i>Create a project mailbox and add a team as members</i></span></span></button>
       <button id="searchMailboxButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><circle cx="6" cy="6" r="4"/><path d="M9.5 9.5 13 13"/></svg></span><span class="txt"><b>Search Shared Mailbox Online</b><i>Find any project mailbox and open it in Outlook Web</i></span></span></button>
       <button id="manageMembersButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><rect x="1.5" y="3" width="4.5" height="8" rx="1"/><rect x="8" y="3" width="4.5" height="8" rx="1"/><path d="M6 5.5h2M6 8.5h2"/></svg></span><span class="txt"><b>Manage Shared Mailbox Members</b><i>Add team members to project mailboxes in bulk</i></span></span></button>
+      <button id="syncEmailsButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2.5 6.5A4.5 4.5 0 0 1 11 4.5M11 4.5V2M11 4.5H8.5"/><path d="M11.5 7.5A4.5 4.5 0 0 1 3 9.5M3 9.5V12M3 9.5h2.5"/></svg></span><span class="txt"><b>Sync Emails</b><i>File categorized emails from "Emails to File" into their project mailboxes</i></span></span></button>
+      <div id="syncEmailsStatus" style="font-size:11.5px;color:var(--grey-500);margin:-4px 0 9px;"></div>
     </div>
 
     <div id="folderBrowser" style="display: none;">
@@ -347,7 +349,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.19";
+    const APP_VERSION = "9.20";
 
     let msalInstance;
     let folderEntries = [];
@@ -456,6 +458,7 @@
             el.addEventListener("change", () => renderSharedMailboxSearchList(document.getElementById("smFilterBox").value))
         );
         document.getElementById("manageMembersButton").addEventListener("click", openManageMembersPage);
+        document.getElementById("syncEmailsButton").addEventListener("click", handleSyncEmails);
 
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
             msalInstance = new msal.PublicClientApplication(msalConfig);
@@ -2217,6 +2220,57 @@
         } catch (err) {
             console.error("Failed to open Manage Shared Mailbox Members page:", err);
         }
+    }
+
+    // ---- Sync Emails ----
+    // The add-in can't move mail with a preserved date across mailboxes itself (Graph has
+    // no cross-mailbox move that keeps the original received date) — that only works via
+    // the Summation Email Filer's own COM-level move. This just checks the Filer is running
+    // locally and asks it to start; the Filer reports real progress/results via its own tray
+    // notification, not back to this page.
+    const FILER_LOCAL_URL = "http://127.0.0.1:8791";
+
+    async function pingFiler(timeoutMs) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const response = await fetch(`${FILER_LOCAL_URL}/ping`, { signal: controller.signal });
+            return response.ok;
+        } catch (err) {
+            return false;
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    async function handleSyncEmails() {
+        const button = document.getElementById("syncEmailsButton");
+        const status = document.getElementById("syncEmailsStatus");
+        button.disabled = true;
+        status.style.color = "#333";
+        status.textContent = "Checking if the Summation Email Filer is running...";
+
+        const filerRunning = await pingFiler(3000);
+        if (!filerRunning) {
+            status.style.color = "red";
+            status.textContent = "Couldn't reach the Summation Email Filer — make sure it's running (check your system tray), then try again.";
+            button.disabled = false;
+            return;
+        }
+
+        status.style.color = "#333";
+        status.textContent = "Starting sync...";
+        try {
+            const response = await fetch(`${FILER_LOCAL_URL}/sync-emails`, { method: "POST" });
+            if (!response.ok) throw new Error(`Filer returned ${response.status}`);
+            status.style.color = "#333";
+            status.textContent = "Sync started — check the Email Filer's tray notification for progress and results.";
+        } catch (err) {
+            console.error("Failed to trigger email sync:", err);
+            status.style.color = "red";
+            status.textContent = `Error: ${err.message}`;
+        }
+        button.disabled = false;
     }
   </script>
   <script>
