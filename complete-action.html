@@ -117,6 +117,22 @@
         }
     });
 
+    // Read (and immediately scrub from the visible URL) the handoff payload before doing
+    // anything else — sign-in doesn't navigate this window (loginPopup is a separate popup,
+    // acquireTokenSilent uses a hidden iframe), so holding this in memory survives the wait.
+    let pendingAction = null;
+    (function captureHandoffFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const raw = params.get("action");
+        if (!raw) return;
+        try {
+            pendingAction = JSON.parse(raw);
+        } catch (err) {
+            pendingAction = { parseError: "The link from the sidebar was malformed." };
+        }
+        history.replaceState(null, "", window.location.pathname);
+    })();
+
     window.addEventListener("load", () => {
         document.getElementById("signInButton").addEventListener("click", handleLogin);
         msalInstance = new msal.PublicClientApplication(msalConfig);
@@ -616,22 +632,18 @@
     // ---- Action dispatcher ----
 
     async function runPendingAction() {
-        const raw = localStorage.getItem("pendingAction");
-        if (!raw) {
+        if (!pendingAction) {
             updateStatus("No pending action found. This page is meant to be opened automatically by the Summation Assistant sidebar after clicking Confirm.");
             return;
         }
-
-        // Claim it immediately so a reload of this tab can't re-run it a second time.
-        localStorage.removeItem("pendingAction");
-
-        let pending;
-        try {
-            pending = JSON.parse(raw);
-        } catch (err) {
-            updateStatus("Error: the pending action couldn't be read. Please go back to the sidebar and try again.", true);
+        if (pendingAction.parseError) {
+            updateStatus(`Error: ${pendingAction.parseError} Please go back to the sidebar and try again.`, true);
             return;
         }
+
+        // Consume it so a later re-render of this page can't run it a second time.
+        const pending = pendingAction;
+        pendingAction = null;
 
         actionInProgress = true;
         try {

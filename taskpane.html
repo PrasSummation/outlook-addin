@@ -347,7 +347,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.22";
+    const APP_VERSION = "9.23";
 
     let msalInstance;
     let folderEntries = [];
@@ -388,13 +388,18 @@
     // Long-running actions (mailbox creation + grants, folder moves) run entirely on
     // complete-action.html instead of inline here, specifically so closing this sidebar
     // can never interrupt them — that page is a fully independent browser tab, unaffected
-    // by the taskpane's lifecycle. All this does is package up what was collected in the
-    // sidebar and hand it off; opening the tab happens synchronously (no `await` before it)
-    // so it still counts as a trusted user gesture and isn't popup-blocked.
+    // by the taskpane's lifecycle. Handoff data travels in the URL itself, not localStorage:
+    // Office.context.ui.openBrowserWindow (the path classic desktop Outlook uses) launches
+    // the OS's actual default browser as a separate application with its own storage
+    // partition, completely disconnected from the taskpane's own embedded webview — so
+    // localStorage written here is invisible to that tab. A query parameter has no such
+    // problem, since it's carried by the URL rather than shared storage. Opening the tab
+    // happens synchronously (no `await` before it) so it still counts as a trusted user
+    // gesture and isn't popup-blocked.
     function handOffToCompleteAction(type, params) {
-        localStorage.setItem("pendingAction", JSON.stringify({ type, params, createdAt: new Date().toISOString() }));
+        const payload = encodeURIComponent(JSON.stringify({ type, params }));
         try {
-            openUrlInBrowser("https://prassummation.github.io/outlook-addin/complete-action.html");
+            openUrlInBrowser(`https://prassummation.github.io/outlook-addin/complete-action.html?action=${payload}`);
             return true;
         } catch (err) {
             console.error("Failed to open the completion page:", err);
@@ -1065,7 +1070,8 @@
             archivePath: npState.archivePath,
             bdRelativePath: npState.bdRelativePath,
             internetMessageId: item ? item.internetMessageId : null,
-            subject: item ? item.subject : null
+            // Only used for the filed .eml's filename — truncated to keep the handoff URL short.
+            subject: item && item.subject ? item.subject.slice(0, 150) : null
         });
         renderHandoffSummary("npResultSummary", `setting up "${npState.folderName}"`);
         showWizardStep("result");
