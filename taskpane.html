@@ -361,6 +361,32 @@
     let sharedMailboxSearchEntries = [];
     let archiveFolderEntries = [];
 
+    // Office.js task panes have no background-execution model: closing the pane destroys
+    // its JavaScript entirely, mid-flight, exactly like closing a browser tab — there's no
+    // way for an in-progress action (a multi-step folder move, a mailbox-creation-and-grant
+    // retry loop) to keep running after that happens. There's also no Office.js API to
+    // truly prevent the pane from being closed. The best available mitigation is the
+    // standard web "are you sure you want to leave?" prompt, which at least warns the user
+    // before they close it out from under a running action — not a guarantee, since some
+    // hosts may tear the pane down without honoring beforeunload, but it's the real ceiling
+    // of what this platform allows.
+    let actionInProgress = false;
+    window.addEventListener("beforeunload", (e) => {
+        if (actionInProgress) {
+            e.preventDefault();
+            e.returnValue = "";
+        }
+    });
+
+    async function guardAgainstClose(fn) {
+        actionInProgress = true;
+        try {
+            return await fn();
+        } finally {
+            actionInProgress = false;
+        }
+    }
+
     const SITE_ID = "summationptyltd.sharepoint.com,b0a8b5e8-0c27-4b46-a97f-e9f7668c3021,039ea15c-5b24-4eea-b48a-9f4e61e9439c";
     const ACTIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5wp-OK02_E3RbZkRH_jE_Lr";
     const ARCHIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5zGiD4R7k2PQZMwL6mUreXS";
@@ -738,7 +764,11 @@
         return { mailbox, alreadyExisted: false };
     }
 
-    async function createSharedMailbox() {
+    function createSharedMailbox() {
+        return guardAgainstClose(createSharedMailboxInner);
+    }
+
+    async function createSharedMailboxInner() {
         const mailboxName = document.getElementById("newMailboxName").value;
         if (!mailboxName || mailboxName.trim().length === 0) {
             updateCreateStatus("Please enter a mailbox name.", true);
@@ -1364,7 +1394,11 @@
         }
     }
 
-    async function handleConfirmCreate() {
+    function handleConfirmCreate() {
+        return guardAgainstClose(handleConfirmCreateInner);
+    }
+
+    async function handleConfirmCreateInner() {
         const confirmStatus = document.getElementById("npConfirmStatus");
         const confirmButton = document.getElementById("npConfirmButton");
         confirmStatus.style.color = "#333";
@@ -1628,7 +1662,11 @@
         if (copyButton) copyButton.addEventListener("click", () => copyLinkToClipboard(webUrl, "cvCopyLinkStatus"));
     }
 
-    async function handleConvertConfirm() {
+    function handleConvertConfirm() {
+        return guardAgainstClose(handleConvertConfirmInner);
+    }
+
+    async function handleConvertConfirmInner() {
         const { selectedEntry, destPath, token } = cvState;
         const confirmStatus = document.getElementById("cvConfirmStatus");
         const confirmButton = document.getElementById("cvConfirmButton");
@@ -1862,7 +1900,11 @@
         if (copyButton) copyButton.addEventListener("click", () => copyLinkToClipboard(webUrl, "caCopyLinkStatus"));
     }
 
-    async function handleConvertToArchiveConfirm() {
+    function handleConvertToArchiveConfirm() {
+        return guardAgainstClose(handleConvertToArchiveConfirmInner);
+    }
+
+    async function handleConvertToArchiveConfirmInner() {
         const { selectedEntry, destPath, token } = caState;
         const confirmStatus = document.getElementById("caConfirmStatus");
         const confirmButton = document.getElementById("caConfirmButton");
@@ -2046,7 +2088,11 @@
         selectCsmMailboxName(value);
     }
 
-    async function handleCsmCreate() {
+    function handleCsmCreate() {
+        return guardAgainstClose(handleCsmCreateInner);
+    }
+
+    async function handleCsmCreateInner() {
         const createButton = document.getElementById("csmCreateButton");
         const statusEl = document.getElementById("csmMembersStatus");
         const stopButton = document.getElementById("csmStopRetryButton");

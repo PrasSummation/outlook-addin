@@ -151,6 +151,26 @@
     let localExport = null;
     const selectedForAutomap = new Set();
     const selectedForUnmap = new Set();
+
+    // Closing this tab mid-action kills its JavaScript outright, the same as any webpage —
+    // there's no way to keep a grant/revoke run going after that. This at least warns the
+    // user with the browser's native "leave site?" prompt while one is in progress.
+    let actionInProgress = false;
+    window.addEventListener("beforeunload", (e) => {
+        if (actionInProgress) {
+            e.preventDefault();
+            e.returnValue = "";
+        }
+    });
+
+    async function guardAgainstClose(fn) {
+        actionInProgress = true;
+        try {
+            return await fn();
+        } finally {
+            actionInProgress = false;
+        }
+    }
     const MAILBOX_DISPLAY_LIMIT = 32;
 
     window.addEventListener("load", () => {
@@ -486,7 +506,11 @@
         return html;
     }
 
-    async function handleDisableAutomap() {
+    function handleDisableAutomap() {
+        return guardAgainstClose(handleDisableAutomapInner);
+    }
+
+    async function handleDisableAutomapInner() {
         const button = document.getElementById("disableAutomapButton");
         const statusEl = document.getElementById("unmapActionStatus");
         const mailboxes = Array.from(selectedForUnmap);
@@ -548,7 +572,11 @@
         return html;
     }
 
-    async function handleEnableAutomap() {
+    function handleEnableAutomap() {
+        return guardAgainstClose(handleEnableAutomapInner);
+    }
+
+    async function handleEnableAutomapInner() {
         const button = document.getElementById("enableAutomapButton");
         const statusEl = document.getElementById("automapActionStatus");
         const mailboxes = Array.from(selectedForAutomap);

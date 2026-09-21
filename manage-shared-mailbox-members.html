@@ -152,6 +152,26 @@
     const selectedProjectMails = new Set();
     const selectedMemberMails = new Set();
 
+    // Closing this tab mid-action kills its JavaScript outright, the same as any webpage —
+    // there's no way to keep a bulk grant/revoke run going after that. This at least warns
+    // the user with the browser's native "leave site?" prompt while one is in progress.
+    let actionInProgress = false;
+    window.addEventListener("beforeunload", (e) => {
+        if (actionInProgress) {
+            e.preventDefault();
+            e.returnValue = "";
+        }
+    });
+
+    async function guardAgainstClose(fn) {
+        actionInProgress = true;
+        try {
+            return await fn();
+        } finally {
+            actionInProgress = false;
+        }
+    }
+
     window.addEventListener("load", () => {
         document.getElementById("signInButton").addEventListener("click", handleLogin);
         document.getElementById("projectFilterBox").addEventListener("input", renderProjectList);
@@ -574,7 +594,11 @@
         return membershipByProject;
     }
 
-    async function handleConfirm() {
+    function handleConfirm() {
+        return guardAgainstClose(handleConfirmInner);
+    }
+
+    async function handleConfirmInner() {
         const projects = allProjects.filter(p => selectedProjectMails.has(p.mail));
         if (projects.length === 0) return;
 

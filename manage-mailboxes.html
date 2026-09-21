@@ -138,6 +138,26 @@
     let selectedMapped = null;
     let selectedAvailable = null;
 
+    // Closing this tab mid-action kills its JavaScript outright, the same as any webpage —
+    // there's no way to keep a grant/revoke call going after that. This at least warns the
+    // user with the browser's native "leave site?" prompt while one is in progress.
+    let actionInProgress = false;
+    window.addEventListener("beforeunload", (e) => {
+        if (actionInProgress) {
+            e.preventDefault();
+            e.returnValue = "";
+        }
+    });
+
+    async function guardAgainstClose(fn) {
+        actionInProgress = true;
+        try {
+            return await fn();
+        } finally {
+            actionInProgress = false;
+        }
+    }
+
     window.addEventListener("load", () => {
         document.getElementById("signInButton").addEventListener("click", handleLogin);
         document.getElementById("filterBox").addEventListener("input", renderAvailableList);
@@ -412,7 +432,11 @@
         });
     }
 
-    async function handleAdd() {
+    function handleAdd() {
+        return guardAgainstClose(handleAddInner);
+    }
+
+    async function handleAddInner() {
         if (!selectedAvailable) return;
         // Shared mailboxes default to no automapping — add it yourself via "Open another mailbox" if wanted.
         const autoMapping = false;
@@ -432,7 +456,11 @@
         }
     }
 
-    async function handleRemove() {
+    function handleRemove() {
+        return guardAgainstClose(handleRemoveInner);
+    }
+
+    async function handleRemoveInner() {
         if (!selectedMapped) return;
         if (!confirm(`Revoke your Full Access to "${selectedMapped.name}"?`)) return;
 
