@@ -166,7 +166,7 @@
   <div id="appBody" style="display: none;">
     <div id="topActions">
       <div class="section-label">Actions</div>
-      <button id="newProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.5"><path d="M7 2v10M2 7h10"/></svg></span><span class="txt"><b>New BD project</b><i>Allocate the next number and file this email</i></span></span></button>
+      <button id="newProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.5"><path d="M7 2v10M2 7h10"/></svg></span><span class="txt"><b>New BD project</b><i>Allocate the next number, file this email, and create the project mailbox</i></span></span></button>
       <button id="convertProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2 7h10M8.5 3.5 12 7l-3.5 3.5"/></svg></span><span class="txt"><b>Change BD to Active project</b><i>Move an Archive folder into Active</i></span></span></button>
       <button id="convertToArchiveButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M12 7H2M5.5 3.5 2 7l3.5 3.5"/></svg></span><span class="txt"><b>Convert Active to Archive</b><i>Move a project folder from Active into Archive</i></span></span></button>
       <button id="createSharedMailboxButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><rect x="1.5" y="3" width="11" height="8" rx="1.5"/><path d="M1.8 3.8 7 7.5l5.2-3.7"/></svg></span><span class="txt"><b>Create Shared Mailbox</b><i>Create a project mailbox and add a team as members</i></span></span></button>
@@ -217,6 +217,7 @@
       <div id="npStepConfirm" style="display: none;">
         <div id="npConfirmSummary"></div>
         <div id="npConfirmStatus"></div>
+        <button id="npStopRetryButton" class="secondary-button" style="display:none;" title="Show the result now with whatever access grants have succeeded so far; any still failing can be retried later via Manage Shared Mailbox Members.">Stop Waiting</button>
         <button id="npConfirmButton">Confirm &amp; Create</button>
         <button id="npBackToIntakeButton" class="secondary-button">&larr; Edit Details</button>
       </div>
@@ -246,7 +247,6 @@
       <div id="cvStepConfirm" style="display: none;">
         <div id="cvConfirmSummary"></div>
         <div id="cvConfirmStatus"></div>
-        <button id="cvStopRetryButton" class="secondary-button" style="display:none;" title="Show the result now with whatever access grants have succeeded so far; any still failing can be retried later via Manage Shared Mailbox Members.">Stop Waiting</button>
         <button id="cvConfirmButton">Confirm &amp; Convert</button>
         <button id="cvBackToBrowseButton" class="secondary-button">&larr; Choose a Different Folder</button>
       </div>
@@ -349,7 +349,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.20";
+    const APP_VERSION = "9.21";
 
     let msalInstance;
     let folderEntries = [];
@@ -763,8 +763,15 @@
         }
     }
 
-    // Entra ID Department field -> which project mailboxes that team should get access to.
-    const DEPARTMENT_BY_COMBO_PREFIX = { SU: "Sustainability", EN: "Energy" };
+    async function getAllStaffMembers(token) {
+        const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses,accountEnabled&$top=999";
+        const users = await graphGetAll(url, token);
+        const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}[_-].*@summation\.au$/i;
+        return users
+            .filter(u => u.assignedLicenses.length > 0 && u.accountEnabled !== false)
+            .map(u => ({ name: u.displayName, mail: u.mail || u.userPrincipalName }))
+            .filter(u => u.mail && !projectMailboxRegex.test(u.mail));
+    }
 
     async function getStaffByDepartments(departments, token) {
         const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,department,assignedLicenses,accountEnabled&$top=999";
@@ -803,15 +810,15 @@
         });
     }
 
-    // Grants Full Access (without automapping, per policy) to every licensed staff member
-    // whose Entra ID Department matches one of `departments`, on `mailbox`. The mailbox
-    // account itself provisions on Exchange over the following minutes, so grants attempted
-    // immediately can fail even though the mailbox will exist shortly — this keeps retrying
-    // failed grants (not ones that already succeeded) until they all land, a sane attempt cap
-    // is hit, or the user clicks "Stop Waiting" (wired to `stopButton`) to see the result now.
-    async function grantDepartmentAccessWithRetry(mailbox, departments, statusEl, stopButton) {
+    // Grants Full Access (without automapping, per policy) to a set of staff, fetched via
+    // `fetchStaff(graphToken)` so callers can decide who that is (a department, everyone,
+    // etc.) without this function needing to know. The mailbox account itself provisions on
+    // Exchange over the following minutes, so grants attempted immediately can fail even
+    // though the mailbox will exist shortly — this keeps retrying failed grants (not ones
+    // that already succeeded) until they all land, a sane attempt cap is hit, or the user
+    // clicks "Stop Waiting" (wired to `stopButton`) to see the result now.
+    async function grantAccessToStaffWithRetry(mailbox, fetchStaff, label, statusEl, stopButton) {
         const result = { grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
-        if (departments.length === 0) return result;
 
         let stopRequested = false;
         const stopHandler = () => { stopRequested = true; };
@@ -819,9 +826,9 @@
         stopButton.style.display = "inline-block";
 
         try {
-            statusEl.textContent = `Looking up ${departments.join(" & ")} team member(s)...`;
+            statusEl.textContent = `Looking up ${label}...`;
             const graphToken = await signInAndGetToken(graphRequest, true);
-            const staff = await getStaffByDepartments(departments, graphToken);
+            const staff = await fetchStaff(graphToken);
             const bridgeToken = await signInAndGetToken(bridgeRequest, true);
 
             const grantState = new Map(staff.map(m => [m.mail, { member: m.name, error: "pending" }]));
@@ -872,22 +879,19 @@
         return result;
     }
 
-    // Creates the project mailbox for a folder just converted from Archive to Active, then
-    // infers the service from its combo prefix and grants that team access. If the account
-    // already exists (e.g. a previous attempt created it but a member grant didn't finish
-    // before the mailbox had provisioned), skips straight to granting instead of failing —
-    // a retry here shouldn't require deleting and recreating the account.
-    async function createProjectMailboxAndGrantMembers(entry) {
-        const statusEl = document.getElementById("cvConfirmStatus");
-        const stopButton = document.getElementById("cvStopRetryButton");
-        const result = { mailboxName: entry.name, mailbox: null, mailboxError: null, mailboxAlreadyExisted: false, service: null, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
-        result.service = DEPARTMENT_BY_COMBO_PREFIX[entry.combo.slice(0, 2)] || null;
+    // Creates the project mailbox for a brand-new BD project and grants every licensed
+    // Summation staff member Full Access to it. If the account already exists (e.g. a
+    // previous attempt created it but a grant didn't finish before the mailbox had
+    // provisioned), skips straight to granting instead of failing — a retry here shouldn't
+    // require deleting and recreating the account.
+    async function createProjectMailboxAndGrantAllStaff(mailboxName, statusEl, stopButton) {
+        const result = { mailboxName, mailbox: null, mailboxError: null, mailboxAlreadyExisted: false, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
 
         statusEl.textContent = "Creating project mailbox...";
         try {
             const bridgeToken = await signInAndGetToken(bridgeRequest, true);
             if (!bridgeToken) throw new Error("Could not get permission to create mailboxes.");
-            const created = await createSharedMailboxViaBridge(entry.name, bridgeToken);
+            const created = await createSharedMailboxViaBridge(mailboxName, bridgeToken);
             result.mailbox = created.mailbox;
             result.mailboxAlreadyExisted = created.alreadyExisted;
         } catch (err) {
@@ -895,11 +899,23 @@
             return result;
         }
 
-        if (!result.service) return result;
-
-        const grantResult = await grantDepartmentAccessWithRetry(result.mailbox, [result.service], statusEl, stopButton);
+        const grantResult = await grantAccessToStaffWithRetry(result.mailbox, getAllStaffMembers, "all Summation staff", statusEl, stopButton);
         Object.assign(result, grantResult);
         return result;
+    }
+
+    function renderNewProjectMailboxResultBox(mailboxResult) {
+        const { mailbox, mailboxError, mailboxAlreadyExisted, grants, grantsError, stoppedByUser, gaveUp } = mailboxResult;
+        if (mailboxError) {
+            return `<div class="warning-box">Project mailbox not created: ${mailboxError}</div>`;
+        }
+        return `<div class="summary-box">
+            <div class="row"><span class="label">Project mailbox:</span> ${mailbox}</div>
+            <div class="row">${mailboxAlreadyExisted
+                ? "This mailbox already existed (from a previous attempt) — skipped creation and went straight to granting access."
+                : "Created as a real Exchange shared mailbox — ready to use now."}</div>
+            ${renderGrantResultsHtml("all Summation staff", grants, grantsError, stoppedByUser, gaveUp)}
+        </div>`;
     }
 
     function renderGrantResultsHtml(label, grants, grantsError, stoppedByUser, gaveUp) {
@@ -917,25 +933,6 @@
                     : "Still failing";
             html += `<div class="warning-box">${reason} — this is expected if the mailbox hasn't finished provisioning yet. Retry via Manage Shared Mailbox Members once it's ready. Still pending: ${failed.map(f => f.member).join(", ")}.</div>`;
         }
-        return html;
-    }
-
-    function renderMailboxResultBox(mailboxResult) {
-        const { mailboxName, mailbox, mailboxError, mailboxAlreadyExisted, service, grants, grantsError, stoppedByUser, gaveUp } = mailboxResult;
-        if (mailboxError) {
-            return `<div class="warning-box">Project mailbox not created: ${mailboxError}</div>`;
-        }
-        let html = `<div class="summary-box">
-            <div class="row"><span class="label">Project mailbox:</span> ${mailbox}</div>
-            <div class="row">${mailboxAlreadyExisted
-                ? "This mailbox already existed (from a previous attempt) — skipped creation and went straight to granting access."
-                : "Created as a real Exchange shared mailbox — ready to use now."}</div>`;
-        if (!service) {
-            html += `<div class="row">Couldn't determine a Sustainability/Energy service from "${mailboxName}", so no team members were added automatically — use Manage Shared Mailbox Members to add them.</div>`;
-        } else {
-            html += renderGrantResultsHtml(`the ${service} team`, grants, grantsError, stoppedByUser, gaveUp);
-        }
-        html += `</div>`;
         return html;
     }
 
@@ -1173,6 +1170,7 @@
                 <div class="row"><span class="label">Branch:</span> ${archivePath}</div>
                 <div class="row"><span class="label">Structure:</span> ${isSustainability ? "Full copy of the SUPER00000_Project_Template folder" : "Blank folder with a single empty BD subfolder (no Energy template exists)"}</div>
                 <div class="row"><span class="label">Filed into ${npState.bdRelativePath}:</span> ${filedDescription}</div>
+                <div class="row"><span class="label">Shared mailbox:</span> ${deriveMailboxAddress(folderName)} will be created, with Full Access granted to all Summation staff.</div>
             </div>
         `;
         if (npState.warnings && npState.warnings.length) {
@@ -1325,7 +1323,7 @@
         return results;
     }
 
-    function renderResultStep(success, errorMessage) {
+    function renderResultStep(success, errorMessage, mailboxResult) {
         const container = document.getElementById("npResultSummary");
         if (errorMessage) {
             container.innerHTML = `<div class="warning-box">Error: ${errorMessage}</div>`;
@@ -1347,6 +1345,9 @@
             html += `<div class="row" style="color:red;">Some items failed to file: ${filingResults.errors.join("; ")}</div>`;
         }
         html += `</div>`;
+        if (mailboxResult) {
+            html += renderNewProjectMailboxResultBox(mailboxResult);
+        }
         container.innerHTML = html;
 
         const copyButton = document.getElementById("npCopyLinkButton");
@@ -1411,7 +1412,10 @@
             confirmStatus.textContent = "Filing email and attachments...";
             const filingResults = await fileEmailAndAttachments(ARCHIVE_DRIVE_ID, bdFolderId, token);
 
-            renderResultStep({ folderName: npState.folderName, webUrl: projectFolderWebUrl, filingResults }, null);
+            const stopButton = document.getElementById("npStopRetryButton");
+            const mailboxResult = await createProjectMailboxAndGrantAllStaff(npState.folderName, confirmStatus, stopButton);
+
+            renderResultStep({ folderName: npState.folderName, webUrl: projectFolderWebUrl, filingResults }, null, mailboxResult);
             showWizardStep("result");
         } catch (err) {
             console.error("Failed to create project folder:", err);
@@ -1597,7 +1601,7 @@
         }
     }
 
-    function renderConvertResultStep(success, errorMessage, mailboxResult) {
+    function renderConvertResultStep(success, errorMessage) {
         const container = document.getElementById("cvResultSummary");
         if (errorMessage) {
             container.innerHTML = `<div class="warning-box">Error: ${errorMessage}</div>`;
@@ -1618,9 +1622,6 @@
             html += `<div class="row">Original removed from Archive.</div>`;
         }
         html += `</div>`;
-        if (mailboxResult) {
-            html += renderMailboxResultBox(mailboxResult);
-        }
         container.innerHTML = html;
 
         const copyButton = document.getElementById("cvCopyLinkButton");
@@ -1674,9 +1675,7 @@
                 deleteError = err.message;
             }
 
-            const mailboxResult = await createProjectMailboxAndGrantMembers(selectedEntry);
-
-            renderConvertResultStep({ folderName: selectedEntry.name, webUrl: newActiveItem.webUrl, deleteError }, null, mailboxResult);
+            renderConvertResultStep({ folderName: selectedEntry.name, webUrl: newActiveItem.webUrl, deleteError }, null);
             showConvertStep("result");
         } catch (err) {
             console.error("Failed to convert folder:", err);
@@ -2074,7 +2073,13 @@
             return;
         }
 
-        const grantResult = await grantDepartmentAccessWithRetry(result.mailbox, departments, statusEl, stopButton);
+        const grantResult = await grantAccessToStaffWithRetry(
+            result.mailbox,
+            token => getStaffByDepartments(departments, token),
+            teamLabel,
+            statusEl,
+            stopButton
+        );
         Object.assign(result, grantResult);
 
         renderCreateMailboxResultStep(result, teamLabel);
