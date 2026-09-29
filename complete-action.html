@@ -492,18 +492,6 @@
             .filter(u => u.mail && !projectMailboxRegex.test(u.mail));
     }
 
-    async function getStaffByDepartments(departments, token) {
-        const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,department,assignedLicenses,accountEnabled&$top=999";
-        const users = await graphGetAll(url, token);
-        const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}[_-].*@summation\.au$/i;
-        const wanted = new Set(departments.map(d => d.toLowerCase()));
-        return users
-            .filter(u => u.assignedLicenses.length > 0 && u.accountEnabled !== false)
-            .map(u => ({ name: u.displayName, mail: u.mail || u.userPrincipalName, department: (u.department || "").trim() }))
-            .filter(u => u.mail && !projectMailboxRegex.test(u.mail))
-            .filter(u => wanted.has(u.department.toLowerCase()));
-    }
-
     async function grantMailboxPermissionViaBridge(mailbox, user, token, autoMapping) {
         const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions/grant`, {
             method: "POST",
@@ -887,41 +875,17 @@
     // ---- Create Shared Mailbox (standalone wizard) ----
 
     async function runCreateSharedMailbox(params) {
-        const { mailboxName, selectedTeam } = params;
-        const departments = selectedTeam === "All" ? ["Sustainability", "Energy"] : [selectedTeam];
-        const teamLabel = selectedTeam === "All" ? "the Sustainability & Energy teams" : `the ${selectedTeam} team`;
-
-        updateStatus("Creating project mailbox...");
-        const result = { mailbox: null, mailboxError: null, mailboxAlreadyExisted: false, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
-        try {
-            const bridgeToken = await signInAndGetToken(bridgeRequest, true);
-            if (!bridgeToken) throw new Error("Could not get permission to create mailboxes.");
-            const created = await createSharedMailboxViaBridge(mailboxName, bridgeToken);
-            result.mailbox = created.mailbox;
-            result.mailboxAlreadyExisted = created.alreadyExisted;
-        } catch (err) {
-            result.mailboxError = err.message;
-            renderCreateSharedMailboxResult(result, teamLabel);
-            updateStatus("");
-            return;
-        }
+        const { mailboxName } = params;
 
         const statusEl = document.getElementById("status");
         const stopButton = document.getElementById("stopRetryButton");
-        const grantResult = await grantAccessToStaffWithRetry(
-            result.mailbox,
-            token => getStaffByDepartments(departments, token),
-            teamLabel,
-            statusEl,
-            stopButton
-        );
-        Object.assign(result, grantResult);
+        const result = await createProjectMailboxAndGrantAllStaff(mailboxName, statusEl, stopButton);
 
         updateStatus("Done.");
-        renderCreateSharedMailboxResult(result, teamLabel);
+        renderCreateSharedMailboxResult(result);
     }
 
-    function renderCreateSharedMailboxResult(result, teamLabel) {
+    function renderCreateSharedMailboxResult(result) {
         if (result.mailboxError) {
             document.getElementById("resultSummary").innerHTML = `<div class="warning-box">Error: ${result.mailboxError}</div>`;
             return;
@@ -931,7 +895,7 @@
             <div class="row">${result.mailboxAlreadyExisted
                 ? "This mailbox already existed (from a previous attempt) — skipped creation and went straight to granting access."
                 : "Created as a real Exchange shared mailbox — ready to use now."}</div>
-            ${renderGrantResultsHtml(teamLabel, result.grants, result.grantsError, result.stoppedByUser, result.gaveUp)}
+            ${renderGrantResultsHtml("all Summation staff", result.grants, result.grantsError, result.stoppedByUser, result.gaveUp)}
         </div>`;
     }
   </script>

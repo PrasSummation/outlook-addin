@@ -310,12 +310,7 @@
 
       <div id="csmStepMembers" style="display: none;">
         <div id="csmMembersSummary"></div>
-        <label>Add as members</label>
-        <div class="radio-row">
-          <label><input type="radio" name="csmTeam" value="Sustainability" checked /> Sustainability team</label>
-          <label><input type="radio" name="csmTeam" value="Energy" /> Energy team</label>
-          <label><input type="radio" name="csmTeam" value="All" /> All (both teams)</label>
-        </div>
+        <div class="hint">Every current Sustainability &amp; Energy team member will be granted access.</div>
         <div id="csmMembersStatus"></div>
         <button id="csmCreateButton">Create &amp; Add Members</button>
         <button id="csmBackToSetupButton" class="secondary-button">&larr; Choose a Different Name</button>
@@ -347,7 +342,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.23";
+    const APP_VERSION = "9.24";
 
     let msalInstance;
     let folderEntries = [];
@@ -1523,10 +1518,8 @@
     }
 
     function handleCsmCreate() {
-        const selectedTeam = document.querySelector('input[name="csmTeam"]:checked').value;
         handOffToCompleteAction("createSharedMailbox", {
-            mailboxName: csmState.mailboxName,
-            selectedTeam
+            mailboxName: csmState.mailboxName
         });
         renderHandoffSummary("csmResultSummary", `creating "${csmState.mailboxName}" and granting access`);
         showCsmStep("result");
