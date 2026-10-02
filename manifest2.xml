@@ -1,12 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" 
            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
-           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" 
-           xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0" 
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
            xsi:type="MailApp">
   
   <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id> 
-  <Version>1.0.0.7</Version>
+  <Version>1.0.0.8</Version>
   <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
@@ -14,6 +13,7 @@
   
   <IconUrl DefaultValue="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" />
   <HighResolutionIconUrl DefaultValue="https://prassummation.github.io/outlook-addin/logo-symbol-80x80.png" />
+  <SupportUrl DefaultValue="https://prassummation.github.io/outlook-addin/" />
 
   <Hosts>
     <Host Name="Mailbox" />
@@ -35,18 +35,18 @@
   </FormSettings>
 
   <Permissions>ReadWriteMailbox</Permissions>
-  <Rule xsi:type="RuleCollection" Mode="MatchAll">
-    <Rule xsi:type="ItemIs" ItemType="Message" />
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read" />
   </Rule>
 
-  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.0" xsi:type="VersionOverridesV1_0">
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
     <Requirements>
       <bt:Sets DefaultMinVersion="1.3">
         <bt:Set Name="Mailbox" />
       </bt:Sets>
     </Requirements>
     <Hosts>
-      <Host xsi:type="Mailbox">
+      <Host xsi:type="MailHost">
         <DesktopFormFactor>
           <ExtensionPoint xsi:type="MessageReadCommandSurface">
             <OfficeTab id="TabDefault">
@@ -115,8 +115,9 @@
       </bt:LongStrings>
     </Resources>
 
-    <!-- V1.1 nested block: lets File Email activate on multiple selected messages at
-         once (SupportsMultiSelect) and even with no single item open (SupportsNoItemContext).
+    <!-- V1.1 nested block: lets the taskpane's File Email wizard activate on multiple
+         selected messages at once (SupportsMultiSelect) and even with no single item open
+         (SupportsNoItemContext).
          A client that understands this block reads it INSTEAD of the V1.0 content above,
          not in addition to it, so it has to re-declare both buttons, not just the new
          capability, and carries its own complete Resources section. Clients that don't
