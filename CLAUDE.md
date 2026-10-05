@@ -42,6 +42,7 @@ project mailbox.
 | `exchange-bridge/` | Azure Function (PowerShell 7.6) — see its own `README.md`, which is the authoritative, detailed doc. Summary below. |
 | `exchange-bridge/README.md` | **Read this in full before touching the bridge.** Covers the two-app-registration trust model, why the originally-planned least-privilege Exchange RBAC didn't work (ended up needing the full Exchange Administrator directory role), the API contract, and a completed setup runbook. |
 | `README.md` (repo root) | Just a one-line stub — not useful, don't rely on it. |
+| *(elsewhere)* | The email **index and search** prototype lives in its own private repo, `PrasSummation/email-index` (split out of this repo's former `prototypes/email-index/`). It shares this repo's Entra app registration, and its filer API allows calls from this repo's GitHub Pages origin. |
 | `logo-symbol-*.png` | Add-in icons referenced by the manifest and page headers. |
 
 ## The taskpane's four wizards
