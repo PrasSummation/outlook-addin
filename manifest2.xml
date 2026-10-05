@@ -4,8 +4,8 @@
            xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
            xsi:type="MailApp">
   
-  <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id> 
-  <Version>1.0.0.9</Version>
+  <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id>
+  <Version>1.0.0.10</Version>
   <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
@@ -67,6 +67,21 @@
                     <SourceLocation resid="Taskpane.Url" />
                   </Action>
                 </Control>
+                <Control xsi:type="Button" id="Summation.FileEmailButton">
+                  <Label resid="FileEmailButtonLabel" />
+                  <Supertip>
+                    <Title resid="FileEmailButtonLabel" />
+                    <Description resid="FileEmailButtonToolTip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16" />
+                    <bt:Image size="32" resid="Icon.32x32" />
+                    <bt:Image size="80" resid="Icon.80x80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="FileEmail.Url" />
+                  </Action>
+                </Control>
               </Group>
             </OfficeTab>
           </ExtensionPoint>
@@ -105,13 +120,16 @@
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Taskpane.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html" />
+        <bt:Url id="FileEmail.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html?view=fileEmail" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabel" DefaultValue="Summation Tools" />
         <bt:String id="TaskpaneButtonLabel" DefaultValue="Summation Assistant" />
+        <bt:String id="FileEmailButtonLabel" DefaultValue="File Email" />
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="TaskpaneButtonToolTip" DefaultValue="Open the Summation AI helper." />
+        <bt:String id="FileEmailButtonToolTip" DefaultValue="Tag the selected email(s) with a project and stage them for filing." />
       </bt:LongStrings>
     </Resources>
 
@@ -154,6 +172,24 @@
                       <SupportsMultiSelect>true</SupportsMultiSelect>
                     </Action>
                   </Control>
+                  <Control xsi:type="Button" id="Summation.FileEmailButton">
+                    <Label resid="FileEmailButtonLabel" />
+                    <Supertip>
+                      <Title resid="FileEmailButtonLabel" />
+                      <Description resid="FileEmailButtonToolTip" />
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16" />
+                      <bt:Image size="32" resid="Icon.32x32" />
+                      <bt:Image size="80" resid="Icon.80x80" />
+                    </Icon>
+                    <Action xsi:type="ShowTaskpane">
+                      <SourceLocation resid="FileEmail.Url" />
+                      <SupportsPinning>true</SupportsPinning>
+                      <SupportsNoItemContext>true</SupportsNoItemContext>
+                      <SupportsMultiSelect>true</SupportsMultiSelect>
+                    </Action>
+                  </Control>
                 </Group>
               </OfficeTab>
             </ExtensionPoint>
@@ -191,13 +227,16 @@
         </bt:Images>
         <bt:Urls>
           <bt:Url id="Taskpane.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html" />
+          <bt:Url id="FileEmail.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html?view=fileEmail" />
         </bt:Urls>
         <bt:ShortStrings>
           <bt:String id="GroupLabel" DefaultValue="Summation Tools" />
           <bt:String id="TaskpaneButtonLabel" DefaultValue="Summation Assistant" />
+          <bt:String id="FileEmailButtonLabel" DefaultValue="File Email" />
         </bt:ShortStrings>
         <bt:LongStrings>
           <bt:String id="TaskpaneButtonToolTip" DefaultValue="Open the Summation AI helper." />
+          <bt:String id="FileEmailButtonToolTip" DefaultValue="Tag the selected email(s) with a project and stage them for filing." />
         </bt:LongStrings>
       </Resources>
     </VersionOverrides>

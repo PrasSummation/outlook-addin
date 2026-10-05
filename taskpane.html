@@ -56,6 +56,12 @@
     @media (prefers-reduced-motion:reduce){
       #brandBar,#brandLockup,#brandLockup img,#brandWord,#brandSub,#brandSub i,#brandUser,#brandUser b
         {animation-duration:1ms!important;animation-delay:0ms!important}}
+    /* Ribbon-launched "File Email" deep link (?view=fileEmail) skips the intro morph —
+       applied via body.no-intro, same technique as the reduced-motion override above. */
+    body.no-intro #brandBar,body.no-intro #brandLockup,body.no-intro #brandLockup img,
+    body.no-intro #brandWord,body.no-intro #brandSub,body.no-intro #brandSub i,
+    body.no-intro #brandUser,body.no-intro #brandUser b
+      {animation-duration:1ms!important;animation-delay:0ms!important}
 
     /* ── Form primitives (same block layout the script expects) ────────── */
     label{display:block;width:100%;margin:14px 0 6px;font-size:10px;letter-spacing:.09em;
@@ -377,7 +383,18 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.33";
+    // Ribbon-launched "File Email" deep link (taskpane.html?view=fileEmail) — checked
+    // synchronously, before anything else runs, so body.no-intro is already in place
+    // before the browser paints #brandBar for the first time. Adding it any later (e.g.
+    // inside Office.onReady, which can take a noticeable moment) would let the welcome
+    // animation start playing and then visibly snap to its end state instead of never
+    // starting at all.
+    const feDeepLinkRequested = new URLSearchParams(window.location.search).get("view") === "fileEmail";
+    if (feDeepLinkRequested) {
+        document.body.classList.add("no-intro");
+    }
+
+    const APP_VERSION = "9.34";
 
     let msalInstance;
     let folderEntries = [];
@@ -595,8 +612,12 @@
             msalInstance.setActiveAccount(loginResponse.account);
 
             showAppUi(true);
-            setTimeout(() => document.getElementById("filterBox").focus(), 100);
-            await loadFolders();
+            if (feDeepLinkRequested) {
+                await openFileEmailWizard();
+            } else {
+                setTimeout(() => document.getElementById("filterBox").focus(), 100);
+                await loadFolders();
+            }
         } catch (error) {
             console.error("Interactive sign in failed:", error);
             updateStatus("Sign in failed. Please try again.", true);
@@ -609,8 +630,12 @@
             const token = await signInAndGetToken(graphRequest, false);
             if (token) {
                 showAppUi(true);
-                setTimeout(() => document.getElementById("filterBox").focus(), 100);
-                await loadFolders();
+                if (feDeepLinkRequested) {
+                    await openFileEmailWizard();
+                } else {
+                    setTimeout(() => document.getElementById("filterBox").focus(), 100);
+                    await loadFolders();
+                }
             } else {
                 showAppUi(false);
             }
@@ -1817,6 +1842,12 @@
         showFeStep("pick");
         renderFePendingBatches();
         await detectFeContext();
+        // Only for the ribbon's dedicated File Email button: land the cursor straight in
+        // the project search box, matching its "skip straight to picking a project" intent.
+        // The regular tile-driven entry point is left as-is (no change in focus behavior).
+        if (feDeepLinkRequested && document.getElementById("fePickBody").style.display === "block") {
+            document.getElementById("feFilterBox").focus();
+        }
     }
 
     function closeFileEmailWizard() {
