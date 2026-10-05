@@ -376,7 +376,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.27";
+    const APP_VERSION = "9.28";
 
     let msalInstance;
     let folderEntries = [];
@@ -558,8 +558,17 @@
         document.getElementById("feBackToPickButton").addEventListener("click", () => showFeStep("pick"));
         document.getElementById("feStartOverButton").addEventListener("click", openFileEmailWizard);
         document.getElementById("syncEmailsButton").addEventListener("click", handleSyncEmails);
+        // Multi-select relies on this event firing to know the selection changed; an empty
+        // handler isn't enough. Re-run detection whenever it fires AND the File Email picker
+        // step is actually the thing on screen, so changing the selection while the pane is
+        // already open (not just at the moment it was first activated) is reflected.
         if (Office.context.mailbox.addHandlerAsync) {
-            Office.context.mailbox.addHandlerAsync(Office.EventType.SelectedItemsChanged, () => {});
+            Office.context.mailbox.addHandlerAsync(Office.EventType.SelectedItemsChanged, () => {
+                if (document.getElementById("fileEmailWizard").style.display === "block" &&
+                    document.getElementById("feStepPick").style.display === "block") {
+                    detectFeContext();
+                }
+            });
         }
 
         if (typeof msal !== 'undefined' && msal.PublicClientApplication) {
