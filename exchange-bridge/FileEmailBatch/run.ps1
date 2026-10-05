@@ -50,7 +50,21 @@ foreach ($item in $items) {
     $status = $null
     $errorMessage = $null
     try {
-        $categorizeBody = @{ categories = @($categoryName) } | ConvertTo-Json
+        # Graph's PATCH replaces the whole categories array rather than merging into it, so
+        # setting categories to just [categoryName] would silently wipe out anything else
+        # already on the item -- confirmed, this is exactly what was happening. Read the
+        # current list first and only drop an existing category that itself looks like a
+        # project name (the same CODE#####_Name/-Name pattern used everywhere else in this
+        # app, e.g. Test-ProjectMailboxAddress), on the assumption an item belongs to one
+        # project at a time and an old project tag is being superseded, not added to. Any
+        # other category -- anything a person actually set by hand -- is left alone.
+        $existing = Invoke-RestMethod -Method Get `
+            -Uri "https://graph.microsoft.com/v1.0/me/messages/$($item.restId)?`$select=categories" `
+            -Headers $graphHeaders -ErrorAction Stop
+        $keptCategories = @($existing.categories) | Where-Object { $_ -notmatch '^[a-zA-Z]{5}\d{5}[_-]' }
+        $mergedCategories = @($keptCategories) + @($categoryName) | Select-Object -Unique
+
+        $categorizeBody = @{ categories = @($mergedCategories) } | ConvertTo-Json
         Invoke-RestMethod -Method Patch -Uri "https://graph.microsoft.com/v1.0/me/messages/$($item.restId)" `
             -Headers $graphHeaders -Body $categorizeBody -ErrorAction Stop | Out-Null
 
