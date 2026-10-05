@@ -129,12 +129,52 @@ Worth deleting at some point for clarity (`Remove-ManagementRoleAssignment`,
 | `POST` | `/api/mailbox-permissions/grant` | `{ mailbox, user, autoMapping? }` (autoMapping defaults to `true`; every client in this repo now passes `false` explicitly — automapping-off is the house default) | `{ mailbox, user, action: "granted", autoMapping }` |
 | `POST` | `/api/mailbox-permissions/revoke` | `{ mailbox, user }` | `{ mailbox, user, action: "revoked" }` |
 | `POST` | `/api/shared-mailboxes` | `{ mailbox, displayName }` | `200` `{ mailbox, displayName, action: "created" }`, or `409` `{ mailbox, error }` if a recipient with that address already exists (not treated as a failure by any client — they proceed to granting members) |
+| `POST` | `/api/file-email-batch/<batchId>` | `{ graphAccessToken, categoryName, destinationFolderId?, items: [{ restId, subject }] }` | `200` `{ batchId, categoryName, total, succeeded, failed, status: "done", completedAt, items: [{ subject, restId, status, error }] }` |
+| `GET` | `/api/file-email-batch/<batchId>` | — | `200` with the same shape as above once the batch has finished, or `404` `{ batchId, status: "not_found", note }` if it hasn't finished yet (or never existed) |
 
-Every endpoint rejects (`403`) any `mailbox` that doesn't match the project
-naming convention (`^[a-zA-Z]{5}\d{5}[_-].+@summation\.au$` — broadened in
-2026-09-16 to accept a hyphen as well as the original underscore, after real
-export data turned up legacy mailboxes using "CODE - Name") and any `user`
-that isn't a `summation.au` address, before touching Exchange at all.
+Every mailbox-permission/creation endpoint rejects (`403`) any `mailbox` that
+doesn't match the project naming convention
+(`^[a-zA-Z]{5}\d{5}[_-].+@summation\.au$` — broadened in 2026-09-16 to accept
+a hyphen as well as the original underscore, after real export data turned up
+legacy mailboxes using "CODE - Name") and any `user` that isn't a
+`summation.au` address, before touching Exchange at all.
+
+### `file-email-batch` — a different trust model, on purpose
+
+Unlike every other endpoint here, this one doesn't use the bridge's own
+app-only Exchange identity at all — it exists only because the Outlook
+add-in's "File Email" feature has to run its Graph calls inline in the
+taskpane (it needs live Office.js access to read the current email
+selection, so it can't use that add-in's usual pattern of handing long-running
+work off to a separate browser tab with no Office.js context). Outlook tears
+down the taskpane's content on almost any selection change once multi-select
+is enabled, killing whatever was running — so this endpoint exists purely to
+keep a categorize-then-move batch running to completion on the server, after
+the request that started it, independent of whether the taskpane that sent it
+is still open.
+
+`graphAccessToken` is the caller's own already-acquired, narrowly-scoped
+Graph token (`Mail.ReadWrite` + `MailboxSettings.ReadWrite` on their own
+mailbox) — this endpoint only ever relays Graph calls using *that* token, via
+plain `Invoke-RestMethod`, exactly what the add-in would have done directly
+from the browser. It never touches the bridge's own certificate-based
+Exchange identity, and the token is never persisted — it only lives for the
+duration of a single invocation. `Easy Auth` still gates the HTTP request
+itself the same as every other endpoint; this changes *what the code does
+once a request is let through*, not who's allowed to call it at all.
+
+Results are written once, on completion, to a blob at
+`file-email-batches/<batchId>.json` in the Function App's own storage
+account (container created specifically for this, private access) — not
+incrementally as the batch progresses, since a declarative Azure Functions
+output binding only writes once per invocation regardless of how many times
+`Push-OutputBinding` is called during it. The status `GET` reads that blob
+back via a long-lived, read-only SAS token scoped to just that one container
+(`FILE_EMAIL_BATCH_STORAGE_ACCOUNT` / `FILE_EMAIL_BATCH_CONTAINER_SAS` app
+settings), rather than a declarative blob input binding — confirmed that a
+missing blob fails a declarative input binding's entire invocation outright,
+which would make "still running" indistinguishable from a real platform
+error.
 
 **Note on AutoMapping:** `Get-MailboxPermission` doesn't return a clean
 AutoMapping on/off flag — that state lives in an AD attribute the cmdlet

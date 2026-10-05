@@ -340,10 +340,10 @@
 
     <div id="fileEmailWizard" style="display: none;">
       <button id="feBackToBrowserButton" class="small-button secondary-button">&larr; Back</button>
+      <div id="fePendingBatches"></div>
 
       <div id="feStepPick">
         <div id="feContextSummary"></div>
-        <div id="feDebugInfo" style="font-size:10.5px;color:#999;margin:-4px 0 9px;white-space:pre-wrap;"></div>
         <div id="feNoSelection" style="display: none;">
           <p>Select one or more emails in the list, then click File Email again.</p>
         </div>
@@ -377,7 +377,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.32";
+    const APP_VERSION = "9.33";
 
     let msalInstance;
     let folderEntries = [];
@@ -490,9 +490,10 @@
     };
     const BRIDGE_URL = "https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net";
 
-    // Only requested on demand, when using File Email's "stage for filing" move.
-    // MailboxSettings.ReadWrite is needed to clean up an auto-created master category
-    // afterward (see setMessageCategoryViaGraph's comment).
+    // Only requested on demand, when using File Email's "stage for filing" move. Also
+    // forwarded to the bridge's FileEmailBatch endpoint, which uses it to call Graph on the
+    // signed-in user's own behalf. MailboxSettings.ReadWrite cleans up an auto-created master
+    // category afterward (see findMasterCategory/deleteMasterCategory).
     const mailWriteRequest = {
         scopes: ["Mail.ReadWrite", "MailboxSettings.ReadWrite"]
     };
@@ -1814,6 +1815,7 @@
         document.getElementById("feFilterBox").value = "";
         document.getElementById("feSetupStatus").textContent = "";
         showFeStep("pick");
+        renderFePendingBatches();
         await detectFeContext();
     }
 
@@ -1832,37 +1834,6 @@
         document.getElementById("feStepResult").style.display = step === "result" ? "block" : "none";
     }
 
-    // TEMPORARY diagnostic, pending resolution of a confirmed multi-select bug: shows what
-    // this specific Outlook client actually reports at runtime, since code-level fixes so
-    // far haven't changed the behavior and guessing further isn't productive without this.
-    async function logFeDiagnostics() {
-        const lines = [];
-        try {
-            lines.push(`Mailbox 1.13 (multi-select baseline): ${Office.context.requirements.isSetSupported("Mailbox", "1.13")}`);
-            lines.push(`Mailbox 1.15 (loadItemByIdAsync): ${Office.context.requirements.isSetSupported("Mailbox", "1.15")}`);
-        } catch (err) {
-            lines.push(`Requirement set check failed: ${err.message || err}`);
-        }
-        try {
-            lines.push(`hostName: ${Office.context.mailbox.diagnostics.hostName}, hostVersion: ${Office.context.mailbox.diagnostics.hostVersion}`);
-        } catch (err) {
-            lines.push(`diagnostics unavailable: ${err.message || err}`);
-        }
-        try {
-            const singleItem = getCurrentMailItem();
-            lines.push(`mailbox.item present: ${!!singleItem}${singleItem ? ` (itemType=${singleItem.itemType}, subject="${singleItem.subject}")` : ""}`);
-        } catch (err) {
-            lines.push(`mailbox.item check failed: ${err.message || err}`);
-        }
-        try {
-            const selected = await officeAsync(Office.context.mailbox, "getSelectedItemsAsync");
-            lines.push(`getSelectedItemsAsync: ${(selected || []).length} item(s) -- ${JSON.stringify((selected || []).map(i => ({ itemType: i.itemType, subject: i.subject })))}`);
-        } catch (err) {
-            lines.push(`getSelectedItemsAsync failed: ${err.message || err}`);
-        }
-        document.getElementById("feDebugInfo").textContent = lines.join("\n");
-    }
-
     async function detectFeContext() {
         const summary = document.getElementById("feContextSummary");
         const noSelection = document.getElementById("feNoSelection");
@@ -1870,7 +1841,6 @@
         noSelection.style.display = "none";
         pickBody.style.display = "none";
         summary.innerHTML = "";
-        logFeDiagnostics();
 
         // Check the actual multi-selection FIRST. Office.context.mailbox.item still resolves
         // to a single item (the first/active one) even when several are selected, rather than
@@ -2003,31 +1973,6 @@
         showFeStep("confirm");
     }
 
-    // Categorizing via Graph (not Office.js's categories.addAsync) is deliberate: it's the
-    // same API, same token, same backend view as the move right after it, so there's no
-    // cross-API race where the move's snapshot is taken before the category write has
-    // propagated -- which is exactly what caused the category to go missing after the move
-    // when this used Office.js's category API. It doesn't require the category to already
-    // exist in the master list the way Office.js's API does -- but confirmed via live testing,
-    // Exchange still auto-creates a master-list entry for a brand-new category name the first
-    // time it's applied to an item, regardless of which API did it. getOrCleanUpMasterCategory
-    // below removes that auto-created entry afterward (only if we're the ones who caused it to
-    // be created), reaching the same end state the old VBA-based tool got by adding then
-    // deleting a master-list entry itself.
-    async function setMessageCategoryViaGraph(restId, categoryName) {
-        const token = await signInAndGetToken(mailWriteRequest, true);
-        if (!token) throw new Error("Could not get permission to categorize the email.");
-        const response = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(restId)}`, {
-            method: "PATCH",
-            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ categories: [categoryName] })
-        });
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Categorize failed: ${response.status} ${errorText}`);
-        }
-    }
-
     // Looks up a category by display name in the mailbox's master list. Returns null if
     // it isn't there, so the caller can tell "never existed" apart from "exists."
     async function findMasterCategory(categoryName) {
@@ -2078,17 +2023,110 @@
         return feEmailsToFileFolderId;
     }
 
-    async function moveMessageViaGraph(restId, destinationFolderId) {
-        const token = await signInAndGetToken(mailWriteRequest, true);
-        if (!token) throw new Error("Could not get permission to move the email.");
-        const response = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(restId)}/move`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ destinationId: destinationFolderId })
+    // ---- Server-side batch handoff ----
+    // The actual categorize+move loop now runs on the Exchange bridge (FileEmailBatch),
+    // not here. This is the fix for the pane-closes-mid-action problem: Outlook tears down
+    // this pane's content on a selection change unless it's pinned (confirmed, and the
+    // default when SupportsMultiSelect is on) -- but complete-action.html's handoff pattern
+    // doesn't work for File Email, since that page has no Office.js context to read the
+    // selection from. Routing the Graph calls through the bridge instead gets the same
+    // durability a different way: once the bridge receives this request, Azure Functions
+    // keeps running it to completion even if the taskpane disappears moments later.
+    //
+    // batchId is tracked in localStorage (survives the pane being closed/reopened, same as
+    // the MSAL token cache already does) the moment the batch is sent, not after it
+    // completes -- so if the pane is torn down before this request's response ever lands,
+    // the next time File Email is opened it can still check what actually happened.
+
+    const FE_BATCHES_STORAGE_KEY = "fileEmailPendingBatches";
+
+    function getFeBatchesFromStorage() {
+        try {
+            return JSON.parse(localStorage.getItem(FE_BATCHES_STORAGE_KEY) || "[]");
+        } catch (err) {
+            return [];
+        }
+    }
+
+    function saveFeBatchesToStorage(batches) {
+        try {
+            localStorage.setItem(FE_BATCHES_STORAGE_KEY, JSON.stringify(batches));
+        } catch (err) {
+            console.error("Could not persist File Email batch tracking:", err);
+        }
+    }
+
+    function addFeBatchToStorage(entry) {
+        const batches = getFeBatchesFromStorage();
+        batches.push(entry);
+        saveFeBatchesToStorage(batches);
+    }
+
+    function removeFeBatchFromStorage(batchId) {
+        saveFeBatchesToStorage(getFeBatchesFromStorage().filter(b => b.batchId !== batchId));
+    }
+
+    async function getFeBatchStatus(batchId) {
+        const token = await signInAndGetToken(bridgeRequest, true);
+        if (!token) throw new Error("Could not get permission to call the bridge.");
+        const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${encodeURIComponent(batchId)}`, {
+            headers: { Authorization: `Bearer ${token}` }
         });
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Move failed: ${response.status} ${errorText}`);
+        if (response.status === 404) return null;
+        if (!response.ok) throw new Error(`Status check failed: ${response.status}`);
+        return response.json();
+    }
+
+    function feTimeAgo(isoString) {
+        const minutes = Math.round((Date.now() - new Date(isoString).getTime()) / 60000);
+        if (minutes < 1) return "just now";
+        if (minutes === 1) return "1 minute ago";
+        return `${minutes} minutes ago`;
+    }
+
+    // Re-checks every locally-tracked batch. A batch that's actually done is dropped from
+    // local tracking (whether or not it's reported here) so it doesn't keep nagging forever;
+    // a batch still running, or one that errored when we tried to check, stays tracked.
+    async function refreshPendingFeBatches() {
+        const batches = getFeBatchesFromStorage();
+        if (batches.length === 0) return [];
+
+        const stillPending = [];
+        const notes = [];
+        for (const entry of batches) {
+            try {
+                const result = await getFeBatchStatus(entry.batchId);
+                if (result && result.status === "done") {
+                    if (result.failed > 0) {
+                        notes.push(`"${entry.categoryName}": ${result.succeeded} of ${result.total} categorized and moved, ${result.failed} failed.`);
+                    }
+                } else {
+                    stillPending.push(entry);
+                    notes.push(`"${entry.categoryName}": still processing (started ${feTimeAgo(entry.startedAt)}).`);
+                }
+            } catch (err) {
+                console.error("Could not check File Email batch status:", err);
+                stillPending.push(entry);
+                notes.push(`"${entry.categoryName}": couldn't check its status just now (started ${feTimeAgo(entry.startedAt)}).`);
+            }
+        }
+        saveFeBatchesToStorage(stillPending);
+        return notes;
+    }
+
+    async function renderFePendingBatches() {
+        const container = document.getElementById("fePendingBatches");
+        container.innerHTML = "";
+        try {
+            const notes = await refreshPendingFeBatches();
+            if (notes.length > 0) {
+                const box = document.createElement("div");
+                box.className = "warning-box";
+                box.innerHTML = `<b>Recent File Email batches:</b><br>${notes.join("<br>")}`;
+                container.appendChild(box);
+            }
+        } catch (err) {
+            console.error("Could not refresh pending File Email batches:", err);
         }
     }
 
@@ -2099,23 +2137,7 @@
     async function handleFeConfirmInner() {
         const categoryName = feState.projectName;
         const resultSummary = document.getElementById("feResultSummary");
-        resultSummary.innerHTML = `<div id="feItemStatusList" class="result-list"></div>`;
-        const statusList = document.getElementById("feItemStatusList");
-
-        const rows = feState.items.map(item => {
-            const row = document.createElement("div");
-            row.className = "result-item";
-            const nameSpan = document.createElement("span");
-            nameSpan.textContent = item.subject;
-            const statusSpan = document.createElement("span");
-            statusSpan.style.cssText = "float:right;font-size:11px;color:#888;";
-            statusSpan.textContent = "Pending...";
-            row.appendChild(nameSpan);
-            row.appendChild(statusSpan);
-            statusList.appendChild(row);
-            return { item, statusSpan };
-        });
-
+        resultSummary.innerHTML = `<div class="summary-box"><div class="row">Starting...</div></div>`;
         showFeStep("result");
 
         // Check whether this category already existed BEFORE we do anything, so we know
@@ -2130,60 +2152,73 @@
         }
 
         let emailsToFileFolderId = null;
-        let stagingError = null;
         try {
             emailsToFileFolderId = await getOrCreateEmailsToFileFolderId();
         } catch (err) {
-            stagingError = err.message;
+            console.error("Could not resolve the Emails to File folder:", err);
         }
 
-        let succeeded = 0, failed = 0;
-        for (const { item, statusSpan } of rows) {
-            try {
-                const restId = Office.context.mailbox.convertToRestId(item.itemId, Office.MailboxEnums.RestVersion.v2_0);
+        const batchId = crypto.randomUUID();
+        const items = feState.items.map(item => ({
+            restId: Office.context.mailbox.convertToRestId(item.itemId, Office.MailboxEnums.RestVersion.v2_0),
+            subject: item.subject
+        }));
 
-                statusSpan.textContent = "Categorizing...";
-                await setMessageCategoryViaGraph(restId, categoryName);
+        // Record this BEFORE firing the request, synchronously -- if the pane is torn down
+        // moments later, the batchId still needs to already be saved for this to work at all.
+        addFeBatchToStorage({ batchId, categoryName, total: items.length, startedAt: new Date().toISOString() });
 
-                if (emailsToFileFolderId) {
-                    statusSpan.textContent = "Moving to Emails to File...";
-                    await moveMessageViaGraph(restId, emailsToFileFolderId);
-                    statusSpan.textContent = "Done";
-                } else {
-                    statusSpan.textContent = `Categorized (not staged: ${stagingError})`;
-                }
-                statusSpan.style.color = "green";
-                succeeded++;
-            } catch (err) {
-                console.error("Failed to categorize/stage item:", err);
-                statusSpan.textContent = `Failed: ${err.message || err}`;
-                statusSpan.style.color = "red";
-                failed++;
+        try {
+            const graphToken = await signInAndGetToken(mailWriteRequest, true);
+            if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
+            const bridgeToken = await signInAndGetToken(bridgeRequest, true);
+            if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
+
+            const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${batchId}`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    graphAccessToken: graphToken,
+                    categoryName,
+                    destinationFolderId: emailsToFileFolderId,
+                    items
+                })
+            });
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Bridge returned ${response.status}: ${errorText}`);
             }
-        }
+            const result = await response.json();
 
-        let cleanupNote = "";
-        if (succeeded > 0 && categoryPreExisted) {
-            cleanupNote = ` "${categoryName}" was already in your category list before this run, so it was left as-is.`;
-        } else if (succeeded > 0 && !categoryPreExisted) {
-            try {
-                const entry = await findMasterCategory(categoryName);
-                if (entry) {
-                    await deleteMasterCategory(entry.id);
-                    cleanupNote = ` Removed "${categoryName}" from your category list (it didn't exist before this run).`;
-                } else {
-                    cleanupNote = ` "${categoryName}" wasn't found in your category list to clean up (unexpected -- it may not have been auto-created this time).`;
+            // The request came back, so there's nothing left pending to check on later.
+            removeFeBatchFromStorage(batchId);
+
+            let cleanupNote = "";
+            if (categoryPreExisted) {
+                cleanupNote = ` "${categoryName}" was already in your category list before this run, so it was left as-is.`;
+            } else if (result.succeeded > 0) {
+                try {
+                    const entry = await findMasterCategory(categoryName);
+                    if (entry) {
+                        await deleteMasterCategory(entry.id);
+                        cleanupNote = ` Removed "${categoryName}" from your category list (it didn't exist before this run).`;
+                    }
+                } catch (err) {
+                    console.error("Could not clean up the auto-created master category:", err);
+                    cleanupNote = ` Note: "${categoryName}" is now in your category list and couldn't be automatically removed (${err.message}).`;
                 }
-            } catch (err) {
-                console.error("Could not clean up the auto-created master category:", err);
-                cleanupNote = ` Note: "${categoryName}" is now in your category list and couldn't be automatically removed (${err.message}).`;
             }
-        }
 
-        const summaryBox = document.createElement("div");
-        summaryBox.className = "summary-box";
-        summaryBox.innerHTML = `<div class="row">${succeeded} succeeded, ${failed} failed.${cleanupNote}</div>`;
-        resultSummary.prepend(summaryBox);
+            resultSummary.innerHTML = `<div class="summary-box"><div class="row">${result.succeeded} of ${result.total} succeeded, ${result.failed} failed.${cleanupNote}</div></div>`;
+        } catch (err) {
+            console.error("Failed to start/confirm the File Email batch:", err);
+            resultSummary.innerHTML = `
+                <div class="warning-box">
+                    Started, but couldn't confirm it finished: ${err.message}.
+                    It's likely still running on the server — reopen File Email later and it'll report what actually happened.
+                </div>
+            `;
+        }
     }
   </script>
   <script>
