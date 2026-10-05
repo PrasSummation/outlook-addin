@@ -5,7 +5,7 @@
            xsi:type="MailApp">
   
   <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id>
-  <Version>1.0.0.11</Version>
+  <Version>1.0.0.12</Version>
   <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
@@ -159,15 +159,30 @@
       </Requirements>
       <Hosts>
         <Host xsi:type="MailHost">
+          <!-- File-on-send, phase 1: prove OnMessageSend actually fires in this tenant's
+               Outlook clients before building the real "pick a project" dialog on top of
+               it (see the separately-approved File on Send mockup). onMessageSendHandler
+               never blocks or delays sending, it only leaves a visible notification on the
+               item, and always allows the send either way. SendMode "SoftBlock"
+               additionally means Outlook itself lets the send through if this handler ever
+               errors or times out, so a bug here can't trap someone's email mid-send.
+
+               Runtimes is required for classic Outlook on Windows specifically: that client
+               runs the event handler in a JavaScript-only runtime that loads commands.js
+               directly (no HTML, no office.js script tag, no Office.onReady, see
+               https://learn.microsoft.com/office/dev/add-ins/develop/event-based-activation).
+               Every other client (web, new Outlook on Windows, Mac) uses the browser
+               runtime instead, loading commands.html, which in turn pulls in that same
+               commands.js via an ordinary <script> tag. Omitting Runtimes still passes
+               basic schema validation (it's why the phase-1 manifest validated clean
+               locally despite missing it) but silently means the handler would never fire
+               on classic Windows Outlook at all. -->
+          <Runtimes>
+            <Runtime resid="Commands.Url">
+              <Override type="javascript" resid="CommandsJs.Url" />
+            </Runtime>
+          </Runtimes>
           <DesktopFormFactor>
-            <!-- File-on-send, phase 1: prove OnMessageSend actually fires in this tenant's
-                 Outlook clients before building the real "pick a project" dialog on top of
-                 it (see the separately-approved File on Send mockup). onMessageSendHandler
-                 in commands.html never blocks or delays sending, it only leaves a visible
-                 notification on the item, and always allows the send either way. SendMode
-                 "SoftBlock" additionally means Outlook itself lets the send through if this
-                 handler ever errors or times out, so a bug here can't trap someone's email
-                 mid-send. -->
             <FunctionFile resid="Commands.Url" />
             <ExtensionPoint xsi:type="LaunchEvent">
               <LaunchEvents>
@@ -255,6 +270,7 @@
           <bt:Url id="Taskpane.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html" />
           <bt:Url id="FileEmail.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html?view=fileEmail" />
           <bt:Url id="Commands.Url" DefaultValue="https://prassummation.github.io/outlook-addin/commands.html" />
+          <bt:Url id="CommandsJs.Url" DefaultValue="https://prassummation.github.io/outlook-addin/commands.js" />
         </bt:Urls>
         <bt:ShortStrings>
           <bt:String id="GroupLabel" DefaultValue="Summation Tools" />

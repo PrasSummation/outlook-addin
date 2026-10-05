@@ -3,42 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <title>Summation Assistant — Commands</title>
+  <!--
+    Thin loader only -- no inline handler logic here. The actual event handler lives in
+    commands.js, shared verbatim with classic Outlook on Windows, which loads that file
+    directly in a JavaScript-only runtime instead of this page at all. Keeping the logic
+    out of this file means there's only ever one copy of it to keep in sync.
+  -->
   <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+  <script src="commands.js"></script>
 </head>
 <body>
-<script>
-  // Function-file for event-based activation (LaunchEvent). This runs in a separate,
-  // headless runtime from taskpane.html -- it has no UI of its own, which is why this is
-  // deliberately a minimal, lightweight page rather than the full taskpane.
-  //
-  // Phase 1 only: this just proves OnMessageSend actually fires in real Outlook clients
-  // before building the real "pick a project" dialog on top of it (see the separately
-  // approved File on Send mockup). It never blocks, delays, or alters a send -- every path
-  // through this handler calls event.completed({ allowEvent: true }), and the manifest's
-  // SendMode="SoftBlock" means Outlook itself lets the send proceed even if this code
-  // throws or never completes at all. The one visible effect is a notification banner on
-  // the item, so firing can be confirmed by actually sending mail, without needing
-  // devtools access into this hidden runtime.
-  Office.onReady(() => {});
-
-  function onMessageSendHandler(event) {
-    try {
-      Office.context.mailbox.item.notificationMessages.replaceAsync(
-        "summationFileOnSendProbe",
-        {
-          type: Office.MailboxEnums.ItemNotificationMessageType.InformationalMessage,
-          message: "Summation: File on Send handler fired (phase 1 probe -- not blocking this send).",
-          icon: "Icon.16x16",
-          persistent: false
-        },
-        () => event.completed({ allowEvent: true })
-      );
-    } catch (err) {
-      event.completed({ allowEvent: true });
-    }
-  }
-
-  Office.actions.associate("onMessageSendHandler", onMessageSendHandler);
-</script>
 </body>
 </html>
