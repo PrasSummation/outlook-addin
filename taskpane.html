@@ -377,7 +377,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.31";
+    const APP_VERSION = "9.32";
 
     let msalInstance;
     let folderEntries = [];
@@ -2163,12 +2163,16 @@
         }
 
         let cleanupNote = "";
-        if (succeeded > 0 && !categoryPreExisted) {
+        if (succeeded > 0 && categoryPreExisted) {
+            cleanupNote = ` "${categoryName}" was already in your category list before this run, so it was left as-is.`;
+        } else if (succeeded > 0 && !categoryPreExisted) {
             try {
                 const entry = await findMasterCategory(categoryName);
                 if (entry) {
                     await deleteMasterCategory(entry.id);
-                    cleanupNote = ` Removed "${categoryName}" from your category list (it didn't exist before this).`;
+                    cleanupNote = ` Removed "${categoryName}" from your category list (it didn't exist before this run).`;
+                } else {
+                    cleanupNote = ` "${categoryName}" wasn't found in your category list to clean up (unexpected -- it may not have been auto-created this time).`;
                 }
             } catch (err) {
                 console.error("Could not clean up the auto-created master category:", err);
