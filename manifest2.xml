@@ -5,7 +5,7 @@
            xsi:type="MailApp">
   
   <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id>
-  <Version>1.0.0.10</Version>
+  <Version>1.0.0.11</Version>
   <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
@@ -14,6 +14,16 @@
   <IconUrl DefaultValue="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" />
   <HighResolutionIconUrl DefaultValue="https://prassummation.github.io/outlook-addin/logo-symbol-80x80.png" />
   <SupportUrl DefaultValue="https://prassummation.github.io/outlook-addin/" />
+
+  <!-- Added alongside LaunchEvent/OnMessageSend: Office.context.ui.displayDialogAsync's own
+       rule is that its target URL's domain must either match the add-in's own origin or be
+       listed here. The file-on-send picker dialog (built in a later phase, on top of this
+       same LaunchEvent registration) will be same-origin already, so this is very likely
+       unnecessary, but it's free to declare now, and far cheaper than discovering a client
+       that enforces it strictly only after that dialog is already built and deployed. -->
+  <AppDomains>
+    <AppDomain>https://prassummation.github.io</AppDomain>
+  </AppDomains>
 
   <Hosts>
     <Host Name="Mailbox" />
@@ -150,6 +160,22 @@
       <Hosts>
         <Host xsi:type="MailHost">
           <DesktopFormFactor>
+            <!-- File-on-send, phase 1: prove OnMessageSend actually fires in this tenant's
+                 Outlook clients before building the real "pick a project" dialog on top of
+                 it (see the separately-approved File on Send mockup). onMessageSendHandler
+                 in commands.html never blocks or delays sending, it only leaves a visible
+                 notification on the item, and always allows the send either way. SendMode
+                 "SoftBlock" additionally means Outlook itself lets the send through if this
+                 handler ever errors or times out, so a bug here can't trap someone's email
+                 mid-send. -->
+            <FunctionFile resid="Commands.Url" />
+            <ExtensionPoint xsi:type="LaunchEvent">
+              <LaunchEvents>
+                <LaunchEvent Type="OnMessageSend" FunctionName="onMessageSendHandler" SendMode="SoftBlock" />
+              </LaunchEvents>
+              <SourceLocation resid="Commands.Url" />
+            </ExtensionPoint>
+
             <ExtensionPoint xsi:type="MessageReadCommandSurface">
               <OfficeTab id="TabDefault">
                 <Group id="SummationToolsGroup">
@@ -228,6 +254,7 @@
         <bt:Urls>
           <bt:Url id="Taskpane.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html" />
           <bt:Url id="FileEmail.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html?view=fileEmail" />
+          <bt:Url id="Commands.Url" DefaultValue="https://prassummation.github.io/outlook-addin/commands.html" />
         </bt:Urls>
         <bt:ShortStrings>
           <bt:String id="GroupLabel" DefaultValue="Summation Tools" />
