@@ -343,6 +343,7 @@
 
       <div id="feStepPick">
         <div id="feContextSummary"></div>
+        <div id="feDebugInfo" style="font-size:10.5px;color:#999;margin:-4px 0 9px;white-space:pre-wrap;"></div>
         <div id="feNoSelection" style="display: none;">
           <p>Select one or more emails in the list, then click File Email again.</p>
         </div>
@@ -376,7 +377,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.29";
+    const APP_VERSION = "9.30";
 
     let msalInstance;
     let folderEntries = [];
@@ -1831,6 +1832,37 @@
         document.getElementById("feStepResult").style.display = step === "result" ? "block" : "none";
     }
 
+    // TEMPORARY diagnostic, pending resolution of a confirmed multi-select bug: shows what
+    // this specific Outlook client actually reports at runtime, since code-level fixes so
+    // far haven't changed the behavior and guessing further isn't productive without this.
+    async function logFeDiagnostics() {
+        const lines = [];
+        try {
+            lines.push(`Mailbox 1.13 (multi-select baseline): ${Office.context.requirements.isSetSupported("Mailbox", "1.13")}`);
+            lines.push(`Mailbox 1.15 (loadItemByIdAsync): ${Office.context.requirements.isSetSupported("Mailbox", "1.15")}`);
+        } catch (err) {
+            lines.push(`Requirement set check failed: ${err.message || err}`);
+        }
+        try {
+            lines.push(`hostName: ${Office.context.mailbox.diagnostics.hostName}, hostVersion: ${Office.context.mailbox.diagnostics.hostVersion}`);
+        } catch (err) {
+            lines.push(`diagnostics unavailable: ${err.message || err}`);
+        }
+        try {
+            const singleItem = getCurrentMailItem();
+            lines.push(`mailbox.item present: ${!!singleItem}${singleItem ? ` (itemType=${singleItem.itemType}, subject="${singleItem.subject}")` : ""}`);
+        } catch (err) {
+            lines.push(`mailbox.item check failed: ${err.message || err}`);
+        }
+        try {
+            const selected = await officeAsync(Office.context.mailbox, "getSelectedItemsAsync");
+            lines.push(`getSelectedItemsAsync: ${(selected || []).length} item(s) -- ${JSON.stringify((selected || []).map(i => ({ itemType: i.itemType, subject: i.subject })))}`);
+        } catch (err) {
+            lines.push(`getSelectedItemsAsync failed: ${err.message || err}`);
+        }
+        document.getElementById("feDebugInfo").textContent = lines.join("\n");
+    }
+
     async function detectFeContext() {
         const summary = document.getElementById("feContextSummary");
         const noSelection = document.getElementById("feNoSelection");
@@ -1838,6 +1870,7 @@
         noSelection.style.display = "none";
         pickBody.style.display = "none";
         summary.innerHTML = "";
+        logFeDiagnostics();
 
         // Check the actual multi-selection FIRST. Office.context.mailbox.item still resolves
         // to a single item (the first/active one) even when several are selected, rather than
