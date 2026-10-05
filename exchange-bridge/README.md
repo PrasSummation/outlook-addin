@@ -163,6 +163,25 @@ duration of a single invocation. `Easy Auth` still gates the HTTP request
 itself the same as every other endpoint; this changes *what the code does
 once a request is let through*, not who's allowed to call it at all.
 
+Per-item failures now carry Graph's own error code/message (e.g.
+`ErrorItemNotFound: ...`) when the response body parses as JSON, rather than
+just PowerShell's generic HTTP status text — `run.ps1`'s catch block reads
+`$_.ErrorDetails.Message` for this, since `$_.Exception.Message` alone never
+contains the response body. The taskpane uses this to tell the user plainly
+when an item simply isn't there anymore (deleted/moved since filing started)
+instead of showing a raw Graph error.
+
+The taskpane also no longer treats a batch with no result forever as just
+"still processing": `refreshPendingFeBatches` in `taskpane.html` gives up
+waiting after `FE_BATCH_STALE_MS` (3 minutes) with a confirmed `404` and
+automatically re-POSTs the exact same batch (same items/category/destination,
+read back from its own localStorage tracking entry), up to
+`FE_BATCH_MAX_RETRIES` (2) times, before telling the user to redo it manually.
+This only fires on a confirmed "not found" from the `GET`, never when the
+status check itself errors (ambiguous — could just be a network blip against
+a batch that's actually fine), to avoid firing a second categorize+move at a
+run that's genuinely still in progress.
+
 Results are written once, on completion, to a blob at
 `file-email-batches/<batchId>.json` in the Function App's own storage
 account (container created specifically for this, private access) — not

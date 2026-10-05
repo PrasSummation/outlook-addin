@@ -80,6 +80,23 @@ foreach ($item in $items) {
     } catch {
         $status = "failed"
         $errorMessage = $_.Exception.Message
+        # Invoke-RestMethod's own exception message is just the HTTP status line (e.g.
+        # "Response status code does not indicate success: 404 (Not Found)."), not Graph's
+        # actual error body -- but PowerShell 7's web cmdlets still capture that body in
+        # ErrorDetails.Message. Prefer Graph's own code/message (e.g. "ErrorItemNotFound")
+        # when it parses, so the client can tell "this item is just gone" apart from any
+        # other failure instead of only ever seeing a generic HTTP status.
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+            try {
+                $graphError = ($_.ErrorDetails.Message | ConvertFrom-Json).error
+                if ($graphError -and $graphError.code) {
+                    $errorMessage = "$($graphError.code): $($graphError.message)"
+                }
+            } catch {
+                # Response body wasn't JSON, or didn't have the expected shape -- keep the
+                # generic exception message already captured above.
+            }
+        }
         $failed++
     }
     $results += [ordered]@{

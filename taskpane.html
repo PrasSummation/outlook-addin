@@ -394,7 +394,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "9.34";
+    const APP_VERSION = "9.35";
 
     let msalInstance;
     let folderEntries = [];
@@ -2115,9 +2115,88 @@
         return `${minutes} minutes ago`;
     }
 
+    // If a batch has had no confirmed result for this long, assume the run that was tracking
+    // it got lost (pane torn down before the response landed, function instance recycled
+    // mid-invocation, etc.) rather than that it's still genuinely in flight -- these batches
+    // are a handful of Graph calls at most, not a workload that legitimately runs for minutes.
+    const FE_BATCH_STALE_MS = 3 * 60 * 1000;
+    // Cap on automatic retries before giving up and asking the user to redo it themselves --
+    // without this, a batch that can never succeed (e.g. the bridge itself is down) would
+    // retry forever, once per File Email open, with no path to ever surfacing that clearly.
+    const FE_BATCH_MAX_RETRIES = 2;
+
+    // Posts a batch (first attempt or a retry) and waits for its result -- shared by the
+    // initial Confirm click and by the automatic retry path below, since they're the exact
+    // same request.
+    async function postFeBatch(entry) {
+        const graphToken = await signInAndGetToken(mailWriteRequest, true);
+        if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
+        const bridgeToken = await signInAndGetToken(bridgeRequest, true);
+        if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
+
+        const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+                graphAccessToken: graphToken,
+                categoryName: entry.categoryName,
+                destinationFolderId: entry.destinationFolderId,
+                items: entry.items
+            })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge returned ${response.status}: ${errorText}`);
+        }
+        return response.json();
+    }
+
+    // The bridge now surfaces Graph's actual error code when it can parse one (see
+    // run.ps1) -- translate the one case users actually need a plain-English answer for
+    // (the item is simply gone) rather than showing them a raw Graph error string.
+    function describeFeItemError(errorText) {
+        if (!errorText) return "unknown error";
+        if (/ErrorItemNotFound|ErrorInvalidIdMalformed|does not exist|\(404\)|404 \(Not Found\)/i.test(errorText)) {
+            return "this email appears to have been moved or deleted since filing was started";
+        }
+        return errorText;
+    }
+
+    // Shared by both the Confirm click (result known immediately) and the background
+    // pending-batch check (result discovered later, possibly after an automatic retry) --
+    // the master-category cleanup and failure reporting only depend on the recorded entry
+    // and the result, not on how or when that result was obtained.
+    async function finalizeFeBatchResult(entry, result) {
+        let cleanupNote = "";
+        if (entry.categoryPreExisted) {
+            cleanupNote = ` "${entry.categoryName}" was already in your category list before this run, so it was left as-is.`;
+        } else if (result.succeeded > 0) {
+            try {
+                const masterEntry = await findMasterCategory(entry.categoryName);
+                if (masterEntry) {
+                    await deleteMasterCategory(masterEntry.id);
+                    cleanupNote = ` Removed "${entry.categoryName}" from your category list (it didn't exist before this run).`;
+                }
+            } catch (err) {
+                console.error("Could not clean up the auto-created master category:", err);
+                cleanupNote = ` Note: "${entry.categoryName}" is now in your category list and couldn't be automatically removed (${err.message}).`;
+            }
+        }
+
+        const failureDetails = (result.items || [])
+            .filter(i => i.status === "failed")
+            .map(i => `"${i.subject}" — ${describeFeItemError(i.error)}`);
+
+        return { cleanupNote, failureDetails };
+    }
+
     // Re-checks every locally-tracked batch. A batch that's actually done is dropped from
-    // local tracking (whether or not it's reported here) so it doesn't keep nagging forever;
-    // a batch still running, or one that errored when we tried to check, stays tracked.
+    // local tracking (whether or not it's reported here) so it doesn't keep nagging forever.
+    // A batch with no confirmed result yet is only retried once it's been stale for
+    // FE_BATCH_STALE_MS AND the status check came back a definite "not found" (result ===
+    // null) -- not when the status check itself merely failed/threw, which is ambiguous
+    // (a network blip here says nothing about whether the batch is actually fine) and could
+    // otherwise send a duplicate categorize+move at a run that's really still in progress.
     async function refreshPendingFeBatches() {
         const batches = getFeBatchesFromStorage();
         if (batches.length === 0) return [];
@@ -2125,20 +2204,53 @@
         const stillPending = [];
         const notes = [];
         for (const entry of batches) {
+            let result;
             try {
-                const result = await getFeBatchStatus(entry.batchId);
-                if (result && result.status === "done") {
-                    if (result.failed > 0) {
-                        notes.push(`"${entry.categoryName}": ${result.succeeded} of ${result.total} categorized and moved, ${result.failed} failed.`);
-                    }
-                } else {
-                    stillPending.push(entry);
-                    notes.push(`"${entry.categoryName}": still processing (started ${feTimeAgo(entry.startedAt)}).`);
-                }
+                result = await getFeBatchStatus(entry.batchId);
             } catch (err) {
                 console.error("Could not check File Email batch status:", err);
                 stillPending.push(entry);
                 notes.push(`"${entry.categoryName}": couldn't check its status just now (started ${feTimeAgo(entry.startedAt)}).`);
+                continue;
+            }
+
+            if (result && result.status === "done") {
+                if (result.failed > 0) {
+                    const { cleanupNote, failureDetails } = await finalizeFeBatchResult(entry, result);
+                    const failureNote = failureDetails.length ? ` ${failureDetails.join("; ")}.` : "";
+                    notes.push(`"${entry.categoryName}": ${result.succeeded} of ${result.total} categorized and moved, ${result.failed} failed.${failureNote}${cleanupNote}`);
+                } else {
+                    await finalizeFeBatchResult(entry, result); // still runs cleanup, just nothing to report
+                }
+                continue; // resolved either way -- nothing left to track
+            }
+
+            const elapsed = Date.now() - new Date(entry.lastAttemptAt || entry.startedAt).getTime();
+            if (elapsed < FE_BATCH_STALE_MS) {
+                stillPending.push(entry);
+                notes.push(`"${entry.categoryName}": still processing (started ${feTimeAgo(entry.startedAt)}).`);
+                continue;
+            }
+
+            if ((entry.retryCount || 0) >= FE_BATCH_MAX_RETRIES) {
+                notes.push(`"${entry.categoryName}": gave up after ${entry.retryCount} automatic retr${entry.retryCount === 1 ? "y" : "ies"} with no result from the server (started ${feTimeAgo(entry.startedAt)}). Please reopen the email and run File Email on it again.`);
+                continue; // stop tracking -- don't retry forever
+            }
+
+            // Stale with a confirmed "not found": the run that was tracking this batch most
+            // likely never completed (pane torn down, function instance recycled, etc.), so
+            // re-send the exact same batch rather than leaving the user to notice and redo it.
+            const retried = { ...entry, lastAttemptAt: new Date().toISOString(), retryCount: (entry.retryCount || 0) + 1 };
+            try {
+                const result2 = await postFeBatch(retried);
+                const { cleanupNote, failureDetails } = await finalizeFeBatchResult(retried, result2);
+                const failureNote = failureDetails.length ? ` ${failureDetails.join("; ")}.` : "";
+                notes.push(`"${entry.categoryName}": took longer than expected, so it was automatically retried — ${result2.succeeded} of ${result2.total} succeeded, ${result2.failed} failed.${failureNote}${cleanupNote}`);
+                // Resolved by the retry -- nothing left to track.
+            } catch (err) {
+                console.error("Automatic retry of a File Email batch failed:", err);
+                stillPending.push(retried);
+                notes.push(`"${entry.categoryName}": took longer than expected, and an automatic retry (attempt ${retried.retryCount}) didn't get a confirmed result either (${err.message}). Will try again.`);
             }
         }
         saveFeBatchesToStorage(stillPending);
@@ -2197,50 +2309,27 @@
 
         // Record this BEFORE firing the request, synchronously -- if the pane is torn down
         // moments later, the batchId still needs to already be saved for this to work at all.
-        addFeBatchToStorage({ batchId, categoryName, total: items.length, startedAt: new Date().toISOString() });
+        // Everything postFeBatch/finalizeFeBatchResult need (items, destination, whether the
+        // category pre-existed) is recorded here too, so a later automatic retry or pending-
+        // batch check can redo this exact request without this pane needing to still be open.
+        const now = new Date().toISOString();
+        const batchEntry = {
+            batchId, categoryName, total: items.length,
+            startedAt: now, lastAttemptAt: now, retryCount: 0,
+            items, destinationFolderId: emailsToFileFolderId, categoryPreExisted
+        };
+        addFeBatchToStorage(batchEntry);
 
         try {
-            const graphToken = await signInAndGetToken(mailWriteRequest, true);
-            if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
-            const bridgeToken = await signInAndGetToken(bridgeRequest, true);
-            if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
-
-            const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${batchId}`, {
-                method: "POST",
-                headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    graphAccessToken: graphToken,
-                    categoryName,
-                    destinationFolderId: emailsToFileFolderId,
-                    items
-                })
-            });
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Bridge returned ${response.status}: ${errorText}`);
-            }
-            const result = await response.json();
+            const result = await postFeBatch(batchEntry);
 
             // The request came back, so there's nothing left pending to check on later.
             removeFeBatchFromStorage(batchId);
 
-            let cleanupNote = "";
-            if (categoryPreExisted) {
-                cleanupNote = ` "${categoryName}" was already in your category list before this run, so it was left as-is.`;
-            } else if (result.succeeded > 0) {
-                try {
-                    const entry = await findMasterCategory(categoryName);
-                    if (entry) {
-                        await deleteMasterCategory(entry.id);
-                        cleanupNote = ` Removed "${categoryName}" from your category list (it didn't exist before this run).`;
-                    }
-                } catch (err) {
-                    console.error("Could not clean up the auto-created master category:", err);
-                    cleanupNote = ` Note: "${categoryName}" is now in your category list and couldn't be automatically removed (${err.message}).`;
-                }
-            }
+            const { cleanupNote, failureDetails } = await finalizeFeBatchResult(batchEntry, result);
+            const failureNote = failureDetails.length ? ` ${failureDetails.join("; ")}.` : "";
 
-            resultSummary.innerHTML = `<div class="summary-box"><div class="row">${result.succeeded} of ${result.total} succeeded, ${result.failed} failed.${cleanupNote}</div></div>`;
+            resultSummary.innerHTML = `<div class="summary-box"><div class="row">${result.succeeded} of ${result.total} succeeded, ${result.failed} failed.${failureNote}${cleanupNote}</div></div>`;
         } catch (err) {
             console.error("Failed to start/confirm the File Email batch:", err);
             resultSummary.innerHTML = `
