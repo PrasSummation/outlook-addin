@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Project Email Search</title>
+  <script src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
+  <style>
+    :root{
+      --green:#408F4E; --green-dark:#2D6B38; --green-pale:#EDF7EE;
+      --grey-900:#2B2B2B; --grey-600:#646464; --grey-500:#787878; --grey-400:#909090;
+      --grey-300:#B4B4B4; --grey-200:#DCDCDC; --grey-100:#EFEFEF; --grey-50:#F7F7F7;
+      --mark:#FFF1A8;
+      --font-body:'Calibri','Segoe UI',system-ui,sans-serif;
+      --font-mono:'Consolas','Courier New',monospace;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0}
+    body{display:flex;flex-direction:column;font:13px/1.45 var(--font-body);color:var(--grey-600);background:#fff}
+    button{font:inherit;cursor:pointer}
+    mark{background:var(--mark);color:inherit;padding:0 1px;border-radius:2px}
+
+    /* top bar */
+    #top{flex:none;display:flex;align-items:center;gap:16px;height:52px;padding:0 16px;background:var(--grey-900);color:#fff}
+    #brand{display:flex;align-items:center;gap:10px;min-width:190px}
+    #brand img{width:22px;height:auto}
+    #brand b{font-size:12px;letter-spacing:.18em;font-weight:600}
+    #brand span{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--grey-300)}
+    #searchWrap{flex:1;max-width:680px;position:relative}
+    #q{width:100%;height:34px;padding:0 12px 0 34px;border:none;border-radius:4px;font:14px var(--font-body);color:var(--grey-900);background:#fff}
+    #q:focus{outline:2px solid var(--green)}
+    #searchWrap svg{position:absolute;left:11px;top:10px}
+    #sort{height:34px;border:none;border-radius:4px;padding:0 8px;font:13px var(--font-body)}
+    #syncStatus{margin-left:auto;font-size:11px;color:var(--grey-300);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px}
+    #syncStatus.changed{color:#9FD6A8}
+    #syncStatus.bad{color:#F2B24D}
+    #syncBtn{flex:none;width:30px;height:30px;border:1px solid #555;border-radius:4px;background:none;color:var(--grey-200);font-size:15px;line-height:1}
+    #syncBtn:hover{border-color:var(--green);color:#fff}
+    #syncBtn.spin{animation:spin .9s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* three panes */
+    #panes{flex:1;display:grid;grid-template-columns:240px minmax(300px,400px) 1fr;min-height:0}
+    #filters,#results,#preview{min-height:0;overflow-y:auto}
+    #filters{background:var(--grey-50);border-right:1px solid var(--grey-200);padding:14px 14px 30px}
+    #results{border-right:1px solid var(--grey-200)}
+    #preview{background:#fff}
+
+    /* filter pane */
+    .fp-title{font-size:14px;font-weight:600;color:var(--grey-900);margin:0 0 8px}
+    #fpActive{border-bottom:1px solid var(--grey-200);padding-bottom:10px}
+    .fp-sub{font-size:12.5px;font-weight:600;color:var(--grey-900)}
+    .fp-none{font-size:11.5px;color:var(--grey-400);margin-top:2px}
+    .clearall{display:inline-flex;align-items:center;gap:6px;margin:8px 0 2px;background:none;border:none;padding:0;color:#C8102E;font-weight:600;font-size:12px}
+    .clearall i{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;border-radius:2px;background:#C8102E;color:#fff;font-style:normal;font-size:10px;line-height:1}
+    .clearall:hover{text-decoration:underline}
+    .fs{border-bottom:1px solid var(--grey-200)}
+    .fs-head{display:flex;align-items:center;gap:7px;width:100%;padding:10px 2px;background:none;border:none;text-align:left;color:var(--grey-900);font-weight:600;font-size:13px}
+    .fs-head:hover{color:var(--green-dark)}
+    .fs-n{font-family:var(--font-mono);font-size:10px;font-weight:400;background:var(--green);color:#fff;border-radius:8px;padding:0 6px}
+    .fs-n:empty{display:none}
+    .fs-tog{margin-left:auto;font-size:17px;line-height:1;font-weight:400;color:var(--grey-600)}
+    .fs-chips{display:flex;flex-direction:column;gap:5px;padding:0 2px 9px}
+    .fs-chips:empty{display:none}
+    .fchip{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--grey-900);min-width:0}
+    .fchip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .fchip button{flex:none;width:15px;height:15px;border-radius:50%;border:none;padding:0;background:var(--grey-900);color:#fff;font-size:10px;line-height:15px;text-align:center}
+    .fchip button:hover{background:#C8102E}
+    .fs-body{display:none;padding:0 2px 12px}
+    .fs.open .fs-body{display:block}
+    .ta{position:relative}
+    .ta input{width:100%;padding:6px 9px;border:1px solid var(--grey-200);border-radius:4px;font:12.5px var(--font-body);color:var(--grey-900);background:#fff}
+    .ta input:focus{outline:none;border-color:var(--green)}
+    .ta-list{display:none;position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:20;max-height:270px;overflow-y:auto;background:#fff;border:1px solid var(--grey-200);border-radius:4px;box-shadow:0 8px 20px rgba(0,0,0,.13)}
+    .ta.open .ta-list{display:block}
+    .ta-opt{display:flex;align-items:center;gap:8px;padding:6px 9px;cursor:pointer}
+    .ta-opt.active{background:var(--green-pale)}
+    .ta-opt .t{flex:1;min-width:0}
+    .ta-opt .t b,.ta-opt .t i{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .ta-opt .t b{font-weight:400;font-size:12.5px;color:var(--grey-900)}
+    .ta-opt .t i{font-style:normal;font-size:10.5px;color:var(--grey-400)}
+    .ta-opt .c{flex:none;font-family:var(--font-mono);font-size:10.5px;color:var(--grey-400)}
+    .ta-empty{padding:8px 9px;font-size:11.5px;color:var(--grey-400)}
+    .dates{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+    .dates input{width:100%;padding:4px;border:1px solid var(--grey-200);border-radius:4px;font:12px var(--font-body);background:#fff}
+    .linkbtn{background:none;border:none;padding:0;color:var(--green-dark);font-size:11.5px}
+    .linkbtn:hover{text-decoration:underline}
+    .chip{display:inline-flex;align-items:center;gap:6px;background:var(--green-pale);color:var(--green-dark);border-radius:12px;padding:2px 4px 2px 10px;font-size:11.5px;margin:4px 0}
+    .chip button{border:none;background:none;color:var(--green-dark);font-size:14px;line-height:1;padding:0 4px}
+
+    /* result list */
+    #resHead{position:sticky;top:0;background:#fff;z-index:2;padding:10px 14px;border-bottom:1px solid var(--grey-200);font-size:12px;color:var(--grey-500);display:flex;justify-content:space-between}
+    .r{position:relative;padding:10px 14px 10px 17px;border-bottom:1px solid var(--grey-100);cursor:pointer}
+    .r:hover{background:var(--grey-50)}
+    .r.sel{background:var(--green-pale);box-shadow:inset 3px 0 0 var(--green)}
+    .r-l1{display:flex;align-items:baseline;gap:8px}
+    .r-from{flex:1;font-weight:600;color:var(--grey-900);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
+    .r-date{flex:none;font-size:11px;color:var(--grey-500)}
+    .r-l2{display:flex;align-items:center;gap:6px;margin-top:1px}
+    .r-subj{flex:1;color:var(--grey-900);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .r-snip{margin-top:2px;font-size:12px;color:var(--grey-500);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    .r-meta{display:flex;gap:6px;margin-top:5px}
+    .tag{font-family:var(--font-mono);font-size:10px;color:var(--grey-500);background:var(--grey-100);border-radius:3px;padding:1px 5px}
+    .tag.conv{background:#fff;border:1px solid var(--grey-200)}
+    .tag.warn{background:#FDF0DA;color:#8A5A00}
+    .banner.warn{background:#FDF0DA;border-color:#F2D3A0;color:#6B4600;justify-content:flex-start}
+    .empty{padding:40px 20px;text-align:center;color:var(--grey-400)}
+    #more{display:block;margin:12px auto;padding:6px 14px;border:1px solid var(--grey-200);background:#fff;border-radius:4px}
+
+    /* preview */
+    #pvEmpty{height:100%;display:flex;align-items:center;justify-content:center;color:var(--grey-300);font-size:14px}
+    #pv{display:none;padding:18px 24px 30px}
+    #pvSubject{margin:0 0 14px;font-size:19px;font-weight:600;color:var(--grey-900);line-height:1.3}
+    .pv-from{display:flex;gap:12px;align-items:flex-start}
+    .avatar{flex:none;width:38px;height:38px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:14px}
+    .pv-people{flex:1;min-width:0}
+    .pv-name{color:var(--grey-900);font-weight:600;font-size:14px}
+    .pv-addr{color:var(--grey-500);font-weight:400;font-size:12.5px}
+    .pv-line{font-size:12px;color:var(--grey-500);margin-top:2px}
+    .pv-line b{color:var(--grey-600);font-weight:600}
+    .pv-date{flex:none;font-size:12px;color:var(--grey-500);text-align:right}
+    .pv-actions{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+    .btn{padding:6px 12px;border:1px solid var(--grey-200);background:#fff;border-radius:4px;color:var(--grey-900);font-size:12.5px;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+    .btn:hover{border-color:var(--grey-400)}
+    .btn.primary{background:var(--green);border-color:var(--green);color:#fff}
+    .btn.primary:hover{background:var(--green-dark)}
+    .pv-atts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+    .att{display:inline-flex;align-items:center;gap:8px;max-width:280px;padding:7px 10px;border:1px solid var(--grey-200);border-radius:6px;text-decoration:none;color:var(--grey-900);font-size:12px}
+    .att:hover{border-color:var(--green)}
+    .att span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .att i{font-style:normal;color:var(--grey-400);font-size:11px;flex:none}
+    .banner{font-size:12px;background:var(--grey-50);border:1px solid var(--grey-200);border-radius:4px;padding:6px 10px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+    #pvFrame{width:100%;border:none;min-height:300px;display:block}
+    .pv-index{margin-top:20px;border-top:1px solid var(--grey-100);padding-top:10px;font-size:11px;color:var(--grey-400)}
+    .pv-index summary{cursor:pointer}
+    .pv-index dl{display:grid;grid-template-columns:130px 1fr;gap:3px 10px;margin:8px 0 0}
+    .pv-index dt{color:var(--grey-500)}
+    .pv-index dd{margin:0;font-family:var(--font-mono);word-break:break-all;color:var(--grey-600)}
+    #signIn{position:fixed;inset:52px 0 0;display:none;align-items:center;justify-content:center;background:#fff;z-index:5}
+    #signIn div{text-align:center;max-width:360px}
+    #signIn p{margin:0 0 14px}
+    #who{font-size:11px;color:var(--grey-300);white-space:nowrap}
+    .err{margin:24px;padding:12px;border:1px solid #E78707;background:#FFF8E1;color:#7A5B00;border-radius:4px}
+
+    @media (max-width:900px){
+      #panes{grid-template-columns:1fr}
+      #filters{display:none}
+      body.show-preview #results{display:none}
+      body:not(.show-preview) #preview{display:none}
+      #brand{min-width:0} #brand div{display:none} #syncStatus{display:none}
+    }
+  </style>
+</head>
+<body>
+  <header id="top">
+    <div id="brand">
+      <img src="https://prassummation.github.io/outlook-addin/logo-symbol-80x80.png" alt="" />
+      <div><b>SUMMATION</b><br><span>Project Email Search</span></div>
+    </div>
+    <div id="searchWrap">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#909090" stroke-width="1.6"><circle cx="6" cy="6" r="4.3"/><path d="M9.3 9.3 13 13"/></svg>
+      <input id="q" type="search" placeholder="Search subject, people, attachments, body…" autocomplete="off" />
+    </div>
+    <select id="sort" title="Sort">
+      <option value="date">Newest first</option>
+      <option value="relevance">Best match</option>
+    </select>
+    <span id="syncStatus" title="The index checks both Hub libraries for new, changed and deleted emails every 5 minutes"></span>
+    <span id="who"></span>
+  </header>
+  <div id="signIn"><div><p>Sign in with your Summation account to search project emails.</p><button class="btn primary" id="signInBtn">Sign in</button><p id="signInErr" class="pv-line"></p></div></div>
+
+  <div id="panes">
+    <aside id="filters"></aside>
+    <section id="results"><div id="resHead"><span id="resCount">Loading…</span><span id="resHint"></span></div><div id="resList"></div></section>
+    <main id="preview"><div id="pvEmpty">Select an email to read it</div><div id="pv"></div></main>
+  </div>
+
+<script>
+  // The index API: an Azure Function behind App Service Authentication. Every call carries a
+  // token for the add-in's EmailIndex.Access scope, from the same MSAL sign-in as the other pages.
+  const API_URL = "https://summation-email-index.azurewebsites.net";
+  const msalInstance = new msal.PublicClientApplication({
+    auth: {
+      clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
+      authority: "https://login.microsoftonline.com/ecb5f458-9548-4e8b-96f3-904f1828f931",
+      redirectUri: window.location.origin + window.location.pathname
+    },
+    cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+  });
+  const indexRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/EmailIndex.Access"] };
+
+  async function getToken(interactive = false) {
+    const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+    if (account) {
+      msalInstance.setActiveAccount(account);
+      try {
+        return (await msalInstance.acquireTokenSilent({ ...indexRequest, account })).accessToken;
+      } catch (err) {
+        if (!interactive || !(err instanceof msal.InteractionRequiredAuthError)) throw err;
+        return (await msalInstance.acquireTokenPopup(indexRequest)).accessToken;
+      }
+    }
+    if (!interactive) return null;
+    const login = await msalInstance.loginPopup(indexRequest);
+    msalInstance.setActiveAccount(login.account);
+    return login.accessToken;
+  }
+
+  // fetch() against the index API with the bearer token; a lapsed sign-in shows the sign-in panel.
+  async function api(path, options = {}) {
+    let token;
+    try { token = await getToken(false); } catch { token = null; }
+    if (!token) { showSignIn(true); throw new Error("Not signed in"); }
+    const resp = await fetch(API_URL + path, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } });
+    if (resp.status === 401) { showSignIn(true); throw new Error("Not signed in"); }
+    return resp;
+  }
+
+  function showSignIn(show) {
+    $("signIn").style.display = show ? "flex" : "none";
+    const account = msalInstance.getActiveAccount();
+    $("who").textContent = !show && account ? account.username : "";
+  }
+
+  // Filter sections, in display order.
+  //   showValue: also show the raw value under the label in the dropdown (email addresses)
+  //   single:    one value at a time — picking another replaces it
+  //   contains:  free-text "contains" match (highlight anywhere, not just word starts)
+  //   custom:    not a type-ahead (the date range pickers)
+  const FIELDS = [
+    { key: "project", title: "Project", ph: "Search project code or name…" },
+    { key: "subject", title: "Subject contains", ph: "Type part of a subject…", contains: true },
+    { key: "from", title: "From", ph: "Search senders…", showValue: true },
+    { key: "to", title: "To", ph: "Search recipients…", showValue: true },
+    { key: "period", title: "Date period", ph: "Choose a period…", single: true },
+    { key: "date", title: "Date range", custom: true },
+    { key: "att", title: "Attachments", ph: "Has / no attachments", single: true },
+    { key: "label", title: "Label check", ph: "Match / mismatch…" },
+  ];
+  const TA_FIELDS = FIELDS.filter(f => !f.custom);
+  // filters: { fieldKey: [{ value, label }] } — labels kept so chips read nicely.
+  const state = { q: "", sort: "date", filters: {}, dateFrom: "", dateTo: "", conv: null, convLabel: "", page: 1 };
+  let results = [], total = 0, selectedId = null, searchSeq = 0;
+
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  // Snippets arrive with \u0002/\u0003 highlight markers; escape first, then turn markers into <mark>.
+  const highlight = s => esc(s).replace(/\u0002/g, "<mark>").replace(/\u0003/g, "</mark>");
+  const fmtSize = n => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+  const initials = name => (name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("");
+
+  function fmtListDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso), now = new Date();
+    if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const sameYear = d.getFullYear() === now.getFullYear();
+    return d.toLocaleDateString([], { weekday: sameYear && (now - d) < 6 * 864e5 ? "short" : undefined, day: "numeric", month: "short", year: sameYear ? undefined : "numeric" });
+  }
+  const fmtFullDate = iso => iso ? new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  const fmtDay = d => new Date(d + "T00:00").toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+
+  function queryString() {
+    const p = new URLSearchParams();
+    if (state.q) p.set("q", state.q);
+    p.set("sort", state.sort);
+    for (const [k, vals] of Object.entries(state.filters)) vals.forEach(v => p.append(k, v.value));
+    if (state.dateFrom) p.set("dateFrom", state.dateFrom);
+    if (state.dateTo) p.set("dateTo", state.dateTo);
+    if (state.conv) p.set("conv", state.conv);
+    p.set("page", state.page);
+    return p.toString();
+  }
+
+  async function runSearch(append = false) {
+    const seq = ++searchSeq;
+    if (!append) state.page = 1;
+    let data;
+    try {
+      data = await (await api("/api/search?" + queryString())).json();
+    } catch (err) {
+      if (err.message === "Not signed in") return;
+      $("resCount").textContent = "Can't reach the email index";
+      $("resList").innerHTML = `<div class="err">The email index isn't responding. Try again in a minute; if it keeps happening, tell Pras.</div>`;
+      return;
+    }
+    if (seq !== searchSeq) return; // a newer search started while this one was in flight
+    if (data.error) { $("resList").innerHTML = `<div class="err">${esc(data.error)}</div>`; return; }
+    results = append ? results.concat(data.results) : data.results;
+    total = data.total;
+    renderActiveFilters();
+    renderResults();
+    if (!append && results.length && !results.some(r => r.id === selectedId)) select(results[0].id);
+    if (!results.length) clearPreview();
+  }
+
+  // ---- Filter pane ----
+  // Built once; afterwards only the chips/summary re-render, so a type-ahead box never
+  // loses focus or its half-typed text when results refresh. Every section starts
+  // collapsed, and collapses again once nothing is selected in it.
+
+  function sectionHtml(key, title, body, open) {
+    return `<section class="fs ${open ? "open" : ""}" data-key="${key}">
+      <button type="button" class="fs-head" aria-expanded="${open}"><span>${title}</span><span class="fs-n"></span><span class="fs-tog">${open ? "−" : "+"}</span></button>
+      <div class="fs-body">${body}</div>
+    </section>`;
+  }
+
+  // Selected values are listed only in the "Currently filtered by" summary; each section
+  // just shows a count badge on its heading.
+  function buildFilterPane() {
+    $("filters").innerHTML = `<div class="fp-title">Filter by</div><div id="fpActive"></div>`
+      + FIELDS.map(f => sectionHtml(f.key, f.title, f.custom
+          ? `<div class="dates"><input type="date" id="dateFrom" title="From" aria-label="From date"/><input type="date" id="dateTo" title="To" aria-label="To date"/></div>`
+          : `<div class="ta"><input type="text" placeholder="${esc(f.ph)}" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-label="${esc(f.title)}"><div class="ta-list" role="listbox"></div></div>`,
+          false)).join("");
+  }
+
+  const chip = (label, attrs, title = "Remove") =>
+    `<div class="fchip"><button type="button" ${attrs} title="${title}" aria-label="${title}: ${esc(label)}">×</button><span title="${esc(label)}">${esc(label)}</span></div>`;
+
+  function renderActiveFilters() {
+    // Everything that's applied, listed under "Clear all filters" in section order —
+    // each removable on its own. Sections only get a count badge.
+    let all = "", count = 0;
+    if (state.q) { all += chip(`Search: "${state.q}"`, "data-clearq"); count++; }
+    if (state.conv) { all += chip(`Conversation: ${state.convLabel}`, "data-clearconv"); count++; }
+    for (const f of FIELDS) {
+      let n = 0;
+      if (f.custom) {
+        if (state.dateFrom) { all += chip(`Date from: ${fmtDay(state.dateFrom)}`, 'data-cleardate="dateFrom"'); n++; }
+        if (state.dateTo) { all += chip(`Date to: ${fmtDay(state.dateTo)}`, 'data-cleardate="dateTo"'); n++; }
+      } else {
+        for (const v of state.filters[f.key] || []) {
+          all += chip(`${f.title}: ${v.label}`, `data-remove="${f.key}" data-value="${esc(v.value)}"`);
+          n++;
+        }
+      }
+      document.querySelector(`.fs[data-key="${f.key}"] .fs-n`).textContent = n || "";
+      count += n;
+    }
+    $("dateFrom").value = state.dateFrom;
+    $("dateTo").value = state.dateTo;
+    $("fpActive").innerHTML = count
+      ? `<div class="fp-sub">Currently filtered by…</div><button type="button" class="clearall" data-clearall><i>×</i>Clear all filters</button><div class="fs-chips" style="padding:6px 0 0">${all}</div>`
+      : `<div class="fp-sub">Currently filtered by…</div><div class="fp-none">Nothing — showing every email</div>`;
+  }
+
+  function toggleSection(sec, forceOpen) {
+    const open = forceOpen ?? !sec.classList.contains("open");
+    sec.classList.toggle("open", open);
+    sec.querySelector(".fs-head").setAttribute("aria-expanded", open);
+    sec.querySelector(".fs-tog").textContent = open ? "−" : "+";
+    if (open) sec.querySelector(".fs-body input")?.focus();
+    else closeOptions(sec);
+  }
+
+  // Collapse sections that no longer have anything selected — unless the user is
+  // working in that section's box right now.
+  function collapseEmptySections() {
+    document.querySelectorAll(".fs.open").forEach(sec => {
+      const key = sec.dataset.key;
+      const empty = key === "date" ? !state.dateFrom && !state.dateTo : !(state.filters[key] || []).length;
+      if (empty && document.activeElement !== sec.querySelector(".ta input")) toggleSection(sec, false);
+    });
+  }
+
+  // ---- Type-ahead ----
+  // Options come from the server for whatever has been typed, counted against all the
+  // other active filters — so it only ever offers values that would return results.
+  let taSeq = 0, taTimer;
+
+  // Highlight each typed word where it starts a word (matching the server's rule) — or,
+  // for "contains" fields, the whole typed text wherever it appears.
+  function markMatch(text, term, contains = false) {
+    const esc_re = w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const words = contains
+      ? [(term || "").trim()].filter(Boolean).map(esc_re)
+      : (term || "").toLowerCase().split(/\s+/).filter(Boolean).map(esc_re);
+    if (!words.length) return esc(text);
+    const re = new RegExp(`(${contains ? "" : "^|[^0-9a-z]"})(${words.join("|")})`, "gi");
+    let out = "", last = 0;
+    for (const m of String(text ?? "").matchAll(re)) {
+      const start = m.index + m[1].length;
+      out += esc(text.slice(last, start)) + "<mark>" + esc(m[2]) + "</mark>";
+      last = start + m[2].length;
+    }
+    return out + esc(String(text ?? "").slice(last));
+  }
+
+  // Resolves true only if the option list now matches what's in the box.
+  async function loadOptions(sec) {
+    const key = sec.dataset.key, input = sec.querySelector(".ta input");
+    const term = input.value.trim();
+    const seq = ++taSeq;
+    const p = new URLSearchParams(queryString());
+    p.delete("page"); p.delete("sort");
+    p.set("key", key); p.set("term", term);
+    let data;
+    try { data = await (await api("/api/facet?" + p)).json(); } catch { return false; }
+    if (seq !== taSeq) return false; // a newer request superseded this one
+    const chosen = new Set((state.filters[key] || []).map(v => v.value));
+    sec._opts = (data.options || []).filter(o => !chosen.has(o.value));
+    sec._active = sec._opts.length ? 0 : -1;
+    sec._term = term;
+    sec._more = data.more || 0;
+    sec._hint = data.hint || "";
+    if (document.activeElement === input) renderOptions(sec); // don't pop open a box the user left
+    return true;
+  }
+
+  function renderOptions(sec) {
+    const field = FIELDS.find(f => f.key === sec.dataset.key);
+    const list = sec.querySelector(".ta-list"), term = sec._term;
+    list.innerHTML = sec._opts.length
+      ? sec._opts.map((o, i) => `<div class="ta-opt ${i === sec._active ? "active" : ""}" role="option" aria-selected="${i === sec._active}" data-i="${i}">
+            <span class="t"><b>${markMatch(o.label, term, field.contains)}</b>${field.showValue && o.value !== o.label ? `<i>${markMatch(o.value, term)}</i>` : ""}</span>
+            <span class="c">${o.count}</span></div>`).join("")
+        + (sec._more ? `<div class="ta-empty">+${sec._more} more — keep typing to narrow down</div>` : "")
+      : `<div class="ta-empty">${esc(sec._hint) || (term ? (field.contains ? `No subjects contain "${esc(term)}"` : "No matches") : "No other values with the current filters")}</div>`;
+    sec.querySelector(".ta").classList.add("open");
+    sec.querySelector(".ta input").setAttribute("aria-expanded", "true");
+    list.querySelector(".ta-opt.active")?.scrollIntoView({ block: "nearest" });
+  }
+
+  function closeOptions(sec) {
+    sec.querySelector(".ta")?.classList.remove("open");
+    sec.querySelector(".ta input")?.setAttribute("aria-expanded", "false");
+  }
+
+  function chooseOption(sec, i) {
+    const o = sec._opts?.[i];
+    if (!o) return;
+    const key = sec.dataset.key;
+    const field = FIELDS.find(f => f.key === key);
+    // Summary reads 'Subject contains: "riverside"' rather than 'Subject contains: Contains "…"'.
+    const label = field.contains ? `"${o.value}"` : o.label;
+    if (field.single) state.filters[key] = [];
+    const sel = (state.filters[key] = state.filters[key] || []);
+    if (!sel.some(v => v.value === o.value)) sel.push({ value: o.value, label });
+    const input = sec.querySelector(".ta input");
+    input.value = "";
+    runSearch();
+    // Done: close the dropdown and tuck the section away — the choice shows in the summary
+    // and as the count badge. Re-open the section to add another value.
+    input.blur();
+    toggleSection(sec, false);
+  }
+
+  function renderResults() {
+    $("resCount").textContent = `${total} result${total === 1 ? "" : "s"}`;
+    $("resHint").textContent = state.sort === "relevance" && state.q ? "best match" : "newest first";
+    if (!results.length) { $("resList").innerHTML = `<div class="empty">No emails match.</div>`; return; }
+    let html = results.map(r => `
+      <div class="r ${r.id === selectedId ? "sel" : ""}" data-id="${r.id}">
+        <div class="r-l1"><span class="r-from">${esc(r.fromName || r.fromEmail)}</span><span class="r-date">${esc(fmtListDate(r.sent))}</span></div>
+        <div class="r-l2">${r.hasAttachments ? `<svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="#787878" stroke-width="1.4" aria-label="Has attachments"><path d="M11.5 6.5 7 11a3 3 0 0 1-4.2-4.2l4.6-4.6a2 2 0 0 1 2.8 2.8L5.6 9.6a1 1 0 0 1-1.4-1.4L8.4 4"/></svg>` : ""}<span class="r-subj">${esc(r.subject || "(no subject)")}</span></div>
+        <div class="r-snip">${highlight(r.snippet)}</div>
+        <div class="r-meta"><span class="tag">${esc(r.projectCode)}</span>${r.labelStatus === "mismatch" ? `<span class="tag warn" title="Saved in ${esc(r.projectCode)}'s folder but labelled ${esc(r.labelCodes.join(", "))}">Label: ${esc(r.labelCodes.join(", "))}</span>` : ""}${r.conversationSize > 1 ? `<span class="tag conv">${r.conversationSize} in conversation</span>` : ""}</div>
+      </div>`).join("");
+    if (results.length < total) html += `<button id="more">Load more (${total - results.length} remaining)</button>`;
+    $("resList").innerHTML = html;
+  }
+
+  function clearPreview() {
+    selectedId = null;
+    $("pv").style.display = "none";
+    $("pvEmpty").style.display = "flex";
+  }
+
+  async function select(id) {
+    selectedId = id;
+    document.querySelectorAll(".r").forEach(el => el.classList.toggle("sel", +el.dataset.id === id));
+    document.body.classList.add("show-preview");
+    $("pvEmpty").style.display = "none";
+    const pv = $("pv");
+    pv.style.display = "block";
+    pv.innerHTML = `<div class="pv-line">Loading…</div>`;
+    let resp, e;
+    try {
+      resp = await api(`/api/email/${id}`);
+      e = await resp.json();
+    } catch (err) {
+      if (selectedId === id) pv.innerHTML = `<div class="err">Couldn't load this email. Try again in a moment.</div>`;
+      return;
+    }
+    if (selectedId !== id) return;
+    if (!resp.ok) {
+      const link = /^https:\/\//i.test(e.webUrl || "") ? `<br><a href="${esc(e.webUrl)}" target="_blank" rel="noopener">Open in SharePoint</a>` : "";
+      pv.innerHTML = `<div class="err">${esc(e.error)}${e.path ? `<br><small>${esc(e.path)}</small>` : ""}${link}</div>`;
+      return;
+    }
+    renderPreview(e);
+  }
+
+  function peopleLine(label, list) {
+    if (!list.length) return "";
+    return `<div class="pv-line"><b>${label}:</b> ${list.map(p => `<span title="${esc(p.email || "")}">${esc(p.name)}</span>`).join("; ")}</div>`;
+  }
+
+  function renderPreview(e, showRemote = false) {
+    const pv = $("pv");
+    const hasRemote = e.html && /<img[^>]+src=["']?https?:/i.test(e.html);
+    pv.innerHTML = `
+      <h1 id="pvSubject">${esc(e.subject || "(no subject)")}</h1>
+      <div class="pv-from">
+        <div class="avatar">${esc(initials(e.fromName))}</div>
+        <div class="pv-people">
+          <div class="pv-name">${esc(e.fromName)} <span class="pv-addr">&lt;${esc(e.fromEmail || "unknown")}&gt;</span></div>
+          ${peopleLine("To", e.to)}${peopleLine("Cc", e.cc)}
+        </div>
+        <div class="pv-date">${esc(fmtFullDate(e.sent))}<br><span class="tag">${esc(e.projectCode)}</span></div>
+      </div>
+      <div class="pv-actions">
+        <a class="btn primary" href="${esc(e.originalUrl)}" title="Download the filed copy; opening it starts Outlook, where Reply / Reply All / Forward work">Open in Outlook</a>
+        ${/^https:\/\//i.test(e.webUrl || "") ? `<a class="btn" href="${esc(e.webUrl)}" target="_blank" rel="noopener">Open in SharePoint</a>` : ""}
+        ${e.conversationId ? `<button class="btn" id="pvConv">Show conversation</button>` : ""}
+      </div>
+      ${e.labelStatus === "mismatch" ? `<div class="banner warn">Saved in ${esc(e.projectCode)}'s folder, but labelled ${esc(e.labelCodes.join(", "))} in Outlook. Move the file or fix the label.</div>` : ""}
+      ${e.attachments.length ? `<div class="pv-atts">${e.attachments.map(a => `<a class="att" href="${esc(a.url)}" title="${esc(a.name)}"><svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.4"><path d="M3 1.5h5l3 3v8H3z"/><path d="M8 1.5v3h3"/></svg><span>${esc(a.name)}</span><i>${fmtSize(a.size)}</i></a>`).join("")}</div>` : ""}
+      ${hasRemote && !showRemote ? `<div class="banner">Remote images are blocked to protect your privacy.<button class="linkbtn" id="pvShowImg">Show images</button></div>` : ""}
+      <iframe id="pvFrame" title="Email body" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe>
+      <details class="pv-index"><summary>Index record</summary><dl>
+        <dt>Project</dt><dd>${esc(e.projectCode)} ${esc(e.projectName || "")}</dd>
+        <dt>Location</dt><dd>${esc([e.library, e.service, e.branch].filter(Boolean).join(" / "))}</dd>
+        <dt>File</dt><dd>${esc(e.fileName)} (${fmtSize(e.fileSize)})</dd>
+        <dt>Message-ID</dt><dd>${esc(e.messageId)}</dd>
+        <dt>Conversation ID</dt><dd>${esc(e.conversationId || "—")}</dd>
+        <dt>Filed by / via</dt><dd>${esc(e.filedBy)} · ${esc(e.filedVia)}</dd>
+        <dt>Labels</dt><dd>${e.labels ? esc(e.labels.join(", ") || "(none)") + ` · ${esc(e.labelStatus)} · from ${esc(e.labelSource)}` : "not recorded"}</dd>
+      </dl></details>`;
+
+    // The email body is untrusted HTML: render it in a sandboxed iframe with scripts disabled
+    // (allow-same-origin is only so this page can measure its height — with no allow-scripts,
+    // nothing inside can use it) and a CSP that blocks all network loads unless the user opts in.
+    const imgSrc = showRemote ? "data: https: http:" : `data: ${API_URL}`;
+    const csp = `default-src 'none'; img-src ${imgSrc}; style-src 'unsafe-inline'; font-src data:`;
+    const body = e.html || `<pre style="white-space:pre-wrap;font:13px/1.5 Calibri,'Segoe UI',sans-serif">${esc(e.text)}</pre>`;
+    const frame = $("pvFrame");
+    frame.srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_blank"><style>body{margin:0;font:14px/1.5 Calibri,'Segoe UI',sans-serif;color:#2B2B2B;word-wrap:break-word}img{max-width:100%;height:auto}</style></head><body>${body}</body></html>`;
+    frame.onload = sizeFrame;
+
+    if ($("pvConv")) $("pvConv").onclick = () => {
+      state.conv = e.conversationId;
+      state.convLabel = e.subject.replace(/^((re|fw|fwd)\s*:\s*)+/i, "");
+      runSearch();
+    };
+    if ($("pvShowImg")) $("pvShowImg").onclick = () => renderPreview(e, true);
+  }
+
+  // Fit the iframe to its content. Re-run on resize: body height depends on the pane's width.
+  function sizeFrame() {
+    const frame = $("pvFrame");
+    if (!frame || !frame.contentDocument) return;
+    frame.style.height = "0px";
+    frame.style.height = (frame.contentDocument.documentElement.scrollHeight || 600) + 20 + "px";
+  }
+  let resizeTimer;
+  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(sizeFrame, 150); });
+
+  // ---- events ----
+  let debounce;
+  $("q").addEventListener("input", () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => { state.q = $("q").value.trim(); if (state.q && state.sort === "date") { /* keep user's sort choice */ } runSearch(); }, 220);
+  });
+  $("sort").addEventListener("change", () => { state.sort = $("sort").value; runSearch(); });
+
+  const fp = $("filters");
+  buildFilterPane();
+  renderActiveFilters();
+
+  fp.addEventListener("click", ev => {
+    const t = ev.target;
+    const head = t.closest(".fs-head");
+    if (head) return toggleSection(head.closest(".fs"));
+    const rm = t.closest("[data-remove]");
+    if (rm) {
+      const key = rm.dataset.remove;
+      state.filters[key] = (state.filters[key] || []).filter(v => v.value !== rm.dataset.value);
+      collapseEmptySections();
+      return runSearch();
+    }
+    const cd = t.closest("[data-cleardate]");
+    if (cd) { state[cd.dataset.cleardate] = ""; collapseEmptySections(); return runSearch(); }
+    if (t.closest("[data-clearq]")) { state.q = ""; $("q").value = ""; return runSearch(); }
+    if (t.closest("[data-clearconv]")) { state.conv = null; return runSearch(); }
+    if (t.closest("[data-clearall]")) {
+      Object.assign(state, { q: "", filters: {}, dateFrom: "", dateTo: "", conv: null });
+      $("q").value = "";
+      fp.querySelectorAll(".ta input").forEach(i => { i.value = ""; i.blur(); });
+      collapseEmptySections();
+      return runSearch();
+    }
+  });
+  fp.addEventListener("change", ev => {
+    if (ev.target.id === "dateFrom" || ev.target.id === "dateTo") { state[ev.target.id] = ev.target.value; runSearch(); }
+  });
+  fp.addEventListener("focusin", ev => {
+    if (ev.target.matches(".ta input")) loadOptions(ev.target.closest(".fs"));
+  });
+  fp.addEventListener("focusout", ev => {
+    if (!ev.target.matches(".ta input")) return;
+    const sec = ev.target.closest(".fs");
+    setTimeout(() => {
+      if (sec.contains(document.activeElement)) return; // e.g. clicked this section's own header
+      closeOptions(sec);
+      // Left without picking anything: tuck it away again (unless something's half-typed).
+      if (!ev.target.value.trim()) toggleSection(sec, false);
+    }, 120);
+  });
+  fp.addEventListener("input", ev => {
+    if (!ev.target.matches(".ta input")) return;
+    clearTimeout(taTimer);
+    const sec = ev.target.closest(".fs");
+    taTimer = setTimeout(() => loadOptions(sec), 140);
+  });
+  fp.addEventListener("keydown", ev => {
+    if (!ev.target.matches(".ta input")) return;
+    const sec = ev.target.closest(".fs");
+    const n = sec._opts?.length || 0;
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      if (!sec.querySelector(".ta").classList.contains("open")) return loadOptions(sec);
+      if (n) { sec._active = (sec._active + (ev.key === "ArrowDown" ? 1 : -1) + n) % n; renderOptions(sec); }
+    } else if (ev.key === "Enter") {
+      ev.preventDefault();
+      // Typed faster than the list refreshed? Fetch options for what's actually in the box
+      // first, so Enter never picks a stale option from the previous keystroke.
+      const typed = ev.target.value.trim();
+      if (typed !== sec._term) {
+        clearTimeout(taTimer);
+        loadOptions(sec).then(fresh => {
+          if (fresh && sec._term === ev.target.value.trim() && sec._active >= 0) chooseOption(sec, sec._active);
+        });
+      } else if (sec._active >= 0) chooseOption(sec, sec._active);
+    } else if (ev.key === "Escape") {
+      closeOptions(sec);
+    } else if (ev.key === "Backspace" && !ev.target.value) {
+      // Backspace in an empty box removes that field's most recent value, like a tag input.
+      const sel = state.filters[sec.dataset.key];
+      if (sel?.length) { sel.pop(); runSearch().then(() => loadOptions(sec)); }
+    }
+  });
+  // mousedown (not click) + preventDefault: picking an option mustn't blur the input first.
+  fp.addEventListener("mousedown", ev => {
+    const opt = ev.target.closest(".ta-opt");
+    if (!opt) return;
+    ev.preventDefault();
+    chooseOption(opt.closest(".fs"), +opt.dataset.i);
+  });
+  $("resList").addEventListener("click", ev => {
+    if (ev.target.id === "more") { state.page++; runSearch(true); return; }
+    const row = ev.target.closest(".r");
+    if (row) select(+row.dataset.id);
+  });
+  document.addEventListener("keydown", ev => {
+    if (ev.target.tagName === "INPUT" || ev.target.tagName === "SELECT") return;
+    if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
+    const i = results.findIndex(r => r.id === selectedId);
+    const next = results[i + (ev.key === "ArrowDown" ? 1 : -1)];
+    if (next) { ev.preventDefault(); select(next.id); document.querySelector(`.r[data-id="${next.id}"]`)?.scrollIntoView({ block: "nearest" }); }
+  });
+
+  // How fresh the index is. The server catches up with SharePoint every 5 minutes on its own.
+  async function loadStatus() {
+    const status = $("syncStatus");
+    try {
+      const s = await (await api("/api/status")).json();
+      const times = s.libraries.map(l => l.finished_at || l.started_at).filter(Boolean).sort();
+      const busy = s.libraries.some(l => l.in_progress);
+      const errors = s.libraries.reduce((n, l) => n + ((l.last_result || {}).errors || 0), 0);
+      const ago = times.length ? Math.max(0, Math.round((Date.now() - new Date(times[0])) / 60000)) : null;
+      status.textContent = `${s.emails.toLocaleString()} emails indexed`
+        + (busy ? " · first full index still running" : ago !== null ? ` · updated ${ago < 1 ? "just now" : ago + " min ago"}` : "");
+      status.className = errors ? "bad" : "";
+      status.title = errors
+        ? "Some files couldn't be indexed:\n" + s.libraries.flatMap(l => ((l.last_result || {}).errorSamples || []).map(e => `${e.file}: ${e.error}`)).join("\n")
+        : "The index checks both Hub libraries for new, changed and deleted emails every 5 minutes";
+    } catch { status.textContent = ""; }
+  }
+
+  // Deep link from the File to Project task pane: ?project=SUPER26000 opens pre-filtered.
+  async function applyDeepLink() {
+    const code = (new URLSearchParams(location.search).get("project") || "").trim().toUpperCase();
+    if (!/^[A-Z]{5}\d{5}$/.test(code)) return;
+    let label = code;
+    try {
+      const d = await (await api(`/api/facet?key=project&term=${encodeURIComponent(code)}`)).json();
+      label = (d.options || []).find(o => o.value === code)?.label || code;
+    } catch { /* keep the bare code as the label */ }
+    state.filters.project = [{ value: code, label }];
+  }
+
+  async function start() {
+    showSignIn(false);
+    await applyDeepLink();
+    runSearch();
+    loadStatus();
+    setInterval(loadStatus, 60000);
+  }
+
+  $("signInBtn").addEventListener("click", async () => {
+    $("signInErr").textContent = "";
+    try { if (await getToken(true)) start(); }
+    catch (err) { $("signInErr").textContent = `Sign-in failed: ${err.message}`; }
+  });
+
+  (async () => {
+    let token = null;
+    try { token = await getToken(false); } catch { token = null; }
+    if (token) start(); else showSignIn(true);
+  })();
+</script>
+</body>
+</html>
