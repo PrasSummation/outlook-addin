@@ -377,7 +377,7 @@
   <div id="versionDisplay"></div>
 
   <script>
-    const APP_VERSION = "9.30";
+    const APP_VERSION = "9.31";
 
     let msalInstance;
     let folderEntries = [];
@@ -1878,7 +1878,12 @@
         // multi-select never got past this branch, silently processing only that one item.
         try {
             const selected = await officeAsync(Office.context.mailbox, "getSelectedItemsAsync");
-            const messages = (selected || []).filter(i => i.itemType === Office.MailboxEnums.ItemType.Message);
+            // getSelectedItemsAsync's itemType comes back capitalized ("Message"), unlike
+            // Office.context.mailbox.item.itemType, which uses the enum's lowercase runtime
+            // value ("message") -- compare case-insensitively rather than against the enum
+            // constant directly, which silently matched nothing and made this always fall
+            // through to the single-item path below, no matter how many were selected.
+            const messages = (selected || []).filter(i => (i.itemType || "").toLowerCase() === "message");
             if (messages.length > 0) {
                 feState.mode = messages.length > 1 ? "multi" : "single";
                 feState.items = messages.map(i => ({ itemId: i.itemId, subject: i.subject || "(no subject)" }));
