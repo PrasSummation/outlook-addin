@@ -645,9 +645,6 @@
                 case "convertActiveToArchive":
                     await runConvertActiveToArchive(pending.params);
                     break;
-                case "createSharedMailbox":
-                    await runCreateSharedMailbox(pending.params);
-                    break;
                 default:
                     updateStatus(`Error: unrecognized action type "${pending.type}".`, true);
             }
@@ -870,33 +867,6 @@
 
         const copyButton = document.getElementById("copyLinkButton");
         if (copyButton) copyButton.addEventListener("click", () => copyLinkToClipboard(webUrl, "copyLinkStatus"));
-    }
-
-    // ---- Create Shared Mailbox (standalone wizard) ----
-
-    async function runCreateSharedMailbox(params) {
-        const { mailboxName } = params;
-
-        const statusEl = document.getElementById("status");
-        const stopButton = document.getElementById("stopRetryButton");
-        const result = await createProjectMailboxAndGrantAllStaff(mailboxName, statusEl, stopButton);
-
-        updateStatus("Done.");
-        renderCreateSharedMailboxResult(result);
-    }
-
-    function renderCreateSharedMailboxResult(result) {
-        if (result.mailboxError) {
-            document.getElementById("resultSummary").innerHTML = `<div class="warning-box">Error: ${result.mailboxError}</div>`;
-            return;
-        }
-        document.getElementById("resultSummary").innerHTML = `<div class="summary-box">
-            <div class="row"><span class="label">Mailbox:</span> ${result.mailbox}</div>
-            <div class="row">${result.mailboxAlreadyExisted
-                ? "This mailbox already existed (from a previous attempt) — skipped creation and went straight to granting access."
-                : "Created as a real Exchange shared mailbox — ready to use now."}</div>
-            ${renderGrantResultsHtml("all Summation staff", result.grants, result.grantsError, result.stoppedByUser, result.gaveUp)}
-        </div>`;
     }
   </script>
 </body>

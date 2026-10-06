@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Summation Assistant — Help Guide</title>
+  <style>
+    :root{
+      --green:#408F4E; --green-dark:#2D6B38; --green-pale:#EDF7EE;
+      --grey-900:#2B2B2B; --grey-600:#646464; --grey-400:#909090;
+      --grey-500:#787878; --grey-300:#B4B4B4; --grey-200:#DCDCDC; --grey-100:#EFEFEF; --grey-50:#F7F7F7;
+      --amber:#9A6A1E; --amber-pale:#FFF8E1;
+      --font-display:'Bahnschrift','DIN Alternate','Segoe UI',sans-serif;
+      --font-body:'Calibri','Segoe UI',system-ui,sans-serif;
+      --font-mono:'Consolas','Courier New',monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;padding:0;background:#fff;font-family:var(--font-body);
+         font-size:14px;line-height:1.55;color:var(--grey-600);-webkit-font-smoothing:antialiased}
+    a{color:var(--green-dark);text-decoration:none}
+    a:hover{color:var(--green);text-decoration:underline}
+
+    #brandBar{background:var(--grey-900);padding:16px 28px;display:flex;align-items:center;gap:12px}
+    #brandBar img{width:32px;height:32px}
+    #brandBar .word{font-family:var(--font-display);font-size:15px;font-weight:600;color:#fff;letter-spacing:.14em}
+    #brandBar .sub{font-size:11px;color:var(--grey-400);letter-spacing:.05em}
+
+    #layout{max-width:1040px;margin:0 auto;padding:28px;display:flex;gap:36px;align-items:flex-start}
+    #toc{flex:none;width:230px;position:sticky;top:28px}
+    #toc .toc-label{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--grey-400);margin:0 0 10px}
+    #toc a{display:block;padding:6px 0;font-size:13px;color:var(--grey-600);border-left:2px solid transparent;padding-left:10px}
+    #toc a:hover{color:var(--green-dark);text-decoration:none;border-left-color:var(--green-pale)}
+    #toc a.sub{font-size:12px;color:var(--grey-400);padding-left:20px}
+
+    #content{flex:1;min-width:0}
+    .page-header h1{font-family:var(--font-display);font-size:22px;color:var(--grey-900);margin:0 0 6px}
+    .page-header p{margin:0 0 28px;font-size:13.5px;color:var(--grey-500);max-width:640px}
+
+    section{margin-bottom:38px;padding-bottom:4px}
+    section h2{font-family:var(--font-display);font-size:17px;color:var(--grey-900);margin:0 0 4px;
+      padding-top:8px;border-top:1px solid var(--grey-100)}
+    section:first-of-type h2{border-top:none;padding-top:0}
+    .tagline{font-size:12.5px;color:var(--grey-400);margin:0 0 16px}
+    .badge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+      padding:3px 8px;border-radius:10px;margin-left:8px;vertical-align:middle}
+    .badge.you{background:#F2E4D6;color:#8B5E22}
+    .badge.auto{background:var(--green-pale);color:var(--green-dark)}
+    .badge.soon{background:var(--grey-100);color:var(--grey-500)}
+    .badge.legacy{background:#F2E4D6;color:#8B5E22}
+
+    ol.steps{margin:0 0 14px;padding-left:22px}
+    ol.steps li{margin-bottom:9px}
+    ol.steps li b{color:var(--grey-900)}
+
+    .note{border:1px solid var(--grey-200);background:var(--grey-50);border-radius:8px;
+      padding:12px 14px;font-size:13px;margin:0 0 14px}
+    .note.tip{border-color:#CFE3D2;background:var(--green-pale);color:var(--green-dark)}
+    .note.soon{border-color:var(--grey-200);background:#fff;color:var(--grey-500);font-style:italic}
+    .note.warn{border-color:#EAD3A3;background:var(--amber-pale);color:var(--amber)}
+
+    code{font-family:var(--font-mono);font-size:12px;background:var(--grey-100);padding:1px 5px;border-radius:3px;color:var(--grey-900)}
+
+    .back-to-top{font-size:11.5px}
+
+    @media (max-width:760px){
+      #layout{flex-direction:column}
+      #toc{position:static;width:100%}
+    }
+  </style>
+</head>
+<body>
+  <div id="brandBar">
+    <img src="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" alt="Summation" />
+    <div>
+      <div class="word">SUMMATION</div>
+      <div class="sub">Assistant — Help Guide</div>
+    </div>
+  </div>
+
+  <div id="layout">
+    <nav id="toc">
+      <div class="toc-label">On this page</div>
+      <a href="#overview">Overview</a>
+      <a href="#manual-file" class="sub">1. Manual file emails</a>
+      <a href="#sync-automation" class="sub">2. Automatic filing</a>
+      <a href="#sent-emails" class="sub">3. Auto-save sent emails</a>
+      <a href="#search" class="sub">4. Email Search</a>
+      <a href="#other-actions">Other actions</a>
+    </nav>
+
+    <div id="content">
+      <div class="page-header">
+        <h1>How the Summation Assistant files &amp; finds email</h1>
+        <p>This page covers the four things most people use the Assistant for day-to-day: filing an email to
+        a project, how that filing actually reaches SharePoint, what happens to things you send, and how to
+        search everything that's ever been filed.</p>
+      </div>
+
+      <section id="overview">
+        <h2>Overview</h2>
+        <p>Every email you file ends up as a <code>.eml</code> file inside that project's <b>Emails</b> folder
+        on SharePoint. Two things get it there: you tagging the email in Outlook (manual), and a background
+        process that actually moves it (automatic). You never have to trigger that second part yourself
+        anymore &mdash; it just runs.</p>
+      </section>
+
+      <section id="manual-file">
+        <h2>1. File Email <span class="badge you">You do this</span></h2>
+        <p class="tagline">Button: <b>File Email</b></p>
+        <ol class="steps">
+          <li>Select one email, or multiple emails, in your inbox (or open one).</li>
+          <li>Click <b>File Email</b> in the Summation Assistant pane.</li>
+          <li>Choose <b>Sustainability</b> or <b>Energy</b>, then search for the project folder and select it.</li>
+          <li>Click <b>Add Category &amp; Stage for Filing</b>.</li>
+        </ol>
+        <p>That's it on your end. This tags the email with the project as an Outlook category and moves it into
+        a folder called <b>Emails to File</b> in your Inbox. It does <i>not</i> file it to SharePoint immediately
+        &mdash; see the next section.</p>
+        <div class="note tip">Filing multiple emails at once? Select them all first (Ctrl/Shift-click in the
+        list), then click File Email once.</div>
+      </section>
+
+      <section id="sync-automation">
+        <h2>2. Automatic filing <span class="badge auto">Happens on its own</span></h2>
+        <p class="tagline">No button &mdash; runs in the background, about every 5 minutes</p>
+        <p>A background process (not part of the Outlook pane itself) checks every staff mailbox's
+        <b>Emails to File</b> folder on a timer. For each email it finds there, it:</p>
+        <ol class="steps">
+          <li>Works out the project from the category you added.</li>
+          <li>Saves a copy of the email into that project's <b>Emails</b> folder on SharePoint.</li>
+          <li>Moves the original out of your Inbox into a <b>Filed</b> folder &mdash; so your inbox stays clean
+          and you can still find it if you need to.</li>
+        </ol>
+        <p>This usually takes a few minutes from when you click File Email. There's nothing to check or
+        trigger &mdash; if it's not in <b>Filed</b> yet, it just hasn't run its next pass.</p>
+        <div class="note">Didn't pick a project when filing? The email just waits harmlessly in
+        <b>Emails to File</b> until it's tagged with one. Nothing is filed incorrectly, and nothing is lost.</div>
+      </section>
+
+      <section id="sent-emails">
+        <h2>3. Auto-save sent emails <span class="badge soon">Coming soon</span></h2>
+        <p>Automatically filing emails you <i>send</i> (not just ones you receive) is in development and not
+        live yet. Right now, sent emails aren't picked up by either of the steps above &mdash; if you want a
+        sent email filed, forward or copy it back into your own Inbox first, then use File Email on it as
+        normal.</p>
+        <div class="note soon">This section will be updated with real steps once auto-save on send is
+        finished and rolled out.</div>
+      </section>
+
+      <section id="search">
+        <h2>4. Email Search <span class="badge auto">Search everything that's been filed</span></h2>
+        <p class="tagline">Button: <b>Email Search</b></p>
+        <ol class="steps">
+          <li>Click <b>Email Search</b> in the Summation Assistant pane &mdash; it opens in your web browser.</li>
+          <li>Sign in with your Summation account the first time you use it.</li>
+          <li>Use the filters on the left (project, date, sender, label match/mismatch, etc.) and the search box
+          to find emails across <i>every</i> project, not just ones you personally filed.</li>
+          <li>Click a result to preview it on the right, or use <b>Open in Outlook</b> to download the original
+          file.</li>
+        </ol>
+        <p>This searches every email filed into a project's folder on SharePoint, by anyone, going back to when
+        indexing began &mdash; it's a lot more useful than digging through folders by hand, especially for older
+        or archived projects.</p>
+        <div class="note warn">All Summation staff can search all projects &mdash; there's no per-project
+        access restriction on search.</div>
+      </section>
+
+      <section id="other-actions">
+        <h2>Other actions in the Assistant</h2>
+        <p>A few other buttons exist for less frequent, project-admin tasks:</p>
+        <ol class="steps">
+          <li><b>New BD project</b> &mdash; allocates the next project number, files the current email into it,
+          and creates the project's mailbox.</li>
+          <li><b>Change BD to Active project</b> / <b>Convert Active to Archive</b> &mdash; moves a project
+          folder between the Active and Archive libraries.</li>
+          <li><b>Search Shared Mailbox Online <span class="badge legacy">Legacy</span></b> &mdash; opens an
+          existing project mailbox directly in Outlook Web. Kept for now as project mailboxes are phased out in
+          favour of filing straight to SharePoint; prefer <b>Email Search</b> above for finding emails.</li>
+        </ol>
+      </section>
+
+      <p class="back-to-top"><a href="#toc">&uarr; Back to top</a></p>
+    </div>
+  </div>
+</body>
+</html>

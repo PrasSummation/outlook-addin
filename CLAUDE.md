@@ -34,20 +34,23 @@ project mailbox.
 | File | Role |
 |---|---|
 | `manifest2.xml` | Office Add-in manifest. Registers the ribbon button and compose-mode button, both pointing at `taskpane.html`. This is the **only** entry point wired into Outlook itself. |
-| `taskpane.html` | The task pane sidebar. Main menu + four "wizard" flows (see below) that collect inputs, then hand off execution. Also has the live `APP_VERSION` string shown in its footer — bump it on every change so you can confirm a deployed version in the field. |
-| `complete-action.html` | Standalone execution page. Does the actual long-running work (SharePoint writes, mailbox creation, bulk grants) for all four taskpane wizards. See "The handoff pattern" below — this file exists specifically so closing the taskpane mid-action doesn't abort the action. |
-| `manage-shared-mailbox-members.html` | Standalone page, linked from the taskpane's "Manage Shared Mailbox Members" button. Bulk two-pane UI: pick project mailbox(es) + pick staff, Confirm does a true diff (grant newly-checked, revoke newly-unchecked, no-op otherwise) with live per-member status. |
+| `taskpane.html` | The task pane sidebar. Main menu + three "wizard" flows (see below) that collect inputs, then hand off execution, plus the standalone File Email and Email Search actions. Also has the live `APP_VERSION` string shown in its footer — bump it on every change so you can confirm a deployed version in the field. |
+| `complete-action.html` | Standalone execution page. Does the actual long-running work (SharePoint writes, mailbox creation) for the three taskpane wizards. See "The handoff pattern" below — this file exists specifically so closing the taskpane mid-action doesn't abort the action. |
+| `help-guide.html` | Standalone page, linked from the taskpane footer ("Help Guide"). Staff-facing walkthrough of the four things people actually use day to day: File Email (manual), the automatic background filing pass, sent-email auto-save (not live yet), and Email Search. Update this whenever one of those workflows changes. |
+| `email-search.html` | The hosted email index/search page, linked from the taskpane's **Email Search** button. Generated from the `email-index` repo's own prototype `search.html` by a scratch script there — **edits to one must be mirrored in the other by hand**, this repo doesn't regenerate it. MSAL sign-in against this repo's same app registration, calls the hosted Function App described in the email-index repo's `HANDOFF.md`. |
+| `manage-shared-mailbox-members.html` | Standalone page, **no longer linked from the taskpane UI** (its button was removed 2026-10-06 — shared mailboxes are being retired). Still reachable by direct URL if ever needed for an existing mailbox. Bulk two-pane UI: pick project mailbox(es) + pick staff, Confirm does a true diff (grant newly-checked, revoke newly-unchecked, no-op otherwise) with live per-member status. |
 | `manage-mailboxes.html` | Standalone page, **not linked from the taskpane UI** — reached only by navigating directly to its URL. Single-user self-service: grant/revoke your own Full Access on one mailbox at a time, split Sustainability/Energy. |
 | `manage-mailbox-automapping.html` | Standalone page, **not linked from the taskpane UI** either. Reconciles "what Exchange says you have Full Access to" against "what's actually showing in your Outlook folder pane" — these drift apart and neither Graph nor Exchange exposes that comparison directly. Requires the user to import a local JSON export of their actual Outlook mailbox list (`{ mailboxes: [...], exportedAtUtc }`) via a file picker; that export is **not produced by this repo** — it comes from some other local tool/script the user runs against their own Outlook. Also tracks Outlook's ~32-mailbox folder-pane display limit. |
 | `exchange-bridge/` | Azure Function (PowerShell 7.6) — see its own `README.md`, which is the authoritative, detailed doc. Summary below. |
 | `exchange-bridge/README.md` | **Read this in full before touching the bridge.** Covers the two-app-registration trust model, why the originally-planned least-privilege Exchange RBAC didn't work (ended up needing the full Exchange Administrator directory role), the API contract, and a completed setup runbook. |
+| `email-filing-sync/` | A **separate, timer-triggered** Azure Function App (own Entra app registration, own resource group — never the bridge's) that watches every staff mailbox's "Emails to File" folder and files categorized emails into their project's SharePoint `Emails` folder, then moves the originals into a local "Filed" folder. No HTTP surface, no signed-in user — see its own `README.md`, which is authoritative. **Status as of 2026-10-06: live in production**, including the >4MB upload-session path. This is what the taskpane's removed "Sync Emails" button/local desktop Filer used to do manually — it's now fully automatic. |
 | `README.md` (repo root) | Just a one-line stub — not useful, don't rely on it. |
-| *(elsewhere)* | The email **index and search** prototype lives in its own private repo, `PrasSummation/email-index` (split out of this repo's former `prototypes/email-index/`). It shares this repo's Entra app registration, and its filer API allows calls from this repo's GitHub Pages origin. |
+| *(elsewhere)* | The email **index and search** backend (indexing + the API `email-search.html` calls) lives in its own private repo, `PrasSummation/email-index` (split out of this repo's former `prototypes/email-index/`). Read its `HANDOFF.md` before touching the search page or its backend. It shares this repo's Entra app registration and GitHub Pages origin. |
 | `logo-symbol-*.png` | Add-in icons referenced by the manifest and page headers. |
 
-## The taskpane's four wizards
+## The taskpane's three wizards
 
-All four follow the same shape: an intake/browse step, a Confirm step that
+All three follow the same shape: an intake/browse step, a Confirm step that
 only *collects* parameters, then a hand-off (see below) to
 `complete-action.html`, which does the real work and shows the result.
 
@@ -69,33 +72,42 @@ only *collects* parameters, then a hand-off (see below) to
    present. No mailbox action (moved out to New BD Project).
 3. **Convert Active to Archive** — the same folder-move logic, reversed
    direction.
-4. **Create Shared Mailbox** (standalone wizard, not tied to a folder) —
-   pick an existing project folder name (browsed from Active+Archive) or
-   type a custom name, then create the mailbox and **grant Full Access to
-   every current Summation staff member** — same policy as New BD Project,
-   intentionally no per-team choice anymore (removed 2026-10-01, see commit
-   `c45ce3b`; the "Service" radio on this wizard's first step only filters
-   the folder-name search list, it no longer affects who gets granted
-   access).
+
+A fourth wizard, **Create Shared Mailbox** (standalone, not tied to a
+folder), was removed from the taskpane 2026-10-06 — shared mailboxes are
+being phased out in favor of filing straight to SharePoint. Its
+`complete-action.html` handler (`runCreateSharedMailbox`, case
+`"createSharedMailbox"`) was deleted too, but the shared helpers it used
+(`createSharedMailboxViaBridge`, `createProjectMailboxAndGrantAllStaff`,
+`grantAccessToStaffWithRetry`, `getAllStaffMembers`) were **kept** — New BD
+Project (above) still uses them to create that project's mailbox. There is
+also still an older, simpler **"Create New Shared Mailbox"** button for
+personal Inbox subfolders (`createSharedMailbox()` in `taskpane.html`,
+around the `csmFolderList`/`createMailboxButton` area) — unrelated to either
+of the above, not removed, left alone.
 
 Two more taskpane features that aren't full wizards:
-- **Search Shared Mailbox Online** — just opens a project mailbox in Outlook
-  Web, no write actions.
-- **Sync Emails** — pings `http://127.0.0.1:8791/ping` then POSTs
-  `/sync-emails` to a locally-running companion desktop app, the
+- **Search Shared Mailbox Online -legacy** — just opens a project mailbox in
+  Outlook Web, no write actions. Renamed with the "-legacy" suffix
+  2026-10-06 for the same reason as above (shared mailboxes being phased
+  out) — kept for now since some still exist, but **Email Search** (below)
+  is the preferred way to find a project's correspondence going forward.
+- **Email Search** (added 2026-10-06) — opens `email-search.html` (see file
+  inventory above) in the system browser, same `openUrlInBrowser` pattern as
+  every other handoff in this file.
+
+Removed 2026-10-06, **no longer in the taskpane at all**:
+- **Manage Shared Mailbox Members** button (`manage-shared-mailbox-members.html`
+  is still in the repo and still works if opened by direct URL, just no
+  longer linked).
+- **Sync Emails** button — used to ping `http://127.0.0.1:8791/ping` then
+  POST `/sync-emails` to a locally-running companion desktop app, the
   **Summation Email Filer** (a separate Python/pywin32 COM tool, not part of
-  this repo). This triggers it to scan the user's "Emails to File" subfolder,
-  read Outlook categories, and move matching emails into their project
-  mailboxes using a true `.Move()` (preserves received-date fidelity in a
-  way Graph-only filing cannot). Progress/results are reported via the
-  Filer's own tray notification, not back into the taskpane. If you need the
-  exact spec given to that tool's team (category-matching rules, ambiguous
-  category handling, failure reporting), it's not in this repo — ask the
-  user, it was handed off as a separate document.
-- There is also an older, simpler **"Create New Shared Mailbox"** button for
-  personal Inbox subfolders (`createSharedMailbox()` in `taskpane.html`,
-  around the `csmFolderList`/`createMailboxButton` area) — a legacy/manual
-  path, distinct from the "Create Shared Mailbox" wizard above.
+  this repo), to move categorized emails out of "Emails to File" with a true
+  `.Move()` (date-fidelity). This whole local-Filer path is superseded by
+  `email-filing-sync/` (see file inventory above), which does the same job
+  automatically server-side every ~5 minutes — there is no longer any manual
+  "sync" step for staff to run.
 
 ## The handoff pattern (taskpane → complete-action.html)
 
@@ -214,7 +226,7 @@ naming patterns, before touching Exchange.
   unprovisioned for ~2 days) — always use the bridge's
   `POST /api/shared-mailboxes` (`New-Mailbox -Shared`) for mailbox creation,
   never a raw Graph user-object create.
-- **`APP_VERSION` in `taskpane.html`** (currently `9.24`) is shown in the
+- **`APP_VERSION` in `taskpane.html`** (currently `10.0`) is shown in the
   taskpane footer — bump it on every change so a live-tested version can be
   confirmed in screenshots/conversation.
 - Two standalone pages (`manage-mailboxes.html`,
