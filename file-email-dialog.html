@@ -224,6 +224,18 @@
             try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
         });
 
+        // Enter anywhere on the Confirm step accepts it, like a dialog's default button --
+        // except when focus is already on a button (the "Choose a Different Project" one),
+        // which already handles its own Enter natively; acting again here too would both go
+        // back AND immediately confirm in the same keystroke.
+        document.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter") return;
+            if (document.getElementById("feStepConfirm").style.display !== "block") return;
+            if (e.target && e.target.tagName === "BUTTON") return;
+            e.preventDefault();
+            handleFeConfirm();
+        });
+
         // Live selection updates from whichever page opened this dialog. Only acted on
         // while still on the "pick" step -- once a project's been picked (or filing has
         // started), changing the background selection shouldn't retroactively change what
