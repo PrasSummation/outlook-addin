@@ -870,36 +870,29 @@
         };
         addFeBatchToStorage(batchEntry);
 
-        try {
-            const result = await postFeBatch(batchEntry);
-            removeFeBatchFromStorage(batchId);
+        // Fire the actual categorize+move request, but don't make the user wait here for
+        // it to finish -- the bridge keeps it running to completion on its own regardless
+        // of whether this dialog is even still open (see postFeBatch's own comment), and
+        // the batch is already durably tracked in localStorage just above. Whatever
+        // happens (success, failure, or no response at all) gets reported the next time
+        // any File Email dialog opens, via the pending-batch check -- same mechanism
+        // that's always covered the "dialog closed before the response landed" case, now
+        // just deliberately used every time instead of only when it happens by accident.
+        postFeBatch(batchEntry)
+            .then((result) => {
+                removeFeBatchFromStorage(batchId);
+                return finalizeFeBatchResult(batchEntry, result);
+            })
+            .catch((err) => {
+                console.error("File Email batch failed after this dialog moved on:", err);
+            });
 
-            const { cleanupNote, failureDetails } = await finalizeFeBatchResult(batchEntry, result);
-
-            if (result.failed === 0) {
-                // Full success: a brief confirmation, then close on its own -- no need to
-                // make the user click through to "File Another"/"Close" for the common
-                // case. Anything short of full success still stops here so failures stay
-                // visible and actionable (retry via File Another, or Close to leave it).
-                resultSummary.innerHTML = `<div class="summary-box"><div class="row">${result.succeeded} of ${result.total} filed.${cleanupNote}</div></div>`;
-                document.getElementById("feStartOverButton").style.display = "none";
-                document.getElementById("feCloseButton").style.display = "none";
-                setTimeout(() => {
-                    try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
-                }, 900);
-            } else {
-                const failureNote = failureDetails.length ? ` ${failureDetails.join("; ")}.` : "";
-                resultSummary.innerHTML = `<div class="summary-box"><div class="row">${result.succeeded} of ${result.total} succeeded, ${result.failed} failed.${failureNote}${cleanupNote}</div></div>`;
-            }
-        } catch (err) {
-            console.error("Failed to start/confirm the File Email batch:", err);
-            resultSummary.innerHTML = `
-                <div class="warning-box">
-                    Started, but couldn't confirm it finished: ${err.message}.
-                    It's likely still running on the server — check back via File Email or Email Search later.
-                </div>
-            `;
-        }
+        resultSummary.innerHTML = `<div class="summary-box"><div class="row">Filing "${categoryName}" — continuing in the background.</div></div>`;
+        document.getElementById("feStartOverButton").style.display = "none";
+        document.getElementById("feCloseButton").style.display = "none";
+        setTimeout(() => {
+            try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
+        }, 500);
     }
   </script>
 </body>
