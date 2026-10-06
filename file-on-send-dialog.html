@@ -85,6 +85,7 @@
     .folder-item .tag{flex:none;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.03em;color:var(--grey-400)}
     .empty-message{padding:12px;color:var(--grey-400);font-size:12px}
     #listStatus{font-size:10.5px;color:var(--grey-400);margin-top:6px}
+    #skipSaveButton{display:block;margin-top:14px;text-align:center;width:100%}
 
     .context{border:1px solid var(--grey-200);border-radius:8px;padding:10px 11px;margin-bottom:14px;background:var(--grey-50)}
     .context .row{margin-bottom:4px;font-size:12px;color:var(--grey-600)}
@@ -140,6 +141,7 @@
       <input type="text" id="fosFilterBox" placeholder="Type to search, &darr; to browse the list..." />
       <div id="folderList"></div>
       <div id="listStatus"></div>
+      <button type="button" id="skipSaveButton" class="link-button">Skip &mdash; send without filing</button>
     </div>
 
     <!-- Step: confirm + choose what to save -->
@@ -280,6 +282,7 @@
         document.getElementById("saveBothButton").addEventListener("keydown", handleConfirmButtonKeydown);
         document.getElementById("saveReplyOnlyButton").addEventListener("keydown", handleConfirmButtonKeydown);
         document.getElementById("cancelLink").addEventListener("click", handleCancel);
+        document.getElementById("skipSaveButton").addEventListener("click", handleSkip);
 
         msalInstance = new msal.PublicClientApplication(msalConfig);
         attemptSilentSignIn();
@@ -318,6 +321,7 @@
             msalInstance.setActiveAccount(loginResponse.account);
             showApp(true);
             loadFolderNames();
+            focusSearchBoxOnce();
         } catch (err) {
             console.error("Sign in failed:", err);
         }
@@ -329,12 +333,53 @@
             if (token) {
                 showApp(true);
                 loadFolderNames();
+                focusSearchBoxOnce();
             } else {
                 showApp(false);
             }
         } catch (err) {
             showApp(false);
         }
+    }
+
+    // Dialogs are expected to get real OS focus from the host on creation, but there's no
+    // live Outlook test confirming the exact timing -- same retrying helper as
+    // file-email-dialog.html's focusWhenReady, ported here since the search box wasn't
+    // getting focused on open at all (showStep only focuses it on an explicit transition
+    // back to stepPick, never on first load).
+    let hasFocusedFilterBox = false;
+
+    function focusSearchBoxOnce() {
+        if (hasFocusedFilterBox) return;
+        hasFocusedFilterBox = true;
+        focusWhenReady("fosFilterBox");
+    }
+
+    function focusWhenReady(elementId) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        let done = false;
+
+        function tryFocus() {
+            if (done || el.offsetParent === null) return;
+            try { window.focus(); } catch (err) { /* ignore */ }
+            el.focus();
+            if (document.activeElement === el) {
+                done = true;
+                cleanup();
+            }
+        }
+        function cleanup() {
+            clearInterval(poll);
+            window.removeEventListener("focus", tryFocus);
+            document.removeEventListener("visibilitychange", tryFocus);
+        }
+
+        const poll = setInterval(tryFocus, 150);
+        window.addEventListener("focus", tryFocus);
+        document.addEventListener("visibilitychange", tryFocus);
+        tryFocus();
+        setTimeout(cleanup, 15000);
     }
 
     // ---- Generic Graph/SharePoint helpers (ported from file-email-dialog.html) ----
@@ -531,6 +576,13 @@
                     document.getElementById("confirmOriginalLine").innerHTML =
                         `&#129525; <b>Original</b> &mdash; "${msg.subject || sendContext.subject}" from ${from}${when ? ", " + when : ""}`;
                     document.getElementById("saveBothButton").disabled = false;
+                    // Save Both is the default action once it's actually usable -- move
+                    // focus to it, but only if focus is still sitting on the fallback
+                    // (Reply Only) from showStep's landing choice, not if the user already
+                    // deliberately moved away from it.
+                    if (document.activeElement && document.activeElement.id === "saveReplyOnlyButton") {
+                        document.getElementById("saveBothButton").focus();
+                    }
                 } else {
                     document.getElementById("confirmOriginalLine").textContent = "Original message not found -- only the reply can be filed.";
                     document.getElementById("saveBothButton").disabled = true;
@@ -719,6 +771,13 @@
         setTimeout(() => {
             try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
         }, 900);
+    }
+
+    // No category, no filing of anything -- just let the send through untagged. No
+    // in-flight request to abort here, so there's no reason to delay closing at all.
+    function handleSkip() {
+        messageParent({ action: "skip" });
+        try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
     }
   </script>
 </body>

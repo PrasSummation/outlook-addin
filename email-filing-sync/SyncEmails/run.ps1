@@ -295,8 +295,12 @@ foreach ($user in $staff) {
                 $totals.alreadyFiled++
             }
 
-            $keptCategories = @($labelsAsFound) | Where-Object { -not (Get-ProjectCode -Text $_) -and $_ -ne "Filed" }
-            $mergedCategories = @($keptCategories) + @("Filed", $projectCode) | Select-Object -Unique
+            # Leave whatever category the user actually assigned alone -- just add "Filed"
+            # on top. This used to also strip any project-shaped category and replace it
+            # with the bare project code (e.g. "SUPER26007_ProjectName" -> "SUPER26007"),
+            # which silently rewrote the label the user picked; same merge as the Sent
+            # Items pass above now.
+            $mergedCategories = @($labelsAsFound) + @("Filed") | Select-Object -Unique
             Invoke-RestMethod -Method Patch -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)" `
                 -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" } `
                 -Body (@{ categories = @($mergedCategories) } | ConvertTo-Json) -ErrorAction Stop | Out-Null

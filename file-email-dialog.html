@@ -31,48 +31,57 @@
       border:1px solid var(--green);border-radius:4px;cursor:pointer}
     #signInButton:hover{background:var(--green-dark)}
 
-    #appBody{max-width:520px;margin:0 auto;padding:20px 22px}
+    #appBody{max-width:520px;margin:0 auto;padding:16px 22px 22px}
 
-    label{display:block;width:100%;margin:14px 0 6px;font-size:10px;letter-spacing:.09em;
+    label{display:block;width:100%;margin:12px 0 6px;font-size:10px;letter-spacing:.09em;
       text-transform:uppercase;color:var(--grey-400)}
+    label:first-of-type{margin-top:0}
     input[type=text]{display:block;width:100%;margin:0 0 10px;padding:8px 10px;
       font:400 13px/1.4 var(--font-body);color:var(--grey-900);background:#fff;
       border:1.5px solid var(--grey-200);border-radius:4px}
     input[type=text]:focus{outline:none;border-color:var(--green)}
-    button{display:block;width:100%;margin:0 0 9px;padding:10px 12px;
-      font:600 13px/1.2 var(--font-body);letter-spacing:.04em;color:#fff;
-      background:var(--green);border:1px solid var(--green);border-radius:4px;cursor:pointer}
+    button{display:block;width:100%;margin:0 0 9px;padding:11px 12px;
+      font:600 13px/1.2 var(--font-body);letter-spacing:.02em;color:#fff;
+      background:var(--green);border:1px solid var(--green);border-radius:6px;cursor:pointer}
     button:hover{background:var(--green-dark);border-color:var(--green-dark)}
     button:disabled{background:var(--grey-100);border-color:var(--grey-200);color:var(--grey-500);cursor:not-allowed}
-    .secondary-button{background:#fff;color:var(--grey-900);border:1px solid var(--grey-200)}
-    .secondary-button:hover{background:#fff;border-color:var(--grey-400)}
-    .small-button{display:inline-block;width:auto;margin:0;padding:5px 10px;font-size:11px}
+    button .hint{display:block;font-weight:400;font-size:10.5px;color:#DDF0E0;margin-top:2px}
+    .link-button{appearance:none;border:none;background:none;color:var(--grey-600);
+      font:600 11.5px/1.2 var(--font-body);cursor:pointer;padding:6px 2px;text-align:left;width:auto;display:inline-block}
+    .link-button:hover{color:var(--grey-900);text-decoration:underline}
 
     .radio-row{display:flex;gap:16px;margin-bottom:10px}
     .radio-row label{display:flex;align-items:center;gap:6px;width:auto;margin:0;
       font-size:12.5px;letter-spacing:0;text-transform:none;color:var(--grey-900)}
     .radio-row input{display:inline-block;width:auto;margin:0;accent-color:var(--green)}
 
-    #feFolderList{max-height:280px;overflow-y:auto;border:1px solid var(--grey-200);border-radius:10px;margin-top:6px}
+    .list-head{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin:12px 0 6px}
+    .list-head label{margin:0}
+    #feRefreshListButton{flex:none;width:24px;height:24px;margin:0;padding:0;border-radius:6px;
+      border:1px solid var(--grey-200);background:#fff;color:var(--grey-600);font-size:13px;
+      display:flex;align-items:center;justify-content:center;transition:transform 400ms ease}
+    #feRefreshListButton:hover{background:#fff;border-color:var(--grey-400);color:var(--grey-900)}
+    #feRefreshListButton.spinning{transform:rotate(300deg)}
+
+    #feFolderList{max-height:260px;overflow-y:auto;border:1px solid var(--grey-200);border-radius:8px;margin-top:0}
     .folder-item{display:flex;justify-content:space-between;align-items:center;gap:10px;
-      padding:9px 11px;border-bottom:1px solid var(--grey-100);cursor:pointer;font-size:13px}
+      padding:9px 11px;border-bottom:1px solid var(--grey-100);cursor:pointer;font-size:12.5px}
     .folder-item:last-child{border-bottom:none}
     .folder-item:hover{background:var(--grey-50)}
     .folder-item.selected{background:var(--green-pale);box-shadow:inset 2px 0 0 var(--green)}
     .folder-item .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--grey-900)}
-    .folder-item .tag{flex:none;font-family:var(--font-mono);font-size:10px;letter-spacing:.04em;
-      color:var(--grey-400);margin-left:8px;white-space:nowrap}
+    .folder-item .tag{flex:none;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.03em;color:var(--grey-400)}
     .empty-message{padding:12px;color:var(--grey-400);font-size:12px}
+    #feSetupStatus{font-size:10.5px;color:var(--grey-400);margin-top:6px}
 
-    .summary-box{border:1px solid var(--grey-200);border-radius:10px;padding:12px;
-      font-size:12.5px;margin-bottom:12px;background:#fff}
+    .summary-box{border:1px solid var(--grey-200);border-radius:8px;padding:14px;font-size:12.5px;background:var(--grey-50)}
     .summary-box .row{margin-bottom:6px}
     .summary-box .row:last-child{margin-bottom:0}
     .summary-box .label{font-weight:600;color:var(--grey-900)}
     .warning-box{border:1px solid #E78707;background:#FFF8E1;color:#7A5B00;border-radius:4px;
       padding:10px;font-size:12px;margin-bottom:10px}
 
-    #feSetupStatus,#feNoSelection{font-size:12px;color:var(--grey-600)}
+    #feNoSelection{font-size:12px;color:var(--grey-600)}
   </style>
 </head>
 <body>
@@ -103,8 +112,11 @@
           <label><input type="radio" name="feService" value="Sustainability" checked /> Sustainability</label>
           <label><input type="radio" name="feService" value="Energy" /> Energy</label>
         </div>
-        <label for="feFilterBox">Search Archive &amp; Active project folders</label>
-        <input type="text" id="feFilterBox" placeholder="Type to search..." />
+        <div class="list-head">
+          <label for="feFilterBox" style="margin:0">Search Archive &amp; Active project folders</label>
+          <button type="button" id="feRefreshListButton" title="Refresh project list">&#8635;</button>
+        </div>
+        <input type="text" id="feFilterBox" placeholder="Type to search, &darr; to browse the list..." />
         <div id="feFolderList"></div>
         <div id="feSetupStatus"></div>
       </div>
@@ -112,14 +124,17 @@
 
     <div id="feStepConfirm" style="display: none;">
       <div id="feConfirmSummary"></div>
-      <button id="feConfirmButton">Add Category &amp; Stage for Filing</button>
-      <button id="feBackToPickButton" class="secondary-button">&larr; Choose a Different Project</button>
+      <button id="feConfirmButton">
+        Add Category &amp; Stage for Filing
+        <span class="hint">Tags the email(s) and queues them for background filing</span>
+      </button>
+      <button id="feBackToPickButton" class="link-button">&larr; Choose a Different Project</button>
     </div>
 
     <div id="feStepResult" style="display: none;">
       <div id="feResultSummary"></div>
       <button id="feStartOverButton">File Another</button>
-      <button id="feCloseButton" class="secondary-button">Close</button>
+      <button id="feCloseButton" class="link-button">Close</button>
     </div>
   </div>
 
@@ -218,6 +233,7 @@
             el.addEventListener("change", () => renderFeFolderList(document.getElementById("feFilterBox").value))
         );
         document.getElementById("feConfirmButton").addEventListener("click", handleFeConfirm);
+        document.getElementById("feRefreshListButton").addEventListener("click", refreshFeFolderList);
         document.getElementById("feBackToPickButton").addEventListener("click", () => showFeStep("pick"));
         document.getElementById("feStartOverButton").addEventListener("click", resetToPick);
         document.getElementById("feCloseButton").addEventListener("click", () => {
@@ -477,6 +493,15 @@
             status.textContent = `Error: ${err.message}`;
             status.style.color = "red";
         }
+    }
+
+    function refreshFeFolderList() {
+        const btn = document.getElementById("feRefreshListButton");
+        btn.classList.add("spinning");
+        loadFeFolderNames().finally(() => {
+            setTimeout(() => btn.classList.remove("spinning"), 400);
+            document.getElementById("feSetupStatus").textContent = "Updated just now.";
+        });
     }
 
     // Tracks whatever renderFeFolderList most recently rendered, so the filter box's

@@ -238,13 +238,28 @@ actually survives onto the sent copy in Sent Items. Standard, documented
 Outlook behavior, but unverified against a real send in this tenant as of
 this writing.
 
-**Known gap, called out deliberately rather than quietly fixed**: there is
-currently no "send without filing" option — only pick a project, or cancel
-the send and go back to the draft. This pops up on *every* send, including
-purely personal/non-project correspondence. `help-guide.html` flags this
-to staff directly. If it proves too disruptive in practice, the
-opt-in-while-composing alternative (discussed and explicitly turned down
-in favor of this) is the fallback design to revisit.
+**Skip Save, added later the same day**: a "Skip — send without filing"
+link on the pick step messages the parent with `{action:"skip"}`, which
+`commands.js` treats as an explicit no-op path to `finish(true)` (same
+outcome as the old silent fallback for any unrecognized message, just
+named so the intent is obvious in the code) — no category is added, the
+send goes through untagged, with no bridge call and no delay closing
+(nothing in flight to abort). This still pops up on *every* send; it just
+no longer forces a project choice on non-project mail.
+
+**UX parity pass with File Email, same day**: the dialog wasn't actually
+focusing its search box on open at all (`showStep` only focused it on an
+explicit transition back to `stepPick`, never on first load) — fixed by
+porting File Email's retrying `focusWhenReady` helper and calling it once
+after the first successful sign-in. Also: Save Both now re-steals focus
+from the Reply Only fallback once the original-message lookup resolves
+and enables it (if the user hasn't already moved focus away manually),
+so the mockup's "default focus on Save Both" holds even for the async
+case. Separately, `file-email-dialog.html`'s CSS was brought in line with
+this dialog's (ported from the approved mockup) for visual consistency —
+list-head + refresh button, button hint subtext, context/summary box
+styling — its interaction model (virtual-highlight-index nav, not real
+DOM focus) was deliberately left alone.
 
 **Why it exists**: Office.js task panes have no background-execution model —
 closing the pane kills its JS immediately, with no way to prevent closing or

@@ -8,9 +8,10 @@ that watches every staff member's own **"Emails to File"** Outlook folder (the s
 folder File Email's "Confirm" step already categorizes-and-stages emails into, in
 `taskpane.html`) and finishes the job: for each staged email, it resolves the project
 from its Outlook category, saves the email as `.eml` into that project's SharePoint
-`Emails` folder (created if missing), tags the original `Filed` + the bare project code,
-and moves it into a local **"Filed"** folder. It runs unattended, continuously, with no
-add-in or browser tab needing to be open.
+`Emails` folder (created if missing), adds `Filed` on top of whatever category it already
+had (the original project category is left exactly as the user set it — see the fix note
+below), and moves it into a local **"Filed"** folder. It runs unattended, continuously,
+with no add-in or browser tab needing to be open.
 
 This implements the background-sync design agreed over several prior sessions (see
 `Brief - SharePoint Email Filing (Newforma-style).md`, decisions in its §9), reconciled
@@ -66,7 +67,7 @@ Timer (every 5 min)
      drives/{ACTIVE|ARCHIVE_DRIVE_ID}/...           -- resolve/create <project>/Emails
      /users/{upn}/messages/{id}/$value              -- fetch raw .eml
      drives/.../items/{emailsFolderId}:/{name}:/content  -- upload
-     /users/{upn}/messages/{id} (PATCH categories)  -- tag Filed + bare project code
+     /users/{upn}/messages/{id} (PATCH categories)  -- add Filed, keep the original category as-is
      /users/{upn}/messages/{id}/move                -- move into "Filed"
         │
         ▼ (best-effort, non-blocking, both passes)
@@ -126,6 +127,16 @@ not planned** — the index doc's design does all of that work itself, reading s
 fields out of the `.eml` file (and, optionally, the `POST /api/emails` call) rather than
 SharePoint list columns. Implementing both would mean keeping two separate metadata
 stores in sync for no benefit.
+
+## Fixed: category rewrite on filing (2026-10-06)
+
+The Inbox ("Emails to File") pass used to strip any project-shaped category off a message
+before re-tagging it — e.g. a message categorized `SUPER26007_ProjectName` came out the
+other side as just `SUPER26007` plus `Filed`, silently discarding the project-name part of
+whatever label the user (or File Email) had actually assigned. Caught in production: staff
+noticed filed emails' categories had been rewritten down to the bare code. Fixed in
+`run.ps1` to just add `Filed` on top of the existing categories unchanged, matching how the
+Sent Items pass already worked.
 
 ## What this version does NOT do (known v1 gaps)
 

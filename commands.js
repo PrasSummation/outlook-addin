@@ -77,6 +77,13 @@ function onMessageSendHandler(event) {
           return;
         }
 
+        if (message.action === "skip") {
+          // User explicitly chose to send without filing -- let it through untagged,
+          // same as any other unrecognized/no-category message below, just named.
+          finish(true);
+          return;
+        }
+
         if (message.action === "save" && message.categoryName) {
           // The one thing only this context can do -- dialogs have no
           // Office.context.mailbox at all. Everything else (filing "the original", if
