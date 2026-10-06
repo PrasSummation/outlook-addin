@@ -213,6 +213,19 @@
                       <SupportsMultiSelect>true</SupportsMultiSelect>
                     </Action>
                   </Control>
+                  <!-- ActionType changed from ShowTaskpane to ExecuteFunction 2026-10-06: a
+                       task pane Outlook opens *fresh* (as this button did, as opposed to
+                       clicking the File Email tile inside an already-open, already-focused
+                       pane) wasn't reliably getting real OS keyboard focus for the picker's
+                       search box. ExecuteFunction here runs fileEmailDialogHandler in
+                       commands.js, which opens the same picker as file-email-dialog.html, a
+                       dialog window; hosts are expected to give dialogs real focus on
+                       creation, unlike a freshly-opened task pane. FileEmail.Url /
+                       taskpane.html?view=fileEmail is no longer reachable from this button,
+                       only from the V1.0 fallback below (for any client too old to
+                       understand this V1.1 block at all); kept there untouched since that
+                       fallback still works, just with the old, less-reliable focus
+                       behavior. -->
                   <Control xsi:type="Button" id="Summation.FileEmailButton">
                     <Label resid="FileEmailButtonLabel" />
                     <Supertip>
@@ -224,9 +237,8 @@
                       <bt:Image size="32" resid="Icon.32x32" />
                       <bt:Image size="80" resid="Icon.80x80" />
                     </Icon>
-                    <Action xsi:type="ShowTaskpane">
-                      <SourceLocation resid="FileEmail.Url" />
-                      <SupportsPinning>true</SupportsPinning>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>fileEmailDialogHandler</FunctionName>
                       <SupportsNoItemContext>true</SupportsNoItemContext>
                       <SupportsMultiSelect>true</SupportsMultiSelect>
                     </Action>

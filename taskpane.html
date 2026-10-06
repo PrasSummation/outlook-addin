@@ -306,42 +306,6 @@
       <div id="smStatus"></div>
     </div>
 
-    <div id="fileEmailWizard" style="display: none;">
-      <button id="feBackToBrowserButton" class="small-button secondary-button">&larr; Back</button>
-
-      <div id="feStepPick">
-        <div id="feContextSummary"></div>
-        <div id="feNoSelection" style="display: none;">
-          <p>Select one or more emails in the list, then click File Email again.</p>
-        </div>
-        <div id="fePickBody" style="display: none;">
-          <label>Service</label>
-          <div class="radio-row">
-            <label><input type="radio" name="feService" value="Sustainability" checked /> Sustainability</label>
-            <label><input type="radio" name="feService" value="Energy" /> Energy</label>
-          </div>
-          <label for="feFilterBox">Search Archive &amp; Active project folders</label>
-          <input type="text" id="feFilterBox" placeholder="Type to search..." />
-          <div id="feFolderList"></div>
-          <div id="feSetupStatus"></div>
-        </div>
-      </div>
-
-      <div id="feStepConfirm" style="display: none;">
-        <div id="feConfirmSummary"></div>
-        <button id="feConfirmButton">Add Category &amp; Stage for Filing</button>
-        <button id="feBackToPickButton" class="secondary-button">&larr; Choose a Different Project</button>
-      </div>
-
-      <div id="feStepResult" style="display: none;">
-        <div id="feResultSummary"></div>
-        <button id="feStartOverButton">File Another</button>
-      </div>
-
-      <!-- Below the project list / all wizard steps on purpose, so an old batch's status
-           note never pushes the thing the user actually came here to do further down. -->
-      <div id="fePendingBatches"></div>
-    </div>
   </div>
 
   <button id="refreshButton" title="Refresh Add-in"><span aria-hidden="true">&#x21bb;</span>Refresh</button>
@@ -359,7 +323,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "10.4";
+    const APP_VERSION = "11.0";
 
     let msalInstance;
     let folderEntries = [];
@@ -472,14 +436,6 @@
     };
     const BRIDGE_URL = "https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net";
 
-    // Only requested on demand, when using File Email's "stage for filing" move. Also
-    // forwarded to the bridge's FileEmailBatch endpoint, which uses it to call Graph on the
-    // signed-in user's own behalf. MailboxSettings.ReadWrite cleans up an auto-created master
-    // category afterward (see findMasterCategory/deleteMasterCategory).
-    const mailWriteRequest = {
-        scopes: ["Mail.ReadWrite", "MailboxSettings.ReadWrite"]
-    };
-
     const sitesRequest = {
         scopes: ["Sites.Selected"]
     };
@@ -528,26 +484,18 @@
         document.querySelectorAll('input[name="smService"]').forEach(el =>
             el.addEventListener("change", () => renderSharedMailboxSearchList(document.getElementById("smFilterBox").value))
         );
-        document.getElementById("fileEmailButton").addEventListener("click", openFileEmailWizard);
-        document.getElementById("feBackToBrowserButton").addEventListener("click", closeFileEmailWizard);
-        document.getElementById("feFilterBox").addEventListener("input", () => renderFeFolderList(document.getElementById("feFilterBox").value));
-        document.getElementById("feFilterBox").addEventListener("keydown", handleFeFilterKeydown);
-        document.querySelectorAll('input[name="feService"]').forEach(el =>
-            el.addEventListener("change", () => renderFeFolderList(document.getElementById("feFilterBox").value))
-        );
-        document.getElementById("feConfirmButton").addEventListener("click", handleFeConfirm);
-        document.getElementById("feBackToPickButton").addEventListener("click", () => showFeStep("pick"));
-        document.getElementById("feStartOverButton").addEventListener("click", openFileEmailWizard);
-        // Multi-select relies on this event firing to know the selection changed; an empty
-        // handler isn't enough. Re-run detection whenever it fires AND the File Email picker
-        // step is actually the thing on screen, so changing the selection while the pane is
-        // already open (not just at the moment it was first activated) is reflected.
+        document.getElementById("fileEmailButton").addEventListener("click", openFileEmailDialog);
+        // File Email's picker now runs in its own dialog window (file-email-dialog.html)
+        // rather than inline here -- a freshly-opened task pane (as opposed to clicking
+        // this tile inside an already-focused one) wasn't reliably getting real OS keyboard
+        // focus in Outlook, confirmed even after retrying .focus() on a timer and on
+        // window focus/visibilitychange events. See file-email-dialog.html's own header
+        // comment for the full reasoning. Keep forwarding selection changes into it for as
+        // long as it's open, so picking a different email (or deselecting) while the
+        // dialog is up is reflected there live, same as the old inline version did.
         if (Office.context.mailbox.addHandlerAsync) {
             Office.context.mailbox.addHandlerAsync(Office.EventType.SelectedItemsChanged, () => {
-                if (document.getElementById("fileEmailWizard").style.display === "block" &&
-                    document.getElementById("feStepPick").style.display === "block") {
-                    detectFeContext();
-                }
+                if (activeFileEmailDialog) forwardSelectionToDialog(activeFileEmailDialog);
             });
         }
 
@@ -572,7 +520,7 @@
 
             showAppUi(true);
             if (feDeepLinkRequested) {
-                await openFileEmailWizard();
+                await openFileEmailDialog();
             } else {
                 setTimeout(() => document.getElementById("filterBox").focus(), 100);
                 await loadFolders();
@@ -590,7 +538,7 @@
             if (token) {
                 showAppUi(true);
                 if (feDeepLinkRequested) {
-                    await openFileEmailWizard();
+                    await openFileEmailDialog();
                 } else {
                     setTimeout(() => document.getElementById("filterBox").focus(), 100);
                     await loadFolders();
@@ -1566,24 +1514,19 @@
         }
     }
 
-    // ---- File Email wizard ----
-    // Tags the currently open email, or every currently multi-selected email, with a
-    // project category, then stages it in Inbox\Emails to File. From there the separate
-    // email-filing-sync Azure Function (timer-triggered, no UI of its own) picks it up and
-    // moves it into the project's SharePoint Emails folder, usually within about 5 minutes
-    // — there is no longer a manual "Sync Emails" trigger button for this. Pure tagging
-    // uses plain Office.js (no Graph token needed); the "stage for filing" move is a
-    // same-mailbox Graph move (Inbox -> a subfolder of the same Inbox).
-    //
-    // Can't use the complete-action.html handoff pattern here: that page runs in a fully
-    // separate browser process with no Office.js context at all, so it has no access to
-    // Office.context.mailbox. This has to run inline in the taskpane, guarded the same
-    // way the manual mailbox-create path is (guardAgainstClose/beforeunload) rather than
-    // handed off.
-
-    let feState = {};
-    let feFolderEntries = [];
-    let feEmailsToFileFolderId = null;
+    // ---- File Email ----
+    // Detects the current selection and opens file-email-dialog.html with it -- the actual
+    // picker UI, project search/pick, Confirm, and the categorize+move batch (plus its
+    // pending-batch retry/dismiss UI) now live entirely in that dialog. Used to run inline
+    // here, but a task pane Outlook opens *fresh* (the ribbon's dedicated File Email button,
+    // as opposed to clicking this tile inside an already-open, already-focused pane) wasn't
+    // reliably getting real OS keyboard focus -- confirmed in real Outlook, even after
+    // retrying .focus() on a timer and on window focus/visibilitychange events. A dialog
+    // window doesn't have that problem (hosts are expected to give dialogs real focus on
+    // creation), so the whole picker moved there. See file-email-dialog.html's own header
+    // comment for the rest of the reasoning, and commands.js for the ribbon button's own
+    // copy of this same detect-and-open logic (it can't share this script with taskpane.html
+    // directly -- same reason every other duplicated constant in this app isn't shared).
 
     function officeAsync(target, method, ...args) {
         return new Promise((resolve, reject) => {
@@ -1594,112 +1537,25 @@
         });
     }
 
-    async function openFileEmailWizard() {
-        document.getElementById("folderBrowser").style.display = "none";
-        document.getElementById("newProjectButton").style.display = "none";
-        document.getElementById("convertProjectButton").style.display = "none";
-        document.getElementById("convertToArchiveButton").style.display = "none";
-        document.getElementById("searchMailboxButton").style.display = "none";
-        document.getElementById("emailSearchButton").style.display = "none";
-        document.getElementById("fileEmailWizard").style.display = "block";
-        feState = {};
-        document.getElementById("feFilterBox").value = "";
-        document.getElementById("feSetupStatus").textContent = "";
-        showFeStep("pick");
-        renderFePendingBatches();
-        await detectFeContext();
-        // Land the cursor straight in the project search box so the user can just start
-        // typing — only when there's actually something to pick a project for. A single
-        // delayed .focus() (the fix used for handleLogin's filterBox, a one-off right
-        // after sign-in) wasn't enough here -- confirmed still not focusing in real
-        // Outlook even with a 100ms delay. Retry a few times instead of guessing one
-        // magic delay, since how long Outlook's webview takes to actually accept focus
-        // after the getSelectedItemsAsync round-trip in detectFeContext isn't something
-        // this code can know in advance.
-        if (document.getElementById("fePickBody").style.display === "block") {
-            focusWhenReady("feFilterBox");
-        }
-    }
-
-    // A fixed-delay retry wasn't enough: reported still not focusing when the ribbon's
-    // dedicated File Email button opens the pane fresh (as opposed to clicking the File
-    // Email tile inside an already-open, already-focused pane). That points to Outlook
-    // not handing this freshly-created webview real OS keyboard focus at all yet, rather
-    // than this code just not having waited long enough -- no fixed delay can fix that if
-    // the focus genuinely hasn't arrived yet. So: poll AND react to window/document focus
-    // signals, for a while, and grab the input the moment real focus actually shows up,
-    // whenever that turns out to be -- instead of betting on one guessed delay.
-    function focusWhenReady(elementId) {
-        const el = document.getElementById(elementId);
-        if (!el) return;
-        let done = false;
-
-        function tryFocus() {
-            if (done || el.offsetParent === null) return;
-            try { window.focus(); } catch (err) { /* not available in every host -- ignore */ }
-            el.focus();
-            if (document.activeElement === el) {
-                done = true;
-                cleanup();
-            }
-        }
-        function cleanup() {
-            clearInterval(poll);
-            window.removeEventListener("focus", tryFocus);
-            document.removeEventListener("visibilitychange", tryFocus);
-        }
-
-        const poll = setInterval(tryFocus, 150);
-        window.addEventListener("focus", tryFocus);
-        document.addEventListener("visibilitychange", tryFocus);
-        tryFocus();
-        setTimeout(cleanup, 15000); // give up quietly rather than poll forever
-    }
-
-    function closeFileEmailWizard() {
-        document.getElementById("fileEmailWizard").style.display = "none";
-        document.getElementById("newProjectButton").style.display = "block";
-        document.getElementById("convertProjectButton").style.display = "block";
-        document.getElementById("convertToArchiveButton").style.display = "block";
-        document.getElementById("searchMailboxButton").style.display = "block";
-        document.getElementById("emailSearchButton").style.display = "block";
-    }
-
-    function showFeStep(step) {
-        document.getElementById("feStepPick").style.display = step === "pick" ? "block" : "none";
-        document.getElementById("feStepConfirm").style.display = step === "confirm" ? "block" : "none";
-        document.getElementById("feStepResult").style.display = step === "result" ? "block" : "none";
-    }
-
-    async function detectFeContext() {
-        const summary = document.getElementById("feContextSummary");
-        const noSelection = document.getElementById("feNoSelection");
-        const pickBody = document.getElementById("fePickBody");
-        noSelection.style.display = "none";
-        pickBody.style.display = "none";
-        summary.innerHTML = "";
-
-        // Check the actual multi-selection FIRST. Office.context.mailbox.item still resolves
-        // to a single item (the first/active one) even when several are selected, rather than
-        // being null the way "no item context" might suggest -- checking it first meant a
-        // multi-select never got past this branch, silently processing only that one item.
+    // Mirrors the old inline detectFeContext, but returns a plain { mode, items } payload
+    // instead of rendering anything -- the dialog does its own rendering. Converts to REST
+    // ids here too, since the dialog has no Office.context.mailbox access at all to do that
+    // itself.
+    async function detectFileEmailSelection() {
         try {
             const selected = await officeAsync(Office.context.mailbox, "getSelectedItemsAsync");
             // getSelectedItemsAsync's itemType comes back capitalized ("Message"), unlike
-            // Office.context.mailbox.item.itemType, which uses the enum's lowercase runtime
-            // value ("message") -- compare case-insensitively rather than against the enum
-            // constant directly, which silently matched nothing and made this always fall
-            // through to the single-item path below, no matter how many were selected.
+            // Office.context.mailbox.item.itemType's lowercase runtime value ("message") --
+            // compare case-insensitively, which silently matched nothing otherwise.
             const messages = (selected || []).filter(i => (i.itemType || "").toLowerCase() === "message");
             if (messages.length > 0) {
-                feState.mode = messages.length > 1 ? "multi" : "single";
-                feState.items = messages.map(i => ({ itemId: i.itemId, subject: i.subject || "(no subject)" }));
-                renderFeContextSummary(messages.length > 1
-                    ? `Categorizing ${messages.length} selected email(s).`
-                    : `Categorizing 1 email: "${messages[0].subject || "(no subject)"}"`);
-                pickBody.style.display = "block";
-                loadFeFolderNames();
-                return;
+                return {
+                    mode: messages.length > 1 ? "multi" : "single",
+                    items: messages.map(i => ({
+                        restId: Office.context.mailbox.convertToRestId(i.itemId, Office.MailboxEnums.RestVersion.v2_0),
+                        subject: i.subject || "(no subject)"
+                    }))
+                };
             }
         } catch (err) {
             console.error("Could not read the current multi-selection:", err);
@@ -1707,525 +1563,48 @@
 
         const singleItem = getCurrentMailItem();
         if (singleItem && singleItem.itemType === Office.MailboxEnums.ItemType.Message) {
-            feState.mode = "single";
-            feState.items = [{ itemId: singleItem.itemId, subject: singleItem.subject || "(no subject)" }];
-            renderFeContextSummary(`Categorizing 1 email: "${singleItem.subject || "(no subject)"}"`);
-            pickBody.style.display = "block";
-            loadFeFolderNames();
-            return;
+            return {
+                mode: "single",
+                items: [{
+                    restId: Office.context.mailbox.convertToRestId(singleItem.itemId, Office.MailboxEnums.RestVersion.v2_0),
+                    subject: singleItem.subject || "(no subject)"
+                }]
+            };
         }
 
-        noSelection.style.display = "block";
+        return { mode: "none", items: [] };
     }
 
-    function renderFeContextSummary(text) {
-        const box = document.createElement("div");
-        box.className = "summary-box";
-        const row = document.createElement("div");
-        row.className = "row";
-        row.textContent = text;
-        box.appendChild(row);
-        const summary = document.getElementById("feContextSummary");
-        summary.innerHTML = "";
-        summary.appendChild(box);
-    }
+    let activeFileEmailDialog = null;
 
-    async function loadFeFolderNames() {
-        const status = document.getElementById("feSetupStatus");
-        status.style.color = "#333";
-        status.textContent = "Loading Archive & Active project folders...";
-        try {
-            const token = await signInAndGetToken(sitesRequest, true);
-            if (!token) throw new Error("Could not get permission to access SharePoint.");
-
-            const archiveCombos = Object.keys(ARCHIVE_BRANCH_PATH);
-            const activeCombos = Object.keys(ACTIVE_BRANCH_PATH);
-            const [archiveResults, activeResults] = await Promise.all([
-                Promise.all(archiveCombos.map(async combo => {
-                    const folders = await listFolders(ARCHIVE_DRIVE_ID, ARCHIVE_BRANCH_PATH[combo], token);
-                    return folders.filter(f => !/template/i.test(f.name)).map(f => ({ name: f.name, combo, source: "Archive" }));
-                })),
-                Promise.all(activeCombos.map(async combo => {
-                    const folders = await listFolders(ACTIVE_DRIVE_ID, ACTIVE_BRANCH_PATH[combo], token);
-                    return folders.filter(f => !/template/i.test(f.name)).map(f => ({ name: f.name, combo, source: "Active" }));
-                }))
-            ]);
-
-            feFolderEntries = [...archiveResults.flat(), ...activeResults.flat()];
-            renderFeFolderList(document.getElementById("feFilterBox").value);
-            status.textContent = "";
-        } catch (err) {
-            console.error("Failed to load Archive/Active project folders:", err);
-            status.textContent = `Error: ${err.message}`;
-            status.style.color = "red";
-        }
-    }
-
-    // Tracks whatever renderFeFolderList most recently rendered, so the filter box's
-    // keyboard handler (arrows/Enter) can navigate and select without re-deriving the
-    // filtered list itself.
-    let feFilteredEntries = [];
-    let feHighlightIndex = -1;
-
-    function renderFeFolderList(filter) {
-        const list = document.getElementById("feFolderList");
-        list.innerHTML = "";
-        const selectedService = document.querySelector('input[name="feService"]:checked').value;
-        const normalizedFilter = (filter || "").toLowerCase();
-        feFilteredEntries = feFolderEntries
-            .filter(entry => serviceFilterMatches(selectedService, entry.combo))
-            .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
-            .sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name));
-        // Default to the top result highlighted, so Enter works the instant a match shows
-        // up without the user ever having to touch an arrow key first.
-        feHighlightIndex = feFilteredEntries.length > 0 ? 0 : -1;
-
-        if (feFilteredEntries.length === 0) {
-            const empty = document.createElement("div");
-            empty.className = "empty-message";
-            empty.textContent = "No matching project folders found.";
-            list.appendChild(empty);
-            return;
-        }
-
-        feFilteredEntries.forEach((entry, index) => {
-            const item = document.createElement("div");
-            item.className = "folder-item" + (index === feHighlightIndex ? " selected" : "");
-
-            const name = document.createElement("span");
-            name.className = "name";
-            name.textContent = entry.name;
-            item.appendChild(name);
-
-            const tag = document.createElement("span");
-            tag.className = "tag";
-            tag.textContent = `${entry.combo} · ${entry.source}`;
-            item.appendChild(tag);
-
-            item.addEventListener("click", () => selectFeProject(entry.name));
-            // Keeps mouse and keyboard highlighting in sync, so Enter always acts on
-            // whichever item visually looks selected, how ever it got that way.
-            item.addEventListener("mouseenter", () => setFeHighlight(index));
-            list.appendChild(item);
-        });
-    }
-
-    function setFeHighlight(index) {
-        const items = document.getElementById("feFolderList").querySelectorAll(".folder-item");
-        if (feHighlightIndex >= 0 && items[feHighlightIndex]) items[feHighlightIndex].classList.remove("selected");
-        feHighlightIndex = index;
-        const highlighted = items[feHighlightIndex];
-        if (highlighted) {
-            highlighted.classList.add("selected");
-            highlighted.scrollIntoView({ block: "nearest" });
-        }
-    }
-
-    function handleFeFilterKeydown(e) {
-        if (feFilteredEntries.length === 0) return;
-        if (e.key === "ArrowDown") {
-            e.preventDefault();
-            setFeHighlight(Math.min(feHighlightIndex + 1, feFilteredEntries.length - 1));
-        } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            setFeHighlight(Math.max(feHighlightIndex - 1, 0));
-        } else if (e.key === "Enter") {
-            e.preventDefault();
-            if (feHighlightIndex >= 0 && feFilteredEntries[feHighlightIndex]) {
-                selectFeProject(feFilteredEntries[feHighlightIndex].name);
+    async function openFileEmailDialog() {
+        const context = await detectFileEmailSelection();
+        const url = `https://prassummation.github.io/outlook-addin/file-email-dialog.html?context=${encodeURIComponent(JSON.stringify(context))}`;
+        Office.context.ui.displayDialogAsync(url, { height: 70, width: 40 }, (asyncResult) => {
+            if (asyncResult.status === Office.AsyncResultStatus.Failed) {
+                // Most likely cause: a File Email dialog is already open (Office.js only
+                // allows one dialog at a time per add-in) -- surface it somewhere visible
+                // rather than fail silently.
+                console.error("Could not open File Email:", asyncResult.error);
+                const status = document.getElementById("statusMessage");
+                if (status) status.textContent = `Could not open File Email: ${asyncResult.error.message}`;
+                return;
             }
-        }
-    }
-
-    function selectFeProject(name) {
-        feState.projectName = name;
-        const count = feState.items.length;
-        document.getElementById("feConfirmSummary").innerHTML = `
-            <div class="summary-box">
-                <div class="row"><span class="label">Project:</span> ${name}</div>
-                <div class="row">${count} item(s) will be categorized as "${name}" and moved into "Emails to File".</div>
-            </div>
-        `;
-        showFeStep("confirm");
-    }
-
-    // Looks up a category by display name in the mailbox's master list. Returns null if
-    // it isn't there, so the caller can tell "never existed" apart from "exists."
-    async function findMasterCategory(categoryName) {
-        const token = await signInAndGetToken(mailWriteRequest, true);
-        if (!token) throw new Error("Could not get permission to read mailbox categories.");
-        const result = await graphGet("https://graph.microsoft.com/v1.0/me/outlook/masterCategories", token);
-        return (result.value || []).find(c => c.displayName === categoryName) || null;
-    }
-
-    async function deleteMasterCategory(categoryId) {
-        const token = await signInAndGetToken(mailWriteRequest, true);
-        if (!token) throw new Error("Could not get permission to clean up mailbox categories.");
-        const response = await fetch(`https://graph.microsoft.com/v1.0/me/outlook/masterCategories/${encodeURIComponent(categoryId)}`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!response.ok && response.status !== 404) {
-            const errorText = await response.text();
-            throw new Error(`Could not remove master category: ${response.status} ${errorText}`);
-        }
-    }
-
-    async function getOrCreateEmailsToFileFolderId() {
-        if (feEmailsToFileFolderId) return feEmailsToFileFolderId;
-        const token = await signInAndGetToken(mailWriteRequest, true);
-        if (!token) throw new Error("Could not get permission to access your mailbox.");
-
-        const existing = await graphGet(
-            `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/childFolders?$filter=${encodeURIComponent("displayName eq 'Emails to File'")}`,
-            token
-        );
-        if (existing.value && existing.value.length > 0) {
-            feEmailsToFileFolderId = existing.value[0].id;
-            return feEmailsToFileFolderId;
-        }
-
-        const response = await fetch("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/childFolders", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ displayName: "Emails to File" })
-        });
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Could not create "Emails to File": ${response.status} ${errorText}`);
-        }
-        const created = await response.json();
-        feEmailsToFileFolderId = created.id;
-        return feEmailsToFileFolderId;
-    }
-
-    // ---- Server-side batch handoff ----
-    // The actual categorize+move loop now runs on the Exchange bridge (FileEmailBatch),
-    // not here. This is the fix for the pane-closes-mid-action problem: Outlook tears down
-    // this pane's content on a selection change unless it's pinned (confirmed, and the
-    // default when SupportsMultiSelect is on) -- but complete-action.html's handoff pattern
-    // doesn't work for File Email, since that page has no Office.js context to read the
-    // selection from. Routing the Graph calls through the bridge instead gets the same
-    // durability a different way: once the bridge receives this request, Azure Functions
-    // keeps running it to completion even if the taskpane disappears moments later.
-    //
-    // batchId is tracked in localStorage (survives the pane being closed/reopened, same as
-    // the MSAL token cache already does) the moment the batch is sent, not after it
-    // completes -- so if the pane is torn down before this request's response ever lands,
-    // the next time File Email is opened it can still check what actually happened.
-
-    const FE_BATCHES_STORAGE_KEY = "fileEmailPendingBatches";
-
-    function getFeBatchesFromStorage() {
-        try {
-            return JSON.parse(localStorage.getItem(FE_BATCHES_STORAGE_KEY) || "[]");
-        } catch (err) {
-            return [];
-        }
-    }
-
-    function saveFeBatchesToStorage(batches) {
-        try {
-            localStorage.setItem(FE_BATCHES_STORAGE_KEY, JSON.stringify(batches));
-        } catch (err) {
-            console.error("Could not persist File Email batch tracking:", err);
-        }
-    }
-
-    function addFeBatchToStorage(entry) {
-        const batches = getFeBatchesFromStorage();
-        batches.push(entry);
-        saveFeBatchesToStorage(batches);
-    }
-
-    function removeFeBatchFromStorage(batchId) {
-        saveFeBatchesToStorage(getFeBatchesFromStorage().filter(b => b.batchId !== batchId));
-    }
-
-    async function getFeBatchStatus(batchId) {
-        const token = await signInAndGetToken(bridgeRequest, true);
-        if (!token) throw new Error("Could not get permission to call the bridge.");
-        const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${encodeURIComponent(batchId)}`, {
-            headers: { Authorization: `Bearer ${token}` }
-        });
-        if (response.status === 404) return null;
-        if (!response.ok) throw new Error(`Status check failed: ${response.status}`);
-        return response.json();
-    }
-
-    function feTimeAgo(isoString) {
-        const minutes = Math.round((Date.now() - new Date(isoString).getTime()) / 60000);
-        if (minutes < 1) return "just now";
-        if (minutes === 1) return "1 minute ago";
-        return `${minutes} minutes ago`;
-    }
-
-    // If a batch has had no confirmed result for this long, assume the run that was tracking
-    // it got lost (pane torn down before the response landed, function instance recycled
-    // mid-invocation, etc.) rather than that it's still genuinely in flight -- these batches
-    // are a handful of Graph calls at most, not a workload that legitimately runs for minutes.
-    const FE_BATCH_STALE_MS = 3 * 60 * 1000;
-    // Cap on automatic retries before giving up and asking the user to redo it themselves --
-    // without this, a batch that can never succeed (e.g. the bridge itself is down) would
-    // retry forever, once per File Email open, with no path to ever surfacing that clearly.
-    const FE_BATCH_MAX_RETRIES = 2;
-
-    // Posts a batch (first attempt or a retry) and waits for its result -- shared by the
-    // initial Confirm click and by the automatic retry path below, since they're the exact
-    // same request.
-    async function postFeBatch(entry) {
-        const graphToken = await signInAndGetToken(mailWriteRequest, true);
-        if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
-        const bridgeToken = await signInAndGetToken(bridgeRequest, true);
-        if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
-
-        const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-                graphAccessToken: graphToken,
-                categoryName: entry.categoryName,
-                destinationFolderId: entry.destinationFolderId,
-                items: entry.items
-            })
-        });
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Bridge returned ${response.status}: ${errorText}`);
-        }
-        return response.json();
-    }
-
-    // The bridge now surfaces Graph's actual error code when it can parse one (see
-    // run.ps1) -- translate the one case users actually need a plain-English answer for
-    // (the item is simply gone) rather than showing them a raw Graph error string.
-    function describeFeItemError(errorText) {
-        if (!errorText) return "unknown error";
-        if (/ErrorItemNotFound|ErrorInvalidIdMalformed|does not exist|\(404\)|404 \(Not Found\)/i.test(errorText)) {
-            return "this email appears to have been moved or deleted since filing was started";
-        }
-        return errorText;
-    }
-
-    // Shared by both the Confirm click (result known immediately) and the background
-    // pending-batch check (result discovered later, possibly after an automatic retry) --
-    // the master-category cleanup and failure reporting only depend on the recorded entry
-    // and the result, not on how or when that result was obtained.
-    async function finalizeFeBatchResult(entry, result) {
-        let cleanupNote = "";
-        if (entry.categoryPreExisted) {
-            cleanupNote = ` "${entry.categoryName}" was already in your category list before this run, so it was left as-is.`;
-        } else if (result.succeeded > 0) {
-            try {
-                const masterEntry = await findMasterCategory(entry.categoryName);
-                if (masterEntry) {
-                    await deleteMasterCategory(masterEntry.id);
-                    cleanupNote = ` Removed "${entry.categoryName}" from your category list (it didn't exist before this run).`;
-                }
-            } catch (err) {
-                console.error("Could not clean up the auto-created master category:", err);
-                cleanupNote = ` Note: "${entry.categoryName}" is now in your category list and couldn't be automatically removed (${err.message}).`;
-            }
-        }
-
-        const failureDetails = (result.items || [])
-            .filter(i => i.status === "failed")
-            .map(i => `"${i.subject}" — ${describeFeItemError(i.error)}`);
-
-        return { cleanupNote, failureDetails };
-    }
-
-    // Re-checks every locally-tracked batch. A batch that's actually done is dropped from
-    // local tracking (whether or not it's reported here) so it doesn't keep nagging forever.
-    // A batch with no confirmed result yet is only retried once it's been stale for
-    // FE_BATCH_STALE_MS AND the status check came back a definite "not found" (result ===
-    // null) -- not when the status check itself merely failed/threw, which is ambiguous
-    // (a network blip here says nothing about whether the batch is actually fine) and could
-    // otherwise send a duplicate categorize+move at a run that's really still in progress.
-    // Each note carries the batchId it came from, so the UI can offer a per-note Dismiss
-    // (see renderFePendingBatches) -- useful because a "gave up" note means the *server
-    // couldn't confirm* a result, not that the categorize+move definitely failed. The Graph
-    // calls themselves often did go through; the batch's own result just never made it back
-    // (pane closed, function instance recycled, etc.). Rather than guess, let the user check
-    // the email for themselves (or search for it) and dismiss the note once they're satisfied,
-    // instead of only ever trusting an automatic "it's resolved" signal that may never come.
-    async function refreshPendingFeBatches() {
-        const batches = getFeBatchesFromStorage();
-        if (batches.length === 0) return [];
-
-        const stillPending = [];
-        const notes = [];
-        for (const entry of batches) {
-            let result;
-            try {
-                result = await getFeBatchStatus(entry.batchId);
-            } catch (err) {
-                console.error("Could not check File Email batch status:", err);
-                stillPending.push(entry);
-                notes.push({ batchId: entry.batchId, text: `"${entry.categoryName}": couldn't check its status just now (started ${feTimeAgo(entry.startedAt)}).` });
-                continue;
-            }
-
-            if (result && result.status === "done") {
-                if (result.failed > 0) {
-                    const { cleanupNote, failureDetails } = await finalizeFeBatchResult(entry, result);
-                    const failureNote = failureDetails.length ? ` ${failureDetails.join("; ")}.` : "";
-                    notes.push({ batchId: entry.batchId, text: `"${entry.categoryName}": ${result.succeeded} of ${result.total} categorized and moved, ${result.failed} failed.${failureNote}${cleanupNote}` });
-                } else {
-                    await finalizeFeBatchResult(entry, result); // still runs cleanup, just nothing to report
-                }
-                continue; // resolved either way -- nothing left to track
-            }
-
-            const elapsed = Date.now() - new Date(entry.lastAttemptAt || entry.startedAt).getTime();
-            if (elapsed < FE_BATCH_STALE_MS) {
-                stillPending.push(entry);
-                notes.push({ batchId: entry.batchId, text: `"${entry.categoryName}": still processing (started ${feTimeAgo(entry.startedAt)}).` });
-                continue;
-            }
-
-            if ((entry.retryCount || 0) >= FE_BATCH_MAX_RETRIES) {
-                // Deliberately not asserting failure here -- see the comment above this
-                // function. The categorize+move very often did succeed; this only means the
-                // confirmation never arrived.
-                notes.push({
-                    batchId: entry.batchId,
-                    text: `"${entry.categoryName}": no confirmation came back after ${entry.retryCount} automatic retr${entry.retryCount === 1 ? "y" : "ies"} (started ${feTimeAgo(entry.startedAt)}). It may well have already gone through — check the email's folder/category (or Email Search) before re-filing it, so it isn't filed twice.`
-                });
-                continue; // stop tracking -- don't retry forever
-            }
-
-            // Stale with a confirmed "not found": the run that was tracking this batch most
-            // likely never completed (pane torn down, function instance recycled, etc.), so
-            // re-send the exact same batch rather than leaving the user to notice and redo it.
-            const retried = { ...entry, lastAttemptAt: new Date().toISOString(), retryCount: (entry.retryCount || 0) + 1 };
-            try {
-                const result2 = await postFeBatch(retried);
-                const { cleanupNote, failureDetails } = await finalizeFeBatchResult(retried, result2);
-                const failureNote = failureDetails.length ? ` ${failureDetails.join("; ")}.` : "";
-                notes.push({ batchId: entry.batchId, text: `"${entry.categoryName}": took longer than expected, so it was automatically retried — ${result2.succeeded} of ${result2.total} succeeded, ${result2.failed} failed.${failureNote}${cleanupNote}` });
-                // Resolved by the retry -- nothing left to track.
-            } catch (err) {
-                console.error("Automatic retry of a File Email batch failed:", err);
-                stillPending.push(retried);
-                notes.push({ batchId: entry.batchId, text: `"${entry.categoryName}": took longer than expected, and an automatic retry (attempt ${retried.retryCount}) didn't get a confirmed result either (${err.message}). Will try again.` });
-            }
-        }
-        saveFeBatchesToStorage(stillPending);
-        return notes;
-    }
-
-    async function renderFePendingBatches() {
-        const container = document.getElementById("fePendingBatches");
-        container.innerHTML = "";
-        try {
-            const notes = await refreshPendingFeBatches();
-            if (notes.length === 0) return;
-
-            const box = document.createElement("div");
-            box.className = "warning-box";
-            const heading = document.createElement("b");
-            heading.textContent = "Recent File Email batches:";
-            box.appendChild(heading);
-
-            notes.forEach(note => {
-                const row = document.createElement("div");
-                row.style.marginTop = "6px";
-                const text = document.createElement("span");
-                text.textContent = note.text;
-                row.appendChild(text);
-
-                const dismiss = document.createElement("a");
-                dismiss.href = "#";
-                dismiss.textContent = "Dismiss";
-                dismiss.style.marginLeft = "8px";
-                dismiss.style.fontSize = "11px";
-                dismiss.style.whiteSpace = "nowrap";
-                dismiss.addEventListener("click", (e) => {
-                    e.preventDefault();
-                    // A no-op in storage for a note whose batch was already resolved/given up
-                    // (nothing left to remove) -- harmless either way, and stops a still-
-                    // pending one from nagging again on the next open if the user's satisfied.
-                    removeFeBatchFromStorage(note.batchId);
-                    row.remove();
-                    if (!box.querySelector("div")) container.innerHTML = "";
-                });
-                row.appendChild(dismiss);
-                box.appendChild(row);
+            activeFileEmailDialog = asyncResult.value;
+            activeFileEmailDialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
+                activeFileEmailDialog = null;
             });
-
-            container.appendChild(box);
-        } catch (err) {
-            console.error("Could not refresh pending File Email batches:", err);
-        }
+        });
     }
 
-    function handleFeConfirm() {
-        return guardAgainstClose(handleFeConfirmInner);
-    }
-
-    async function handleFeConfirmInner() {
-        const categoryName = feState.projectName;
-        const resultSummary = document.getElementById("feResultSummary");
-        resultSummary.innerHTML = `<div class="summary-box"><div class="row">Starting...</div></div>`;
-        showFeStep("result");
-
-        // Check whether this category already existed BEFORE we do anything, so we know
-        // afterward whether Exchange auto-created it (clean it up) or it was already a
-        // real, intentionally-kept category (leave it alone either way).
-        let categoryPreExisted = true;
-        try {
-            categoryPreExisted = (await findMasterCategory(categoryName)) !== null;
-        } catch (err) {
-            console.error("Could not check master category list beforehand:", err);
-            categoryPreExisted = true; // unknown state -- don't risk deleting something that was already there
-        }
-
-        let emailsToFileFolderId = null;
-        try {
-            emailsToFileFolderId = await getOrCreateEmailsToFileFolderId();
-        } catch (err) {
-            console.error("Could not resolve the Emails to File folder:", err);
-        }
-
-        const batchId = crypto.randomUUID();
-        const items = feState.items.map(item => ({
-            restId: Office.context.mailbox.convertToRestId(item.itemId, Office.MailboxEnums.RestVersion.v2_0),
-            subject: item.subject
-        }));
-
-        // Record this BEFORE firing the request, synchronously -- if the pane is torn down
-        // moments later, the batchId still needs to already be saved for this to work at all.
-        // Everything postFeBatch/finalizeFeBatchResult need (items, destination, whether the
-        // category pre-existed) is recorded here too, so a later automatic retry or pending-
-        // batch check can redo this exact request without this pane needing to still be open.
-        const now = new Date().toISOString();
-        const batchEntry = {
-            batchId, categoryName, total: items.length,
-            startedAt: now, lastAttemptAt: now, retryCount: 0,
-            items, destinationFolderId: emailsToFileFolderId, categoryPreExisted
-        };
-        addFeBatchToStorage(batchEntry);
-
-        try {
-            const result = await postFeBatch(batchEntry);
-
-            // The request came back, so there's nothing left pending to check on later.
-            removeFeBatchFromStorage(batchId);
-
-            const { cleanupNote, failureDetails } = await finalizeFeBatchResult(batchEntry, result);
-            const failureNote = failureDetails.length ? ` ${failureDetails.join("; ")}.` : "";
-
-            resultSummary.innerHTML = `<div class="summary-box"><div class="row">${result.succeeded} of ${result.total} succeeded, ${result.failed} failed.${failureNote}${cleanupNote}</div></div>`;
-        } catch (err) {
-            console.error("Failed to start/confirm the File Email batch:", err);
-            resultSummary.innerHTML = `
-                <div class="warning-box">
-                    Started, but couldn't confirm it finished: ${err.message}.
-                    It's likely still running on the server — reopen File Email later and it'll report what actually happened.
-                </div>
-            `;
-        }
+    function forwardSelectionToDialog(dialog) {
+        detectFileEmailSelection().then(context => {
+            try {
+                dialog.messageChild(JSON.stringify(context));
+            } catch (err) {
+                // Dialog most likely just closed -- nothing left to forward to.
+            }
+        });
     }
   </script>
   <script>

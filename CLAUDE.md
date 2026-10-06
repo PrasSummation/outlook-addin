@@ -33,8 +33,10 @@ project mailbox.
 
 | File | Role |
 |---|---|
-| `manifest2.xml` | Office Add-in manifest. Registers the ribbon button and compose-mode button, both pointing at `taskpane.html`. This is the **only** entry point wired into Outlook itself. |
-| `taskpane.html` | The task pane sidebar. Main menu + three "wizard" flows (see below) that collect inputs, then hand off execution, plus the standalone File Email and Email Search actions. Also has the live `APP_VERSION` string shown in its footer — bump it on every change so you can confirm a deployed version in the field. |
+| `manifest2.xml` | Office Add-in manifest. Registers the main ribbon/compose-mode buttons (pointing at `taskpane.html`), the OnMessageSend LaunchEvent (`commands.js`), and, as of 2026-10-06, the ribbon's dedicated **File Email** button as an `ExecuteFunction` (also `commands.js`) rather than a `ShowTaskpane` — see "File Email is a dialog, not a wizard" below for why. |
+| `taskpane.html` | The task pane sidebar. Main menu + three "wizard" flows (see below) that collect inputs, then hand off execution, plus the standalone Email Search action. File Email used to be a fourth inline flow here too; as of 2026-10-06 clicking its tile just opens `file-email-dialog.html` (see below) — the tile is the only File Email surface left in this file. Also has the live `APP_VERSION` string shown in its footer — bump it on every change so you can confirm a deployed version in the field. |
+| `file-email-dialog.html` | The File Email picker, as an `Office.context.ui.displayDialogAsync` dialog rather than inline in the taskpane (changed 2026-10-06 — see "File Email is a dialog, not a wizard" below). Self-contained like `complete-action.html` (own MSAL sign-in, own copies of the Graph/bridge helpers), reads its initial selection context from its own URL query string, and receives live selection updates from whichever page opened it via `Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, ...)`. |
+| `commands.js` / `commands.html` | UI-less ribbon command functions — see its own header comments for the two different ways Outlook clients load this file. Holds `onMessageSendHandler` (the File-on-Send phase-1 probe) and, as of 2026-10-06, `fileEmailDialogHandler` (the ribbon's dedicated File Email button — detects the selection and opens `file-email-dialog.html`, duplicating taskpane.html's own copy of that same detection logic). |
 | `complete-action.html` | Standalone execution page. Does the actual long-running work (SharePoint writes, mailbox creation) for the three taskpane wizards. See "The handoff pattern" below — this file exists specifically so closing the taskpane mid-action doesn't abort the action. |
 | `help-guide.html` | Standalone page, linked from the taskpane footer ("Help Guide"). Staff-facing walkthrough of the four things people actually use day to day: File Email (manual), the automatic background filing pass, sent-email auto-save (not live yet), and Email Search. Update this whenever one of those workflows changes. |
 | `email-search.html` | The hosted email index/search page, linked from the taskpane's **Email Search** button. Generated from the `email-index` repo's own prototype `search.html` by a scratch script there — **edits to one must be mirrored in the other by hand**, this repo doesn't regenerate it. MSAL sign-in against this repo's same app registration, calls the hosted Function App described in the email-index repo's `HANDOFF.md`. |
@@ -108,6 +110,71 @@ Removed 2026-10-06, **no longer in the taskpane at all**:
   `email-filing-sync/` (see file inventory above), which does the same job
   automatically server-side every ~5 minutes — there is no longer any manual
   "sync" step for staff to run.
+
+## File Email is a dialog, not a wizard (changed 2026-10-06)
+
+File Email used to be the taskpane's fourth inline "wizard" (project search
+list, Confirm, Result — all rendered inside `taskpane.html` itself), with a
+comment explaining it specifically *couldn't* use the handoff pattern below
+because the handed-off page has no `Office.context.mailbox` access at all.
+That's all still true, but the inline approach turned out to have its own
+real bug: a task pane Outlook opens **fresh** — specifically, clicking the
+ribbon's dedicated File Email button when the Summation Assistant wasn't
+already open — wasn't reliably getting real OS keyboard focus, so the
+project search box's autofocus silently did nothing. Clicking the File
+Email *tile* inside an already-open, already-focused pane never had this
+problem. Confirmed in real Outlook across several fix attempts (a single
+delayed `.focus()`, then a 150ms retry loop, then reacting to window
+focus/visibilitychange events) — none of it helped, which points to Outlook
+never handing that freshly-created webview real focus at all, not just slow
+timing that a longer wait would fix.
+
+The fix: `Office.context.ui.displayDialogAsync` instead. Hosts are expected
+to give a dialog real focus on creation, which a task pane apparently isn't
+guaranteed to get. This was already the planned mechanism for the
+File-on-Send picker (see `manifest2.xml`'s `AppDomains` comment, predating
+this change) — File Email just got there first once its own focus bug
+forced the question.
+
+**What moved where:**
+- `file-email-dialog.html` — the actual picker: project search/pick (with
+  the keyboard-nav work from the same day — arrows + Enter, auto-focus),
+  Confirm, the categorize+move batch POST to the bridge, and the
+  pending-batch retry/dismiss UI. All ported close to verbatim from the old
+  inline implementation.
+- `taskpane.html` — now only *detects the current selection*
+  (`detectFileEmailSelection`, converting to REST ids since the dialog can't
+  do that itself) and opens the dialog with it, for the **File Email tile**
+  entry point.
+- `commands.js` — a second, independent copy of that same detect-and-open
+  logic (`fileEmailDialogHandler`), for the **ribbon's dedicated File Email
+  button** entry point, which no longer touches `taskpane.html` at all
+  (manifest's `Summation.FileEmailButton` Action is `ExecuteFunction` now,
+  not `ShowTaskpane` — V1.1 block only, see `manifest2.xml`'s own comment
+  there). Can't share code with `taskpane.html`'s copy — same reason no JS
+  is shared between any of this repo's pages.
+
+**Live selection tracking**: a one-shot dialog can't call
+`getSelectedItemsAsync` itself (dialogs don't get `Office.context.mailbox`
+at all, only `Office.context.ui.*`), so whichever page opened it
+(`taskpane.html` or `commands.js`) keeps its own `SelectedItemsChanged`
+listener running for as long as that dialog is open, and forwards every
+change in via `dialog.messageChild(...)`. The dialog receives these via
+`Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, ...)`
+and only acts on them while still on its "pick" step — same guard the old
+inline version used, so changing the selection after a project's already
+been picked doesn't retroactively change what's being filed. **Not
+independently confirmed**: whether `commands.js`'s own `SelectedItemsChanged`
+listener keeps firing for the dialog's *entire* open duration on every
+client — confirmed true for classic Outlook on Windows (its JS-only runtime
+persists across invocations in practice) but not verified elsewhere. If a
+given host tears that down early, live tracking would stop working
+specifically for dialogs opened via the ribbon button, not the tile.
+
+Both entry points share `file-email-dialog.html` and the same
+`fileEmailPendingBatches` localStorage key (same-origin dialog, expected to
+share storage with `taskpane.html` normally — also worth confirming once
+tested live, since nothing in this repo had opened a dialog before this).
 
 ## The handoff pattern (taskpane → complete-action.html)
 
@@ -226,7 +293,7 @@ naming patterns, before touching Exchange.
   unprovisioned for ~2 days) — always use the bridge's
   `POST /api/shared-mailboxes` (`New-Mailbox -Shared`) for mailbox creation,
   never a raw Graph user-object create.
-- **`APP_VERSION` in `taskpane.html`** (currently `10.0`) is shown in the
+- **`APP_VERSION` in `taskpane.html`** (currently `11.0`) is shown in the
   taskpane footer — bump it on every change so a live-tested version can be
   confirmed in screenshots/conversation.
 - Two standalone pages (`manage-mailboxes.html`,
