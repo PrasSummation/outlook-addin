@@ -359,7 +359,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "10.3";
+    const APP_VERSION = "10.4";
 
     let msalInstance;
     let folderEntries = [];
@@ -1621,17 +1621,39 @@
         }
     }
 
-    function focusWhenReady(elementId, attemptsLeft) {
-        if (attemptsLeft === undefined) attemptsLeft = 12;
+    // A fixed-delay retry wasn't enough: reported still not focusing when the ribbon's
+    // dedicated File Email button opens the pane fresh (as opposed to clicking the File
+    // Email tile inside an already-open, already-focused pane). That points to Outlook
+    // not handing this freshly-created webview real OS keyboard focus at all yet, rather
+    // than this code just not having waited long enough -- no fixed delay can fix that if
+    // the focus genuinely hasn't arrived yet. So: poll AND react to window/document focus
+    // signals, for a while, and grab the input the moment real focus actually shows up,
+    // whenever that turns out to be -- instead of betting on one guessed delay.
+    function focusWhenReady(elementId) {
         const el = document.getElementById(elementId);
-        if (el && el.offsetParent !== null) {
+        if (!el) return;
+        let done = false;
+
+        function tryFocus() {
+            if (done || el.offsetParent === null) return;
             try { window.focus(); } catch (err) { /* not available in every host -- ignore */ }
             el.focus();
-            if (document.activeElement === el) return; // got it
+            if (document.activeElement === el) {
+                done = true;
+                cleanup();
+            }
         }
-        if (attemptsLeft > 0) {
-            setTimeout(() => focusWhenReady(elementId, attemptsLeft - 1), 150);
+        function cleanup() {
+            clearInterval(poll);
+            window.removeEventListener("focus", tryFocus);
+            document.removeEventListener("visibilitychange", tryFocus);
         }
+
+        const poll = setInterval(tryFocus, 150);
+        window.addEventListener("focus", tryFocus);
+        document.addEventListener("visibilitychange", tryFocus);
+        tryFocus();
+        setTimeout(cleanup, 15000); // give up quietly rather than poll forever
     }
 
     function closeFileEmailWizard() {
