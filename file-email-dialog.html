@@ -676,7 +676,7 @@
     const FE_BATCH_STALE_MS = 3 * 60 * 1000;
     const FE_BATCH_MAX_RETRIES = 2;
 
-    async function postFeBatch(entry) {
+    async function postFeBatch(entry, signal) {
         const graphToken = await signInAndGetToken(mailWriteRequest, true);
         if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
         const bridgeToken = await signInAndGetToken(bridgeRequest, true);
@@ -690,7 +690,8 @@
                 categoryName: entry.categoryName,
                 destinationFolderId: entry.destinationFolderId,
                 items: entry.items
-            })
+            }),
+            signal
         });
         if (!response.ok) {
             const errorText = await response.text();
@@ -878,19 +879,31 @@
         // any File Email dialog opens, via the pending-batch check -- same mechanism
         // that's always covered the "dialog closed before the response landed" case, now
         // just deliberately used every time instead of only when it happens by accident.
-        postFeBatch(batchEntry)
+        //
+        // Deliberately abort our own fetch before closing (see below) rather than just
+        // leaving it unawaited: some Outlook hosts hold the dialog window open until its
+        // outstanding network requests settle, even after closeContainer()/window.close()
+        // is called -- confirmed, this dialog was still sitting there until the whole
+        // categorize+move round trip finished. Aborting the *client's* fetch doesn't
+        // affect the request already received by the bridge -- that keeps running
+        // server-side regardless, same as always.
+        const abortController = new AbortController();
+        postFeBatch(batchEntry, abortController.signal)
             .then((result) => {
                 removeFeBatchFromStorage(batchId);
                 return finalizeFeBatchResult(batchEntry, result);
             })
             .catch((err) => {
-                console.error("File Email batch failed after this dialog moved on:", err);
+                if (err.name !== "AbortError") {
+                    console.error("File Email batch failed after this dialog moved on:", err);
+                }
             });
 
         resultSummary.innerHTML = `<div class="summary-box"><div class="row">Filing "${categoryName}" — continuing in the background.</div></div>`;
         document.getElementById("feStartOverButton").style.display = "none";
         document.getElementById("feCloseButton").style.display = "none";
         setTimeout(() => {
+            abortController.abort();
             try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
         }, 500);
     }
