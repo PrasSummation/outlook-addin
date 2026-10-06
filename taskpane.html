@@ -359,7 +359,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "10.2";
+    const APP_VERSION = "10.3";
 
     let msalInstance;
     let folderEntries = [];
@@ -1609,12 +1609,28 @@
         renderFePendingBatches();
         await detectFeContext();
         // Land the cursor straight in the project search box so the user can just start
-        // typing — only when there's actually something to pick a project for. A plain,
-        // immediate .focus() doesn't reliably take in Outlook's embedded webview (same
-        // reason handleLogin's filterBox focus below is wrapped in setTimeout) -- pushing
-        // it a tick later is what actually works here.
+        // typing — only when there's actually something to pick a project for. A single
+        // delayed .focus() (the fix used for handleLogin's filterBox, a one-off right
+        // after sign-in) wasn't enough here -- confirmed still not focusing in real
+        // Outlook even with a 100ms delay. Retry a few times instead of guessing one
+        // magic delay, since how long Outlook's webview takes to actually accept focus
+        // after the getSelectedItemsAsync round-trip in detectFeContext isn't something
+        // this code can know in advance.
         if (document.getElementById("fePickBody").style.display === "block") {
-            setTimeout(() => document.getElementById("feFilterBox").focus(), 100);
+            focusWhenReady("feFilterBox");
+        }
+    }
+
+    function focusWhenReady(elementId, attemptsLeft) {
+        if (attemptsLeft === undefined) attemptsLeft = 12;
+        const el = document.getElementById(elementId);
+        if (el && el.offsetParent !== null) {
+            try { window.focus(); } catch (err) { /* not available in every host -- ignore */ }
+            el.focus();
+            if (document.activeElement === el) return; // got it
+        }
+        if (attemptsLeft > 0) {
+            setTimeout(() => focusWhenReady(elementId, attemptsLeft - 1), 150);
         }
     }
 
