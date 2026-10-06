@@ -5,7 +5,7 @@
            xsi:type="MailApp">
   
   <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id>
-  <Version>1.0.0.12</Version>
+  <Version>1.0.0.13</Version>
   <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
@@ -17,10 +17,9 @@
 
   <!-- Added alongside LaunchEvent/OnMessageSend: Office.context.ui.displayDialogAsync's own
        rule is that its target URL's domain must either match the add-in's own origin or be
-       listed here. The file-on-send picker dialog (built in a later phase, on top of this
-       same LaunchEvent registration) will be same-origin already, so this is very likely
-       unnecessary, but it's free to declare now, and far cheaper than discovering a client
-       that enforces it strictly only after that dialog is already built and deployed. -->
+       listed here. file-on-send-dialog.html (and file-email-dialog.html) are same-origin
+       already, so this has turned out to be unnecessary in practice, but it's free to keep
+       declared. -->
   <AppDomains>
     <AppDomain>https://prassummation.github.io</AppDomain>
   </AppDomains>
@@ -159,13 +158,14 @@
       </Requirements>
       <Hosts>
         <Host xsi:type="MailHost">
-          <!-- File-on-send, phase 1: prove OnMessageSend actually fires in this tenant's
-               Outlook clients before building the real "pick a project" dialog on top of
-               it (see the separately-approved File on Send mockup). onMessageSendHandler
-               never blocks or delays sending, it only leaves a visible notification on the
-               item, and always allows the send either way. SendMode "SoftBlock"
-               additionally means Outlook itself lets the send through if this handler ever
-               errors or times out, so a bug here can't trap someone's email mid-send.
+          <!-- File on Send, live as of 2026-10-06: onMessageSendHandler (commands.js) opens
+               file-on-send-dialog.html, the real "pick a project" picker built from the
+               separately-approved mockup (https://claude.ai/artifact/EqTMRsGos3VHXtspmZPXpp).
+               The user can file the email (tagging it and, for a reply/forward, optionally
+               the original too), or cancel the send entirely and go back to the draft.
+               SendMode "SoftBlock" means Outlook itself still lets the send through if this
+               handler ever errors, hangs, or times out, so a bug here can't trap someone's
+               email mid-send; that safety net is deliberately relied on, not duplicated.
 
                Runtimes is required for classic Outlook on Windows specifically: that client
                runs the event handler in a JavaScript-only runtime that loads commands.js

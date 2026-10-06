@@ -1,5 +1,8 @@
 /*
- * File-on-send, phase 1 probe.
+ * File on Send -- go-live build, 2026-10-06. Replaces the earlier phase-1 probe (which
+ * only proved OnMessageSend fires and always allowed the send through unchanged) with the
+ * real picker, built from the separately-approved mockup:
+ * https://claude.ai/artifact/EqTMRsGos3VHXtspmZPXpp
  *
  * This exact file is loaded two different ways depending on the Outlook client:
  *   - Classic Outlook on Windows loads it directly in a JavaScript-only runtime: no HTML,
@@ -10,30 +13,87 @@
  *     loaded there, so the Office global already exists by the time this file runs.
  * Both paths land here with an already-usable Office global, which is why there's no
  * Office.onReady wrapper below -- adding one would just never fire on classic Windows.
+ * Neither path has a DOM or network stack guaranteed (confirmed: no document, no fetch,
+ * no way to load MSAL via a <script> tag, on the classic-Windows runtime) -- which is why
+ * everything requiring Graph/SharePoint access (the project list, finding "the original"
+ * message) lives in file-on-send-dialog.html instead, a normal web page opened via
+ * Office.context.ui.displayDialogAsync. This file only ever does plain Office.js:
+ * detecting compose context, opening that dialog, and -- once it reports back a choice --
+ * tagging the outgoing item's categories and calling event.completed().
  *
- * This only proves OnMessageSend actually fires before any send-blocking picker logic is
- * built on top of it (see the separately-approved File on Send dialog mockup). It never
- * blocks or delays a send -- every path calls event.completed({ allowEvent: true }), and
- * the manifest's SendMode="SoftBlock" means Outlook itself lets the send through even if
- * this code throws or never completes at all. The one visible effect is a notification
- * banner on the item, so firing can be confirmed just by sending mail.
+ * The manifest's SendMode="SoftBlock" means Outlook itself lets the send through if this
+ * handler throws, hangs, or never calls event.completed() within its own platform timeout
+ * -- a deliberate safety net this code leans on rather than duplicates. Every path below
+ * still calls event.completed() itself (don't rely on that net as the normal path), and
+ * always with allowEvent:true unless the user explicitly chose "Back to email".
  */
 
 function onMessageSendHandler(event) {
-  try {
-    Office.context.mailbox.item.notificationMessages.replaceAsync(
-      "summationFileOnSendProbe",
-      {
-        type: Office.MailboxEnums.ItemNotificationMessageType.InformationalMessage,
-        message: "Summation: File on Send handler fired (phase 1 probe -- not blocking this send).",
-        icon: "Icon.16x16",
-        persistent: false
-      },
-      () => event.completed({ allowEvent: true })
-    );
-  } catch (err) {
-    event.completed({ allowEvent: true });
-  }
+  const item = Office.context.mailbox.item;
+
+  item.getComposeTypeAsync((composeTypeResult) => {
+    const composeType = (composeTypeResult.status === Office.AsyncResultStatus.Succeeded && composeTypeResult.value)
+      ? composeTypeResult.value.composeType // "newMail" | "reply" | "replyAll" | "forward"
+      : "newMail";
+
+    const context = {
+      composeType: composeType,
+      subject: item.subject || "(no subject)",
+      conversationId: item.conversationId || null
+    };
+
+    const url = "https://prassummation.github.io/outlook-addin/file-on-send-dialog.html?context=" +
+      encodeURIComponent(JSON.stringify(context));
+
+    Office.context.ui.displayDialogAsync(url, { height: 70, width: 40 }, (asyncResult) => {
+      if (asyncResult.status === Office.AsyncResultStatus.Failed) {
+        // Couldn't open the dialog at all -- fail open, never trap a send over this.
+        console.error("Could not open File on Send dialog:", asyncResult.error);
+        event.completed({ allowEvent: true });
+        return;
+      }
+
+      const dialog = asyncResult.value;
+      let settled = false;
+
+      function finish(allowEvent) {
+        if (settled) return;
+        settled = true;
+        try { dialog.close(); } catch (err) { /* already closing/closed on its own */ }
+        event.completed({ allowEvent: allowEvent });
+      }
+
+      dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
+        let message;
+        try {
+          message = JSON.parse(arg.message);
+        } catch (err) {
+          finish(true);
+          return;
+        }
+
+        if (message.action === "cancel") {
+          finish(false);
+          return;
+        }
+
+        if (message.action === "save" && message.categoryName) {
+          // The one thing only this context can do -- dialogs have no
+          // Office.context.mailbox at all. Everything else (filing "the original", if
+          // asked) is already running independently, kicked off by the dialog itself
+          // before it messaged back.
+          item.categories.addAsync([message.categoryName], () => finish(true));
+          return;
+        }
+
+        finish(true);
+      });
+
+      // Dialog closed some other way (its own OS close control, host recycling it, etc.)
+      // without an explicit Save/Cancel -- fail open rather than silently trap the send.
+      dialog.addEventHandler(Office.EventType.DialogEventReceived, () => finish(true));
+    });
+  });
 }
 
 Office.actions.associate("onMessageSendHandler", onMessageSendHandler);

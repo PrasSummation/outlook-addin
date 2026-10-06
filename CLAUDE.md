@@ -36,7 +36,8 @@ project mailbox.
 | `manifest2.xml` | Office Add-in manifest. Registers the main ribbon/compose-mode buttons (pointing at `taskpane.html`), the OnMessageSend LaunchEvent (`commands.js`), and, as of 2026-10-06, the ribbon's dedicated **File Email** button as an `ExecuteFunction` (also `commands.js`) rather than a `ShowTaskpane` — see "File Email is a dialog, not a wizard" below for why. |
 | `taskpane.html` | The task pane sidebar. Main menu + three "wizard" flows (see below) that collect inputs, then hand off execution, plus the standalone Email Search action. File Email used to be a fourth inline flow here too; as of 2026-10-06 clicking its tile just opens `file-email-dialog.html` (see below) — the tile is the only File Email surface left in this file. Also has the live `APP_VERSION` string shown in its footer — bump it on every change so you can confirm a deployed version in the field. |
 | `file-email-dialog.html` | The File Email picker, as an `Office.context.ui.displayDialogAsync` dialog rather than inline in the taskpane (changed 2026-10-06 — see "File Email is a dialog, not a wizard" below). Self-contained like `complete-action.html` (own MSAL sign-in, own copies of the Graph/bridge helpers), reads its initial selection context from its own URL query string, and receives live selection updates from whichever page opened it via `Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, ...)`. |
-| `commands.js` / `commands.html` | UI-less ribbon command functions — see its own header comments for the two different ways Outlook clients load this file. Holds `onMessageSendHandler` (the File-on-Send phase-1 probe) and, as of 2026-10-06, `fileEmailDialogHandler` (the ribbon's dedicated File Email button — detects the selection and opens `file-email-dialog.html`, duplicating taskpane.html's own copy of that same detection logic). |
+| `commands.js` / `commands.html` | UI-less ribbon/event command functions — see its own header comments for the two different ways Outlook clients load this file. Holds `onMessageSendHandler` (the **File on Send** feature, live as of 2026-10-06 — see its own section below; replaced an earlier phase-1 probe) and `fileEmailDialogHandler` (the ribbon's dedicated File Email button — detects the selection and opens `file-email-dialog.html`, duplicating taskpane.html's own copy of that same detection logic). |
+| `file-on-send-dialog.html` | The File on Send project picker, opened by `commands.js`'s `onMessageSendHandler` via `displayDialogAsync` when a message is sent. Built from the separately-approved mockup at https://claude.ai/artifact/EqTMRsGos3VHXtspmZPXpp. See "File on Send is live" below. |
 | `complete-action.html` | Standalone execution page. Does the actual long-running work (SharePoint writes, mailbox creation) for the three taskpane wizards. See "The handoff pattern" below — this file exists specifically so closing the taskpane mid-action doesn't abort the action. |
 | `help-guide.html` | Standalone page, linked from the taskpane footer ("Help Guide"). Staff-facing walkthrough of the four things people actually use day to day: File Email (manual), the automatic background filing pass, sent-email auto-save (not live yet), and Email Search. Update this whenever one of those workflows changes. |
 | `email-search.html` | The hosted email index/search page, linked from the taskpane's **Email Search** button. Generated from the `email-index` repo's own prototype `search.html` by a scratch script there — **edits to one must be mirrored in the other by hand**, this repo doesn't regenerate it. MSAL sign-in against this repo's same app registration, calls the hosted Function App described in the email-index repo's `HANDOFF.md`. |
@@ -176,7 +177,74 @@ Both entry points share `file-email-dialog.html` and the same
 share storage with `taskpane.html` normally — also worth confirming once
 tested live, since nothing in this repo had opened a dialog before this).
 
-## The handoff pattern (taskpane → complete-action.html)
+## File on Send is live (2026-10-06)
+
+Replaces the earlier `onMessageSendHandler` phase-1 probe (which only
+proved `OnMessageSend` fires and always let the send through unchanged)
+with the real thing, built from the separately-approved mockup:
+https://claude.ai/artifact/EqTMRsGos3VHXtspmZPXpp. Chosen trigger model —
+**prompts on every send**, not just an opt-in — was an explicit choice,
+not a default; see the known gap below before assuming that's still right
+for how staff actually work.
+
+**Flow**: sending any message fires `onMessageSendHandler` (`commands.js`),
+which reads the compose context (subject, `conversationId`,
+`getComposeTypeAsync`'s `composeType`) via plain Office.js, then opens
+`file-on-send-dialog.html` via `displayDialogAsync` — same dialog
+architecture as File Email, for the same reason (dialogs get no
+`Office.context.mailbox`, so everything requiring Graph/SharePoint access
+has to live in the dialog, not in `commands.js`). The dialog:
+- Loads the project list exactly like File Email's does (same Graph/Site
+  calls), with real DOM-focus-driven keyboard nav per the mockup (not File
+  Email's virtual-highlight-index approach — deliberately not unified,
+  since the mockup is the source of truth here).
+- For a reply/forward, best-effort finds "the original" message via a
+  `conversationId` search (`findOriginalMessage` — picks the most recent
+  message in the conversation not sent by the signed-in user; there's no
+  direct API for "the item I'm replying to" from a compose item, so this
+  is an approximation, not a guarantee). "Save Both" stays disabled until
+  that lookup resolves, and disabled permanently if nothing was found.
+- On Save (Both/Reply Only/plain Save for a new message): messages the
+  parent with the chosen category immediately, independently fires (and
+  does not wait for) the bridge's existing `FileEmailBatch` endpoint to
+  file the original if asked — **reusing File Email's exact batch-tracking
+  plumbing and `fileEmailPendingBatches` localStorage key**, so a failure
+  here surfaces in File Email's own pending-batches notice — then closes
+  itself after a brief delay, aborting its own fetch first (same reason as
+  File Email's Confirm: some Outlook hosts hold a dialog open until its
+  outstanding requests settle).
+- On Cancel ("← Back to email"): messages the parent to cancel, shows
+  "Send cancelled" briefly, closes itself.
+
+**Back in `commands.js`**: only it can tag the *outgoing* item's
+categories (`item.categories.addAsync`, before `event.completed()`) or
+actually allow/cancel the send (`event.completed({allowEvent})`) — neither
+is possible from the dialog. `SendMode="SoftBlock"` is relied on as the
+safety net for a hung/erroring handler, not duplicated with an extra
+timeout in this code.
+
+**Filing the sent reply happens later, server-side**: at `OnMessageSend`
+time the reply/new message doesn't exist as a real, Graph-addressable item
+yet (per the mockup's own note) — all this code can do is categorize the
+*outgoing* item before it sends. `email-filing-sync`'s `SyncEmails/run.ps1`
+was extended with a new Sent Items pass (runs first, independent of the
+existing "Emails to File" pass) that looks for recently-sent, categorized,
+not-yet-`Filed` messages and files them the same way, but **never moves
+them** — see `email-filing-sync/README.md`'s own new section for the
+full design, including the 3-hour lookback window and the one
+**not-independently-confirmed assumption** this whole half of the feature
+rests on: that a category set via `categories.addAsync` before send
+actually survives onto the sent copy in Sent Items. Standard, documented
+Outlook behavior, but unverified against a real send in this tenant as of
+this writing.
+
+**Known gap, called out deliberately rather than quietly fixed**: there is
+currently no "send without filing" option — only pick a project, or cancel
+the send and go back to the draft. This pops up on *every* send, including
+purely personal/non-project correspondence. `help-guide.html` flags this
+to staff directly. If it proves too disruptive in practice, the
+opt-in-while-composing alternative (discussed and explicitly turned down
+in favor of this) is the fallback design to revisit.
 
 **Why it exists**: Office.js task panes have no background-execution model —
 closing the pane kills its JS immediately, with no way to prevent closing or

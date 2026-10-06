@@ -1,0 +1,19 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "<connection string of this Function App's own linked Storage Account - a NEW one, not the Exchange Bridge's>",
+    "FUNCTIONS_WORKER_RUNTIME": "powershell",
+
+    "GRAPH_APP_ID": "<client ID of the SEPARATE 'Summation Email Filing Sync' app registration - NOT the Summation Assistant sign-in app, NOT the Summation Exchange Bridge app>",
+    "GRAPH_TENANT_ID": "ecb5f458-9548-4e8b-96f3-904f1828f931",
+    "GRAPH_CERT_THUMBPRINT": "<thumbprint of the certificate uploaded to this Function App's Certificates blade>",
+    "WEBSITE_LOAD_CERTIFICATES": "<same thumbprint as GRAPH_CERT_THUMBPRINT, so Azure loads it into the instance's cert store>",
+
+    "EMAIL_INDEX_BASE_URL": "https://summation-email-index.azurewebsites.net",
+    "STAFF_GROUP_ID": "<object ID of the 'Summation Staff Mailboxes' mail-enabled security group - the SAME group the Exchange Application Access Policy is scoped to>",
+
+    "SITE_ID": "summationptyltd.sharepoint.com,b0a8b5e8-0c27-4b46-a97f-e9f7668c3021,039ea15c-5b24-4eea-b48a-9f4e61e9439c",
+    "ACTIVE_DRIVE_ID": "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5wp-OK02_E3RbZkRH_jE_Lr",
+    "ARCHIVE_DRIVE_ID": "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5zGiD4R7k2PQZMwL6mUreXS"
+  }
+}

@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>File on Send</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+  <script type="text/javascript" src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
+  <style>
+    :root{
+      --green:#408F4E; --green-dark:#2D6B38; --green-pale:#EDF7EE;
+      --grey-900:#2B2B2B; --grey-600:#646464; --grey-400:#909090;
+      --grey-500:#787878; --grey-300:#B4B4B4; --grey-200:#DCDCDC; --grey-100:#EFEFEF; --grey-50:#F7F7F7;
+      --reply-only:#3B4A5A; --reply-only-dark:#2E3A47;
+      --font-display:'Bahnschrift','DIN Alternate','Segoe UI',sans-serif;
+      --font-body:'Calibri','Segoe UI',system-ui,sans-serif;
+      --font-mono:'Consolas','Courier New',monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;padding:0;background:#fff;font-family:var(--font-body);
+         font-size:13px;line-height:1.5;color:var(--grey-600);-webkit-font-smoothing:antialiased}
+    a{color:var(--green-dark);text-decoration:none}
+    a:hover{color:var(--green);text-decoration:underline}
+
+    #brandBar{background:var(--grey-900);padding:14px 20px;display:flex;align-items:center;gap:10px}
+    #brandBar img{width:26px;height:26px}
+    #brandBar .word{font-family:var(--font-display);font-size:14px;font-weight:600;color:#fff;letter-spacing:.14em}
+    #brandBar .sub{font-size:10.5px;color:var(--grey-400);letter-spacing:.05em}
+
+    #cancelRow{padding:9px 20px;border-bottom:1px solid var(--grey-100);
+      display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--grey-50)}
+    #cancelRow .txt{font-size:11px;color:var(--grey-400)}
+    #cancelLink{appearance:none;border:none;background:none;color:#B3401F;font:600 11.5px/1.2 var(--font-body);
+      cursor:pointer;padding:4px 6px;border-radius:4px}
+    #cancelLink:hover{background:#FBEAE4;text-decoration:underline}
+
+    #signInPrompt{padding:60px 24px;text-align:center}
+    #signInPrompt p{margin:0 0 20px;font-size:13px;color:var(--grey-600)}
+    #signInButton{padding:10px 24px;font:600 13px var(--font-body);color:#fff;background:var(--green);
+      border:1px solid var(--green);border-radius:4px;cursor:pointer}
+    #signInButton:hover{background:var(--green-dark)}
+
+    #appBody{max-width:520px;margin:0 auto;padding:16px 22px 22px}
+
+    label{display:block;width:100%;margin:12px 0 6px;font-size:10px;letter-spacing:.09em;
+      text-transform:uppercase;color:var(--grey-400)}
+    label:first-of-type{margin-top:0}
+    input[type=text]{display:block;width:100%;margin:0 0 10px;padding:8px 10px;
+      font:400 13px/1.4 var(--font-body);color:var(--grey-900);background:#fff;
+      border:1.5px solid var(--grey-200);border-radius:4px}
+    input[type=text]:focus{outline:none;border-color:var(--green)}
+    button{display:block;width:100%;margin:0 0 9px;padding:11px 12px;
+      font:600 13px/1.2 var(--font-body);letter-spacing:.02em;color:#fff;
+      background:var(--green);border:1px solid var(--green);border-radius:6px;cursor:pointer}
+    button:hover{background:var(--green-dark);border-color:var(--green-dark)}
+    button:disabled{background:var(--grey-100);border-color:var(--grey-200);color:var(--grey-500);cursor:not-allowed}
+    button .hint{display:block;font-weight:400;font-size:10.5px;color:#DDF0E0;margin-top:2px}
+    button.secondary-action{background:var(--reply-only);border-color:var(--reply-only)}
+    button.secondary-action:hover{background:var(--reply-only-dark);border-color:var(--reply-only-dark)}
+    button.secondary-action .hint{color:#C7CFD6}
+    .link-button{appearance:none;border:none;background:none;color:var(--grey-600);
+      font:600 11.5px/1.2 var(--font-body);cursor:pointer;padding:6px 2px;text-align:left;width:auto;display:inline-block}
+    .link-button:hover{color:var(--grey-900);text-decoration:underline}
+
+    .radio-row{display:flex;gap:16px;margin-bottom:10px}
+    .radio-row label{display:flex;align-items:center;gap:6px;width:auto;margin:0;
+      font-size:12.5px;letter-spacing:0;text-transform:none;color:var(--grey-900)}
+    .radio-row input{display:inline-block;width:auto;margin:0;accent-color:var(--green)}
+
+    .list-head{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin:12px 0 6px}
+    .list-head label{margin:0}
+    #refreshListButton{flex:none;width:24px;height:24px;margin:0;padding:0;border-radius:6px;
+      border:1px solid var(--grey-200);background:#fff;color:var(--grey-600);font-size:13px;
+      display:flex;align-items:center;justify-content:center;transition:transform 400ms ease}
+    #refreshListButton:hover{background:#fff;border-color:var(--grey-400);color:var(--grey-900)}
+    #refreshListButton.spinning{transform:rotate(300deg)}
+
+    #folderList{max-height:260px;overflow-y:auto;border:1px solid var(--grey-200);border-radius:8px;margin-top:0}
+    .folder-item{display:flex;justify-content:space-between;align-items:center;gap:10px;
+      padding:9px 11px;border-bottom:1px solid var(--grey-100);cursor:pointer;font-size:12.5px;outline:none}
+    .folder-item:last-child{border-bottom:none}
+    .folder-item:hover{background:var(--grey-50)}
+    .folder-item:focus{background:var(--grey-50);box-shadow:inset 0 0 0 2px var(--green)}
+    .folder-item.selected{background:var(--green-pale);box-shadow:inset 2px 0 0 var(--green)}
+    .folder-item .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--grey-900)}
+    .folder-item .tag{flex:none;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.03em;color:var(--grey-400)}
+    .empty-message{padding:12px;color:var(--grey-400);font-size:12px}
+    #listStatus{font-size:10.5px;color:var(--grey-400);margin-top:6px}
+
+    .context{border:1px solid var(--grey-200);border-radius:8px;padding:10px 11px;margin-bottom:14px;background:var(--grey-50)}
+    .context .row{margin-bottom:4px;font-size:12px;color:var(--grey-600)}
+    .context .row:last-child{margin-bottom:0}
+    .context .row b{color:var(--grey-900);font-weight:600}
+    .context .subject{color:var(--grey-900);font-weight:600;font-size:12.5px;margin-bottom:5px}
+
+    .summary-box{border:1px solid var(--grey-200);border-radius:8px;padding:14px;font-size:12.5px;background:var(--grey-50)}
+    .warning-box{border:1px solid #E78707;background:#FFF8E1;color:#7A5B00;border-radius:4px;padding:10px;font-size:12px;margin-bottom:10px}
+
+    .step{display:none}
+    .step.active{display:block}
+  </style>
+</head>
+<body>
+  <div id="brandBar">
+    <img src="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" alt="Summation" />
+    <div>
+      <div class="word">SUMMATION</div>
+      <div class="sub">File this email</div>
+    </div>
+  </div>
+
+  <div id="cancelRow">
+    <span class="txt">Sending will pause until you choose an option.</span>
+    <button id="cancelLink" class="link-button" style="color:#B3401F">&larr; Back to email</button>
+  </div>
+
+  <div id="signInPrompt">
+    <p>Please sign in to file this email.</p>
+    <button id="signInButton">Sign In</button>
+  </div>
+
+  <div id="appBody" style="display:none;">
+    <!-- Step: pick a project -->
+    <div class="step active" id="stepPick">
+      <div class="context">
+        <div class="subject" id="pickSubject"></div>
+        <div class="row" id="pickContextLine"></div>
+      </div>
+
+      <label>Service</label>
+      <div class="radio-row">
+        <label><input type="radio" name="fosService" value="All" checked /> All</label>
+        <label><input type="radio" name="fosService" value="Sustainability" /> Sustainability</label>
+        <label><input type="radio" name="fosService" value="Energy" /> Energy</label>
+      </div>
+
+      <div class="list-head">
+        <label for="fosFilterBox" style="margin:0">Search Archive &amp; Active project folders</label>
+        <button type="button" id="refreshListButton" title="Refresh project list">&#8635;</button>
+      </div>
+      <input type="text" id="fosFilterBox" placeholder="Type to search, &darr; to browse the list..." />
+      <div id="folderList"></div>
+      <div id="listStatus"></div>
+    </div>
+
+    <!-- Step: confirm + choose what to save -->
+    <div class="step" id="stepConfirm">
+      <div class="context">
+        <div class="row"><b>Project</b></div>
+        <div class="row" id="confirmProject" style="font-size:13px;color:var(--grey-900);font-weight:600"></div>
+      </div>
+      <div class="context" id="confirmOriginalContext" style="display:none;">
+        <div class="row" id="confirmOriginalLine"></div>
+        <div class="row">&#8629; <b>Reply</b> &mdash; your message, not yet sent</div>
+      </div>
+
+      <button id="saveBothButton">
+        Save Both
+        <span class="hint">Files the original email and this reply</span>
+      </button>
+      <button id="saveReplyOnlyButton" class="secondary-action">
+        <span id="saveReplyOnlyLabel">Reply Only</span>
+        <span class="hint" id="saveReplyOnlyHint">Files just this reply once it's sent</span>
+      </button>
+      <button id="backToPickButton" class="link-button">&larr; Choose a different project</button>
+    </div>
+
+    <!-- Step: send cancelled -->
+    <div class="step" id="stepCancelled">
+      <div class="warning-box">
+        <b>Send cancelled.</b> You're back in the draft &mdash; nothing was sent or filed.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // File on Send's real picker -- the go-live build of the approved mockup
+    // (https://claude.ai/artifact/EqTMRsGos3VHXtspmZPXpp). Opened by commands.js's
+    // onMessageSendHandler via Office.context.ui.displayDialogAsync when a message is
+    // sent (manifest's OnMessageSend LaunchEvent, SendMode="SoftBlock").
+    //
+    // Division of labor (same split as file-email-dialog.html, for the same reason --
+    // dialogs get no Office.context.mailbox at all, only Office.context.ui.* messaging):
+    //   - commands.js (the parent) detects compose context (subject, compose type,
+    //     conversationId) before opening this, and is the ONLY side that can tag the
+    //     outgoing item's categories or allow/cancel the send -- both need
+    //     Office.context.mailbox, which this dialog never gets.
+    //   - This dialog does everything requiring network/auth: the project list (same
+    //     Graph/SharePoint folder listing as File Email), and -- for "Save Both" on a
+    //     reply/forward -- finding "the original" message via a conversationId search,
+    //     since there's no direct API for "the item I'm replying to" from a compose item.
+    //
+    // On Save Both/Reply Only/Save: messages the parent with the chosen category so it can
+    // tag the outgoing item, fires (and does NOT wait for) the bridge call to file the
+    // original if asked, and closes almost immediately -- same reasoning as File Email's
+    // Confirm: the bridge keeps the request running to completion server-side regardless,
+    // and the outcome surfaces later via the shared pending-batches notice (File Email's
+    // dialog reads the same localStorage key this writes to).
+    //
+    // On Cancel/X: messages the parent to cancel the send (event.completed({allowEvent:
+    // false})), shows "Send cancelled" briefly, then closes itself -- the user is already
+    // looking at their draft underneath, so there's nothing further to do here.
+
+    const BRIDGE_URL = "https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net";
+    const ACTIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5wp-OK02_E3RbZkRH_jE_Lr";
+    const ARCHIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5zGiD4R7k2PQZMwL6mUreXS";
+    const ACTIVE_BRANCH_PATH = {
+        SUPER: "Sustainability/Perth", SUADL: "Sustainability/Adelaide",
+        ENPER: "Energy/Perth", ENADL: "Energy/Adelaide"
+    };
+    const ARCHIVE_BRANCH_PATH = {
+        SUPER: "Sustainability/Perth", SUADL: "Sustainability/Archived_Adelaide",
+        ENPER: "Energy/Perth", ENADL: "Energy/Adelaide"
+    };
+
+    const msalConfig = {
+      auth: {
+        clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
+        authority: "https://login.microsoftonline.com/ecb5f458-9548-4e8b-96f3-904f1828f931",
+        redirectUri: window.location.origin + window.location.pathname
+      },
+      cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+    };
+
+    const graphRequest = { scopes: ["User.Read"] };
+    const sitesRequest = { scopes: ["Sites.Selected"] };
+    const bridgeRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/MailboxBridge.Call"] };
+    const mailWriteRequest = { scopes: ["Mail.ReadWrite", "MailboxSettings.ReadWrite"] };
+
+    let msalInstance;
+
+    // ---- Initial context from the URL (whatever commands.js detected at send time) ----
+    // { subject, composeType: "newMail"|"reply"|"forward"|"replyAll", conversationId }
+    let sendContext = { subject: "(no subject)", composeType: "newMail", conversationId: null };
+    (function captureInitialContext() {
+        const params = new URLSearchParams(window.location.search);
+        const raw = params.get("context");
+        if (!raw) return;
+        try {
+            const parsed = JSON.parse(raw);
+            sendContext = Object.assign(sendContext, parsed);
+        } catch (err) {
+            console.error("Malformed initial context from opener:", err);
+        }
+    })();
+
+    const isReplyLike = sendContext.composeType === "reply" || sendContext.composeType === "replyAll" || sendContext.composeType === "forward";
+
+    function messageParent(payload) {
+        try { Office.context.ui.messageParent(JSON.stringify(payload)); } catch (err) { console.error("Could not message the opener:", err); }
+    }
+
+    Office.onReady(() => {
+        document.getElementById("pickSubject").textContent = sendContext.subject;
+        document.getElementById("pickContextLine").textContent = isReplyLike
+            ? "Replying/forwarding -- you can file the original message too."
+            : "New message -- filed once it's sent.";
+        document.getElementById("saveReplyOnlyButton").style.display = isReplyLike ? "block" : "none";
+        if (!isReplyLike) {
+            // No "original" to additionally file for a fresh compose -- one plain action.
+            document.getElementById("saveBothButton").textContent = "";
+            const label = document.createElement("span");
+            label.textContent = "Save";
+            const hint = document.createElement("span");
+            hint.className = "hint";
+            hint.textContent = "Files this email once it's sent";
+            document.getElementById("saveBothButton").appendChild(label);
+            document.getElementById("saveBothButton").appendChild(hint);
+        }
+
+        document.getElementById("signInButton").addEventListener("click", handleLogin);
+        document.getElementById("fosFilterBox").addEventListener("input", () => renderFolderList(document.getElementById("fosFilterBox").value));
+        document.getElementById("fosFilterBox").addEventListener("keydown", handleFilterKeydown);
+        document.querySelectorAll('input[name="fosService"]').forEach(el =>
+            el.addEventListener("change", () => renderFolderList(document.getElementById("fosFilterBox").value))
+        );
+        document.getElementById("refreshListButton").addEventListener("click", refreshFolderList);
+        document.getElementById("backToPickButton").addEventListener("click", () => showStep("stepPick"));
+        document.getElementById("saveBothButton").addEventListener("click", () => handleSave(true));
+        document.getElementById("saveReplyOnlyButton").addEventListener("click", () => handleSave(false));
+        document.getElementById("saveBothButton").addEventListener("keydown", handleConfirmButtonKeydown);
+        document.getElementById("saveReplyOnlyButton").addEventListener("keydown", handleConfirmButtonKeydown);
+        document.getElementById("cancelLink").addEventListener("click", handleCancel);
+
+        msalInstance = new msal.PublicClientApplication(msalConfig);
+        attemptSilentSignIn();
+    });
+
+    function showApp(show) {
+        document.getElementById("appBody").style.display = show ? "block" : "none";
+        document.getElementById("signInPrompt").style.display = show ? "none" : "block";
+    }
+
+    async function signInAndGetToken(request, isUserAction) {
+        const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+        if (account) {
+            try {
+                const silentResponse = await msalInstance.acquireTokenSilent({ ...request, account });
+                return silentResponse.accessToken;
+            } catch (error) {
+                if (error instanceof msal.InteractionRequiredAuthError && isUserAction) {
+                    const interactiveResponse = await msalInstance.acquireTokenPopup(request);
+                    return interactiveResponse.accessToken;
+                }
+                throw error;
+            }
+        }
+        if (isUserAction) {
+            const loginResponse = await msalInstance.loginPopup(request);
+            msalInstance.setActiveAccount(loginResponse.account);
+            return loginResponse.accessToken;
+        }
+        return null;
+    }
+
+    async function handleLogin() {
+        try {
+            const loginResponse = await msalInstance.loginPopup(graphRequest);
+            msalInstance.setActiveAccount(loginResponse.account);
+            showApp(true);
+            loadFolderNames();
+        } catch (err) {
+            console.error("Sign in failed:", err);
+        }
+    }
+
+    async function attemptSilentSignIn() {
+        try {
+            const token = await signInAndGetToken(graphRequest, false);
+            if (token) {
+                showApp(true);
+                loadFolderNames();
+            } else {
+                showApp(false);
+            }
+        } catch (err) {
+            showApp(false);
+        }
+    }
+
+    // ---- Generic Graph/SharePoint helpers (ported from file-email-dialog.html) ----
+
+    function encodePath(path) {
+        return path.split("/").map(encodeURIComponent).join("/");
+    }
+
+    async function graphGet(url, token) {
+        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function graphGetOrNull(url, token) {
+        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (response.status === 404) return null;
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function listFolders(driveId, path, token) {
+        const data = await graphGetOrNull(
+            `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodePath(path)}:/children?$select=name,folder&$top=999`,
+            token
+        );
+        if (!data) return [];
+        return (data.value || []).filter(entry => entry.folder);
+    }
+
+    function extractProjectNumber(name) {
+        const match = /^[a-zA-Z]{5}(\d{5})[_-]/.exec(name || "");
+        return match ? parseInt(match[1], 10) : -Infinity;
+    }
+
+    function serviceFilterMatches(selectedService, combo) {
+        if (selectedService === "All") return true;
+        if (selectedService === "Energy") return combo.startsWith("EN");
+        if (selectedService === "Sustainability") return combo.startsWith("SU");
+        return true;
+    }
+
+    // ---- Step / project list ----
+
+    function showStep(step) {
+        document.querySelectorAll(".step").forEach(el => el.classList.remove("active"));
+        document.getElementById(step).classList.add("active");
+        document.getElementById("cancelRow").style.display = step === "stepCancelled" ? "none" : "flex";
+        if (step === "stepConfirm") {
+            // Save Both may still be disabled (original-message lookup in flight, or not
+            // reply-like at all) -- land on whichever default action is actually usable.
+            const both = document.getElementById("saveBothButton");
+            const replyOnly = document.getElementById("saveReplyOnlyButton");
+            if (!both.disabled) both.focus();
+            else if (replyOnly.style.display !== "none") replyOnly.focus();
+        }
+        if (step === "stepPick") document.getElementById("fosFilterBox").focus();
+    }
+
+    let folderEntries = [];
+
+    async function loadFolderNames() {
+        const status = document.getElementById("listStatus");
+        status.style.color = "#333";
+        status.textContent = "Loading Archive & Active project folders...";
+        try {
+            const token = await signInAndGetToken(sitesRequest, true);
+            if (!token) throw new Error("Could not get permission to access SharePoint.");
+
+            const archiveCombos = Object.keys(ARCHIVE_BRANCH_PATH);
+            const activeCombos = Object.keys(ACTIVE_BRANCH_PATH);
+            const [archiveResults, activeResults] = await Promise.all([
+                Promise.all(archiveCombos.map(async combo => {
+                    const folders = await listFolders(ARCHIVE_DRIVE_ID, ARCHIVE_BRANCH_PATH[combo], token);
+                    return folders.filter(f => !/template/i.test(f.name)).map(f => ({ name: f.name, combo, source: "Archive" }));
+                })),
+                Promise.all(activeCombos.map(async combo => {
+                    const folders = await listFolders(ACTIVE_DRIVE_ID, ACTIVE_BRANCH_PATH[combo], token);
+                    return folders.filter(f => !/template/i.test(f.name)).map(f => ({ name: f.name, combo, source: "Active" }));
+                }))
+            ]);
+
+            folderEntries = [...archiveResults.flat(), ...activeResults.flat()];
+            renderFolderList(document.getElementById("fosFilterBox").value);
+            status.textContent = "";
+        } catch (err) {
+            console.error("Failed to load Archive/Active project folders:", err);
+            status.textContent = `Error: ${err.message}`;
+            status.style.color = "red";
+        }
+    }
+
+    function refreshFolderList() {
+        const btn = document.getElementById("refreshListButton");
+        btn.classList.add("spinning");
+        loadFolderNames().finally(() => {
+            setTimeout(() => btn.classList.remove("spinning"), 400);
+            document.getElementById("listStatus").textContent = "Updated just now.";
+        });
+    }
+
+    // Real DOM focus drives keyboard nav here (not a virtual highlight index) -- matches
+    // the approved mockup, and gives screen readers/native focus styling for free.
+    let filteredEntries = [];
+
+    function renderFolderList(filter) {
+        const list = document.getElementById("folderList");
+        list.innerHTML = "";
+        const selectedService = document.querySelector('input[name="fosService"]:checked').value;
+        const normalizedFilter = (filter || "").toLowerCase();
+        filteredEntries = folderEntries
+            .filter(entry => serviceFilterMatches(selectedService, entry.combo))
+            .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
+            .sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name));
+
+        if (filteredEntries.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "empty-message";
+            empty.textContent = "No matching project folders found.";
+            list.appendChild(empty);
+            return;
+        }
+
+        filteredEntries.forEach((entry, index) => {
+            const item = document.createElement("div");
+            item.className = "folder-item";
+            item.tabIndex = -1;
+
+            const name = document.createElement("span");
+            name.className = "name";
+            name.textContent = entry.name;
+            item.appendChild(name);
+
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = `${entry.combo} · ${entry.source}`;
+            item.appendChild(tag);
+
+            item.addEventListener("click", () => selectProject(entry.name, item));
+            item.addEventListener("keydown", (e) => handleListItemKeydown(e, item, index));
+            list.appendChild(item);
+        });
+    }
+
+    function handleFilterKeydown(e) {
+        if (e.key === "ArrowDown" && filteredEntries.length) {
+            e.preventDefault();
+            document.getElementById("folderList").querySelectorAll(".folder-item")[0].focus();
+        }
+    }
+
+    function handleListItemKeydown(e, item, index) {
+        const items = document.getElementById("folderList").querySelectorAll(".folder-item");
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            if (index < items.length - 1) items[index + 1].focus();
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            if (index === 0) document.getElementById("fosFilterBox").focus();
+            else items[index - 1].focus();
+        } else if (e.key === "Enter") {
+            e.preventDefault();
+            selectProject(filteredEntries[index].name, item);
+        }
+    }
+
+    let selectedProjectName = null;
+    let originalMessage = null; // populated best-effort for reply/forward, see findOriginalMessage
+
+    function selectProject(name, el) {
+        selectedProjectName = name;
+        document.querySelectorAll(".folder-item.selected").forEach(n => n.classList.remove("selected"));
+        el.classList.add("selected");
+        document.getElementById("confirmProject").textContent = name;
+
+        const originalContext = document.getElementById("confirmOriginalContext");
+        if (isReplyLike) {
+            originalContext.style.display = "block";
+            document.getElementById("confirmOriginalLine").innerHTML = "&#129525; <b>Original</b> &mdash; looking it up...";
+            // Disabled until the lookup resolves either way -- don't let "Save Both" be
+            // clicked before we actually know whether there's an original to attach.
+            document.getElementById("saveBothButton").disabled = true;
+            findOriginalMessage().then(msg => {
+                originalMessage = msg;
+                if (msg) {
+                    const from = (msg.from && msg.from.emailAddress && (msg.from.emailAddress.name || msg.from.emailAddress.address)) || "unknown sender";
+                    const when = msg.receivedDateTime ? new Date(msg.receivedDateTime).toLocaleDateString() : "";
+                    document.getElementById("confirmOriginalLine").innerHTML =
+                        `&#129525; <b>Original</b> &mdash; "${msg.subject || sendContext.subject}" from ${from}${when ? ", " + when : ""}`;
+                    document.getElementById("saveBothButton").disabled = false;
+                } else {
+                    document.getElementById("confirmOriginalLine").textContent = "Original message not found -- only the reply can be filed.";
+                    document.getElementById("saveBothButton").disabled = true;
+                }
+            });
+        } else {
+            originalContext.style.display = "none";
+        }
+
+        showStep("stepConfirm");
+    }
+
+    function handleConfirmButtonKeydown(e) {
+        const order = isReplyLike ? ["saveBothButton", "saveReplyOnlyButton"] : ["saveBothButton"];
+        const i = order.indexOf(e.target.id);
+        if (e.key === "ArrowDown" && i < order.length - 1) {
+            e.preventDefault();
+            document.getElementById(order[i + 1]).focus();
+        } else if (e.key === "ArrowUp" && i > 0) {
+            e.preventDefault();
+            document.getElementById(order[i - 1]).focus();
+        }
+    }
+
+    // Best-effort "what am I replying to": there's no direct API for it from a compose
+    // item, so this approximates it as the most recent message in the same conversation
+    // that wasn't sent by the signed-in user themselves (their own prior replies also
+    // share the conversationId). Good enough for the common case; if it can't find
+    // anything, "Save Both" is disabled above rather than filing something wrong.
+    async function findOriginalMessage() {
+        if (!sendContext.conversationId) return null;
+        try {
+            const token = await signInAndGetToken(mailWriteRequest, true);
+            if (!token) return null;
+            const account = msalInstance.getActiveAccount();
+            const myAddress = (account && account.username || "").toLowerCase();
+            const url = "https://graph.microsoft.com/v1.0/me/messages?$filter=" +
+                encodeURIComponent(`conversationId eq '${sendContext.conversationId}'`) +
+                "&$orderby=receivedDateTime desc&$top=10&$select=id,subject,from,receivedDateTime";
+            const data = await graphGet(url, token);
+            const messages = data.value || [];
+            return messages.find(m => {
+                const addr = (m.from && m.from.emailAddress && m.from.emailAddress.address || "").toLowerCase();
+                return addr && addr !== myAddress;
+            }) || null;
+        } catch (err) {
+            console.error("Could not look up the original message:", err);
+            return null;
+        }
+    }
+
+    // ---- Shared File Email batch-tracking plumbing (ported from file-email-dialog.html) ----
+    // Reused as-is so a failure here surfaces in the exact same "Recent File Email
+    // batches" notice that File Email's own dialog already shows -- same localStorage key.
+
+    const FE_BATCHES_STORAGE_KEY = "fileEmailPendingBatches";
+
+    function getFeBatchesFromStorage() {
+        try { return JSON.parse(localStorage.getItem(FE_BATCHES_STORAGE_KEY) || "[]"); }
+        catch (err) { return []; }
+    }
+    function saveFeBatchesToStorage(batches) {
+        try { localStorage.setItem(FE_BATCHES_STORAGE_KEY, JSON.stringify(batches)); }
+        catch (err) { console.error("Could not persist File on Send batch tracking:", err); }
+    }
+    function addFeBatchToStorage(entry) {
+        const batches = getFeBatchesFromStorage();
+        batches.push(entry);
+        saveFeBatchesToStorage(batches);
+    }
+    function removeFeBatchFromStorage(batchId) {
+        saveFeBatchesToStorage(getFeBatchesFromStorage().filter(b => b.batchId !== batchId));
+    }
+
+    async function findMasterCategory(categoryName) {
+        const token = await signInAndGetToken(mailWriteRequest, true);
+        if (!token) throw new Error("Could not get permission to read mailbox categories.");
+        const result = await graphGet("https://graph.microsoft.com/v1.0/me/outlook/masterCategories", token);
+        return (result.value || []).find(c => c.displayName === categoryName) || null;
+    }
+
+    async function getOrCreateEmailsToFileFolderId() {
+        const token = await signInAndGetToken(mailWriteRequest, true);
+        if (!token) throw new Error("Could not get permission to access your mailbox.");
+        const existing = await graphGet(
+            `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/childFolders?$filter=${encodeURIComponent("displayName eq 'Emails to File'")}`,
+            token
+        );
+        if (existing.value && existing.value.length > 0) return existing.value[0].id;
+        const response = await fetch("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/childFolders", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ displayName: "Emails to File" })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Could not create "Emails to File": ${response.status} ${errorText}`);
+        }
+        const created = await response.json();
+        return created.id;
+    }
+
+    async function postFeBatch(entry, signal) {
+        const graphToken = await signInAndGetToken(mailWriteRequest, true);
+        if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
+        const bridgeToken = await signInAndGetToken(bridgeRequest, true);
+        if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
+
+        const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+                graphAccessToken: graphToken,
+                categoryName: entry.categoryName,
+                destinationFolderId: entry.destinationFolderId,
+                items: entry.items
+            }),
+            signal
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge returned ${response.status}: ${errorText}`);
+        }
+        return response.json();
+    }
+
+    // Files "the original" via the exact same bridge endpoint File Email already uses --
+    // this is functionally identical to a one-item File Email batch, just auto-triggered
+    // here instead of picked manually. Fire-and-forget with the same abort-before-close
+    // pattern as File Email's own Confirm, for the same reason (some Outlook hosts hold
+    // a dialog open until its outstanding requests settle).
+    async function fileOriginalMessage(categoryName) {
+        if (!originalMessage) return;
+        let categoryPreExisted = true;
+        try { categoryPreExisted = (await findMasterCategory(categoryName)) !== null; }
+        catch (err) { categoryPreExisted = true; }
+
+        let emailsToFileFolderId = null;
+        try { emailsToFileFolderId = await getOrCreateEmailsToFileFolderId(); }
+        catch (err) { console.error("Could not resolve the Emails to File folder:", err); }
+
+        const batchId = crypto.randomUUID();
+        const now = new Date().toISOString();
+        const batchEntry = {
+            batchId, categoryName, total: 1,
+            startedAt: now, lastAttemptAt: now, retryCount: 0,
+            items: [{ restId: originalMessage.id, subject: originalMessage.subject || sendContext.subject }],
+            destinationFolderId: emailsToFileFolderId, categoryPreExisted
+        };
+        addFeBatchToStorage(batchEntry);
+
+        const abortController = new AbortController();
+        postFeBatch(batchEntry, abortController.signal)
+            .then(() => removeFeBatchFromStorage(batchId))
+            .catch(err => {
+                if (err.name !== "AbortError") console.error("Filing the original message failed after this dialog moved on:", err);
+            });
+        return abortController;
+    }
+
+    // ---- Confirm / Cancel ----
+
+    async function handleSave(saveOriginal) {
+        document.getElementById("saveBothButton").disabled = true;
+        document.getElementById("saveReplyOnlyButton").disabled = true;
+
+        // Tell the opener right away -- it's the only side that can tag the outgoing
+        // item and let the send through, and there's no reason to make it wait on
+        // anything below.
+        messageParent({ action: "save", categoryName: selectedProjectName });
+
+        let abortController = null;
+        if (saveOriginal && isReplyLike && originalMessage) {
+            abortController = await fileOriginalMessage(selectedProjectName);
+        }
+
+        setTimeout(() => {
+            if (abortController) abortController.abort();
+            try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
+        }, 500);
+    }
+
+    function handleCancel() {
+        messageParent({ action: "cancel" });
+        showStep("stepCancelled");
+        setTimeout(() => {
+            try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
+        }, 900);
+    }
+  </script>
+</body>
+</html>
