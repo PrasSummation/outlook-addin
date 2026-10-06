@@ -359,7 +359,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "10.1";
+    const APP_VERSION = "10.2";
 
     let msalInstance;
     let folderEntries = [];
@@ -1609,9 +1609,12 @@
         renderFePendingBatches();
         await detectFeContext();
         // Land the cursor straight in the project search box so the user can just start
-        // typing — only when there's actually something to pick a project for.
+        // typing — only when there's actually something to pick a project for. A plain,
+        // immediate .focus() doesn't reliably take in Outlook's embedded webview (same
+        // reason handleLogin's filterBox focus below is wrapped in setTimeout) -- pushing
+        // it a tick later is what actually works here.
         if (document.getElementById("fePickBody").style.display === "block") {
-            document.getElementById("feFilterBox").focus();
+            setTimeout(() => document.getElementById("feFilterBox").focus(), 100);
         }
     }
 
