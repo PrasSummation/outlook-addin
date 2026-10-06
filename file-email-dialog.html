@@ -561,6 +561,9 @@
             </div>
         `;
         showFeStep("confirm");
+        // Focused (not just reachable via the document-level Enter handler above) so it's
+        // visibly the default action, and Tab/Shift+Tab work normally from here too.
+        document.getElementById("feConfirmButton").focus();
     }
 
     // Looks up a category by display name in the mailbox's master list. Returns null if
@@ -872,9 +875,22 @@
             removeFeBatchFromStorage(batchId);
 
             const { cleanupNote, failureDetails } = await finalizeFeBatchResult(batchEntry, result);
-            const failureNote = failureDetails.length ? ` ${failureDetails.join("; ")}.` : "";
 
-            resultSummary.innerHTML = `<div class="summary-box"><div class="row">${result.succeeded} of ${result.total} succeeded, ${result.failed} failed.${failureNote}${cleanupNote}</div></div>`;
+            if (result.failed === 0) {
+                // Full success: a brief confirmation, then close on its own -- no need to
+                // make the user click through to "File Another"/"Close" for the common
+                // case. Anything short of full success still stops here so failures stay
+                // visible and actionable (retry via File Another, or Close to leave it).
+                resultSummary.innerHTML = `<div class="summary-box"><div class="row">${result.succeeded} of ${result.total} filed.${cleanupNote}</div></div>`;
+                document.getElementById("feStartOverButton").style.display = "none";
+                document.getElementById("feCloseButton").style.display = "none";
+                setTimeout(() => {
+                    try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
+                }, 900);
+            } else {
+                const failureNote = failureDetails.length ? ` ${failureDetails.join("; ")}.` : "";
+                resultSummary.innerHTML = `<div class="summary-box"><div class="row">${result.succeeded} of ${result.total} succeeded, ${result.failed} failed.${failureNote}${cleanupNote}</div></div>`;
+            }
         } catch (err) {
             console.error("Failed to start/confirm the File Email batch:", err);
             resultSummary.innerHTML = `
