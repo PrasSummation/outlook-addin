@@ -308,7 +308,6 @@
 
     <div id="fileEmailWizard" style="display: none;">
       <button id="feBackToBrowserButton" class="small-button secondary-button">&larr; Back</button>
-      <div id="fePendingBatches"></div>
 
       <div id="feStepPick">
         <div id="feContextSummary"></div>
@@ -338,6 +337,10 @@
         <div id="feResultSummary"></div>
         <button id="feStartOverButton">File Another</button>
       </div>
+
+      <!-- Below the project list / all wizard steps on purpose, so an old batch's status
+           note never pushes the thing the user actually came here to do further down. -->
+      <div id="fePendingBatches"></div>
     </div>
   </div>
 
@@ -356,7 +359,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "10.0";
+    const APP_VERSION = "10.1";
 
     let msalInstance;
     let folderEntries = [];
@@ -528,6 +531,7 @@
         document.getElementById("fileEmailButton").addEventListener("click", openFileEmailWizard);
         document.getElementById("feBackToBrowserButton").addEventListener("click", closeFileEmailWizard);
         document.getElementById("feFilterBox").addEventListener("input", () => renderFeFolderList(document.getElementById("feFilterBox").value));
+        document.getElementById("feFilterBox").addEventListener("keydown", handleFeFilterKeydown);
         document.querySelectorAll('input[name="feService"]').forEach(el =>
             el.addEventListener("change", () => renderFeFolderList(document.getElementById("feFilterBox").value))
         );
@@ -1604,10 +1608,9 @@
         showFeStep("pick");
         renderFePendingBatches();
         await detectFeContext();
-        // Only for the ribbon's dedicated File Email button: land the cursor straight in
-        // the project search box, matching its "skip straight to picking a project" intent.
-        // The regular tile-driven entry point is left as-is (no change in focus behavior).
-        if (feDeepLinkRequested && document.getElementById("fePickBody").style.display === "block") {
+        // Land the cursor straight in the project search box so the user can just start
+        // typing — only when there's actually something to pick a project for.
+        if (document.getElementById("fePickBody").style.display === "block") {
             document.getElementById("feFilterBox").focus();
         }
     }
@@ -1717,17 +1720,26 @@
         }
     }
 
+    // Tracks whatever renderFeFolderList most recently rendered, so the filter box's
+    // keyboard handler (arrows/Enter) can navigate and select without re-deriving the
+    // filtered list itself.
+    let feFilteredEntries = [];
+    let feHighlightIndex = -1;
+
     function renderFeFolderList(filter) {
         const list = document.getElementById("feFolderList");
         list.innerHTML = "";
         const selectedService = document.querySelector('input[name="feService"]:checked').value;
         const normalizedFilter = (filter || "").toLowerCase();
-        const filtered = feFolderEntries
+        feFilteredEntries = feFolderEntries
             .filter(entry => serviceFilterMatches(selectedService, entry.combo))
             .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
             .sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name));
+        // Default to the top result highlighted, so Enter works the instant a match shows
+        // up without the user ever having to touch an arrow key first.
+        feHighlightIndex = feFilteredEntries.length > 0 ? 0 : -1;
 
-        if (filtered.length === 0) {
+        if (feFilteredEntries.length === 0) {
             const empty = document.createElement("div");
             empty.className = "empty-message";
             empty.textContent = "No matching project folders found.";
@@ -1735,9 +1747,9 @@
             return;
         }
 
-        filtered.forEach(entry => {
+        feFilteredEntries.forEach((entry, index) => {
             const item = document.createElement("div");
-            item.className = "folder-item";
+            item.className = "folder-item" + (index === feHighlightIndex ? " selected" : "");
 
             const name = document.createElement("span");
             name.className = "name";
@@ -1750,8 +1762,38 @@
             item.appendChild(tag);
 
             item.addEventListener("click", () => selectFeProject(entry.name));
+            // Keeps mouse and keyboard highlighting in sync, so Enter always acts on
+            // whichever item visually looks selected, how ever it got that way.
+            item.addEventListener("mouseenter", () => setFeHighlight(index));
             list.appendChild(item);
         });
+    }
+
+    function setFeHighlight(index) {
+        const items = document.getElementById("feFolderList").querySelectorAll(".folder-item");
+        if (feHighlightIndex >= 0 && items[feHighlightIndex]) items[feHighlightIndex].classList.remove("selected");
+        feHighlightIndex = index;
+        const highlighted = items[feHighlightIndex];
+        if (highlighted) {
+            highlighted.classList.add("selected");
+            highlighted.scrollIntoView({ block: "nearest" });
+        }
+    }
+
+    function handleFeFilterKeydown(e) {
+        if (feFilteredEntries.length === 0) return;
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setFeHighlight(Math.min(feHighlightIndex + 1, feFilteredEntries.length - 1));
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setFeHighlight(Math.max(feHighlightIndex - 1, 0));
+        } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (feHighlightIndex >= 0 && feFilteredEntries[feHighlightIndex]) {
+                selectFeProject(feFilteredEntries[feHighlightIndex].name);
+            }
+        }
     }
 
     function selectFeProject(name) {
@@ -1959,6 +2001,13 @@
     // null) -- not when the status check itself merely failed/threw, which is ambiguous
     // (a network blip here says nothing about whether the batch is actually fine) and could
     // otherwise send a duplicate categorize+move at a run that's really still in progress.
+    // Each note carries the batchId it came from, so the UI can offer a per-note Dismiss
+    // (see renderFePendingBatches) -- useful because a "gave up" note means the *server
+    // couldn't confirm* a result, not that the categorize+move definitely failed. The Graph
+    // calls themselves often did go through; the batch's own result just never made it back
+    // (pane closed, function instance recycled, etc.). Rather than guess, let the user check
+    // the email for themselves (or search for it) and dismiss the note once they're satisfied,
+    // instead of only ever trusting an automatic "it's resolved" signal that may never come.
     async function refreshPendingFeBatches() {
         const batches = getFeBatchesFromStorage();
         if (batches.length === 0) return [];
@@ -1972,7 +2021,7 @@
             } catch (err) {
                 console.error("Could not check File Email batch status:", err);
                 stillPending.push(entry);
-                notes.push(`"${entry.categoryName}": couldn't check its status just now (started ${feTimeAgo(entry.startedAt)}).`);
+                notes.push({ batchId: entry.batchId, text: `"${entry.categoryName}": couldn't check its status just now (started ${feTimeAgo(entry.startedAt)}).` });
                 continue;
             }
 
@@ -1980,7 +2029,7 @@
                 if (result.failed > 0) {
                     const { cleanupNote, failureDetails } = await finalizeFeBatchResult(entry, result);
                     const failureNote = failureDetails.length ? ` ${failureDetails.join("; ")}.` : "";
-                    notes.push(`"${entry.categoryName}": ${result.succeeded} of ${result.total} categorized and moved, ${result.failed} failed.${failureNote}${cleanupNote}`);
+                    notes.push({ batchId: entry.batchId, text: `"${entry.categoryName}": ${result.succeeded} of ${result.total} categorized and moved, ${result.failed} failed.${failureNote}${cleanupNote}` });
                 } else {
                     await finalizeFeBatchResult(entry, result); // still runs cleanup, just nothing to report
                 }
@@ -1990,12 +2039,18 @@
             const elapsed = Date.now() - new Date(entry.lastAttemptAt || entry.startedAt).getTime();
             if (elapsed < FE_BATCH_STALE_MS) {
                 stillPending.push(entry);
-                notes.push(`"${entry.categoryName}": still processing (started ${feTimeAgo(entry.startedAt)}).`);
+                notes.push({ batchId: entry.batchId, text: `"${entry.categoryName}": still processing (started ${feTimeAgo(entry.startedAt)}).` });
                 continue;
             }
 
             if ((entry.retryCount || 0) >= FE_BATCH_MAX_RETRIES) {
-                notes.push(`"${entry.categoryName}": gave up after ${entry.retryCount} automatic retr${entry.retryCount === 1 ? "y" : "ies"} with no result from the server (started ${feTimeAgo(entry.startedAt)}). Please reopen the email and run File Email on it again.`);
+                // Deliberately not asserting failure here -- see the comment above this
+                // function. The categorize+move very often did succeed; this only means the
+                // confirmation never arrived.
+                notes.push({
+                    batchId: entry.batchId,
+                    text: `"${entry.categoryName}": no confirmation came back after ${entry.retryCount} automatic retr${entry.retryCount === 1 ? "y" : "ies"} (started ${feTimeAgo(entry.startedAt)}). It may well have already gone through — check the email's folder/category (or Email Search) before re-filing it, so it isn't filed twice.`
+                });
                 continue; // stop tracking -- don't retry forever
             }
 
@@ -2007,12 +2062,12 @@
                 const result2 = await postFeBatch(retried);
                 const { cleanupNote, failureDetails } = await finalizeFeBatchResult(retried, result2);
                 const failureNote = failureDetails.length ? ` ${failureDetails.join("; ")}.` : "";
-                notes.push(`"${entry.categoryName}": took longer than expected, so it was automatically retried — ${result2.succeeded} of ${result2.total} succeeded, ${result2.failed} failed.${failureNote}${cleanupNote}`);
+                notes.push({ batchId: entry.batchId, text: `"${entry.categoryName}": took longer than expected, so it was automatically retried — ${result2.succeeded} of ${result2.total} succeeded, ${result2.failed} failed.${failureNote}${cleanupNote}` });
                 // Resolved by the retry -- nothing left to track.
             } catch (err) {
                 console.error("Automatic retry of a File Email batch failed:", err);
                 stillPending.push(retried);
-                notes.push(`"${entry.categoryName}": took longer than expected, and an automatic retry (attempt ${retried.retryCount}) didn't get a confirmed result either (${err.message}). Will try again.`);
+                notes.push({ batchId: entry.batchId, text: `"${entry.categoryName}": took longer than expected, and an automatic retry (attempt ${retried.retryCount}) didn't get a confirmed result either (${err.message}). Will try again.` });
             }
         }
         saveFeBatchesToStorage(stillPending);
@@ -2024,12 +2079,41 @@
         container.innerHTML = "";
         try {
             const notes = await refreshPendingFeBatches();
-            if (notes.length > 0) {
-                const box = document.createElement("div");
-                box.className = "warning-box";
-                box.innerHTML = `<b>Recent File Email batches:</b><br>${notes.join("<br>")}`;
-                container.appendChild(box);
-            }
+            if (notes.length === 0) return;
+
+            const box = document.createElement("div");
+            box.className = "warning-box";
+            const heading = document.createElement("b");
+            heading.textContent = "Recent File Email batches:";
+            box.appendChild(heading);
+
+            notes.forEach(note => {
+                const row = document.createElement("div");
+                row.style.marginTop = "6px";
+                const text = document.createElement("span");
+                text.textContent = note.text;
+                row.appendChild(text);
+
+                const dismiss = document.createElement("a");
+                dismiss.href = "#";
+                dismiss.textContent = "Dismiss";
+                dismiss.style.marginLeft = "8px";
+                dismiss.style.fontSize = "11px";
+                dismiss.style.whiteSpace = "nowrap";
+                dismiss.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    // A no-op in storage for a note whose batch was already resolved/given up
+                    // (nothing left to remove) -- harmless either way, and stops a still-
+                    // pending one from nagging again on the next open if the user's satisfied.
+                    removeFeBatchFromStorage(note.batchId);
+                    row.remove();
+                    if (!box.querySelector("div")) container.innerHTML = "";
+                });
+                row.appendChild(dismiss);
+                box.appendChild(row);
+            });
+
+            container.appendChild(box);
         } catch (err) {
             console.error("Could not refresh pending File Email batches:", err);
         }
