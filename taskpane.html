@@ -323,7 +323,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.1";
+    const APP_VERSION = "11.2";
 
     let msalInstance;
     let folderEntries = [];
@@ -1591,6 +1591,20 @@
                 return;
             }
             activeFileEmailDialog = asyncResult.value;
+            // Parent-initiated close, added 2026-10-07: the dialog's own
+            // Office.context.ui.closeContainer() call on itself turned out to be the
+            // unreliable part (confirmed live -- manually closing the dialog window after
+            // Confirm always let the batch finish filing correctly regardless, so the
+            // dialog was never the thing that needed to stay open). A close requested by
+            // the parent via dialog.close(), on this host-held handle rather than the
+            // dialog's own script tearing itself down, is the same kind of close as the
+            // user's own manual one -- reliable where the dialog's self-close wasn't.
+            activeFileEmailDialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
+                try {
+                    const message = JSON.parse(arg.message);
+                    if (message.action === "close") activeFileEmailDialog.close();
+                } catch (err) { /* ignore malformed messages */ }
+            });
             activeFileEmailDialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
                 activeFileEmailDialog = null;
             });

@@ -239,6 +239,18 @@ function fileEmailDialogHandler(event) {
         });
       }
 
+      // Parent-initiated close, same reasoning as taskpane.html's entry point: the
+      // dialog's own closeContainer() call on itself turned out to be the unreliable part,
+      // confirmed live -- manually closing the dialog window after Confirm always let the
+      // batch finish filing correctly regardless. dialog.close() from here, on this
+      // host-held handle, is the same kind of close as that manual one.
+      dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
+        try {
+          const message = JSON.parse(arg.message);
+          if (message.action === "close") dialog.close();
+        } catch (err) { /* ignore malformed messages */ }
+      });
+
       dialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
         if (selectionHandlerRegistered && Office.context.mailbox.removeHandlerAsync) {
           Office.context.mailbox.removeHandlerAsync(Office.EventType.SelectedItemsChanged, { handler: forward });

@@ -302,6 +302,29 @@ isn't documented and evidently isn't tight enough for a good incident
 experience on its own — deliberately duplicated now, not left solely to
 that net.
 
+**Follow-up, closing File Email's dialog turned out not to need any of
+this waiting at all**: confirmed live that manually closing
+`file-email-dialog.html`'s window right after Confirm never affects the
+batch — the bridge keeps it running to completion regardless, same as
+always relied on. That means every "the dialog won't close" report
+(this evening's and earlier ones) traced back to the dialog's own code
+still being stuck awaiting a hung MSAL call somewhere above the close
+line, never actually reaching `Office.context.ui.closeContainer()` at
+all — not `closeContainer()` itself waiting on anything. The earlier
+"abort the fetch before closing" fix was chasing the wrong cause.
+Replaced with a **parent-initiated close**: the dialog now messages its
+opener (`messageParent({action:"close"})`) immediately after firing the
+batch, and both entry points that open it — `taskpane.html`'s
+`openFileEmailDialog` and `commands.js`'s `fileEmailDialogHandler` —
+listen for it and call `dialog.close()` on their own host-held handle.
+That's the same kind of close as a user manually closing the window
+(host-initiated, not the dialog's own script tearing itself down), so
+it should be reliable where the self-close wasn't. The dialog's own
+`closeContainer()` call is kept only as a 1.5s-delayed fallback in case
+nothing is listening. Also dropped the now-pointless `AbortController`
+plumbing around `postFeBatch` — it was only ever wired to the bridge
+`fetch()` itself, which was never what was hanging.
+
 **Same bug, different dialog**: `file-email-dialog.html`'s Confirm step
 turned out to have the identical latent vulnerability — reported
 separately as "the dialog isn't closing right after Confirm." Its
