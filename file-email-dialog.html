@@ -591,6 +591,22 @@
         document.getElementById("feConfirmButton").focus();
     }
 
+    // Bounded safety net, added 2026-10-07 after a live incident: acquireTokenSilent can
+    // hang instead of throwing when its hidden-iframe navigation to login.microsoftonline.com
+    // is blocked (missing AppDomains entry -- same root cause as the File on Send incident
+    // the same day, fixed in manifest2.xml but slow to propagate). The Confirm step's two
+    // pre-flight calls below request a scope (mailWriteRequest) not used anywhere earlier in
+    // this dialog, so they're the first to need a *silent* token for it each session -- that
+    // hang left this dialog stuck on "Starting..." forever instead of closing. Both already
+    // have a sensible fallback in their own catch block; they just need a way to actually
+    // reach it instead of hanging.
+    function withTimeout(promise, ms, label) {
+        return Promise.race([
+            promise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
+        ]);
+    }
+
     // Looks up a category by display name in the mailbox's master list. Returns null if
     // it isn't there, so the caller can tell "never existed" apart from "exists."
     async function findMasterCategory(categoryName) {
@@ -870,7 +886,7 @@
 
         let categoryPreExisted = true;
         try {
-            categoryPreExisted = (await findMasterCategory(categoryName)) !== null;
+            categoryPreExisted = (await withTimeout(findMasterCategory(categoryName), 8000, "findMasterCategory")) !== null;
         } catch (err) {
             console.error("Could not check master category list beforehand:", err);
             categoryPreExisted = true;
@@ -878,7 +894,7 @@
 
         let emailsToFileFolderId = null;
         try {
-            emailsToFileFolderId = await getOrCreateEmailsToFileFolderId();
+            emailsToFileFolderId = await withTimeout(getOrCreateEmailsToFileFolderId(), 8000, "getOrCreateEmailsToFileFolderId");
         } catch (err) {
             console.error("Could not resolve the Emails to File folder:", err);
         }

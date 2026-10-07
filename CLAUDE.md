@@ -302,6 +302,22 @@ isn't documented and evidently isn't tight enough for a good incident
 experience on its own — deliberately duplicated now, not left solely to
 that net.
 
+**Same bug, different dialog**: `file-email-dialog.html`'s Confirm step
+turned out to have the identical latent vulnerability — reported
+separately as "the dialog isn't closing right after Confirm." Its
+pre-flight `findMasterCategory`/`getOrCreateEmailsToFileFolderId` calls
+request `mailWriteRequest` (`Mail.ReadWrite`), a scope not used anywhere
+else in that dialog, so they're the first thing each session to need a
+*silent* token for it — same blocked hidden-iframe hang as above. It
+worked during earlier testing purely because of a fresh/cached token
+window, same as File on Send's. Fixed with a `withTimeout()` wrapper (8
+seconds) around both calls, so a hang falls through to their existing
+`catch` fallback instead of leaving the dialog stuck on "Starting..."
+forever. Didn't bother timing out `postFeBatch` itself — it's already
+fire-and-forget and doesn't block the dialog closing, and an eventual
+non-response there is already handled by the existing pending-batch
+retry/notice mechanism.
+
 **Why it exists**: Office.js task panes have no background-execution model —
 closing the pane kills its JS immediately, with no way to prevent closing or
 to resume afterward. Users were closing the sidebar mid-action (e.g. mid
