@@ -947,24 +947,15 @@
             });
 
         resultSummary.innerHTML = `<div class="summary-box"><div class="row">Filing "${categoryName}" — continuing in the background.</div></div>`;
-        document.getElementById("feStartOverButton").style.display = "none";
-        document.getElementById("feCloseButton").style.display = "none";
 
-        // Parent-initiated close, 2026-10-07: confirmed live that manually closing this
-        // dialog window right after Confirm never affects the batch above -- the bridge
-        // keeps it running to completion regardless, same as always. That means this
-        // dialog's own Office.context.ui.closeContainer() call on itself was the
-        // unreliable part, not something that needed to wait for anything: every earlier
-        // "it won't close" report traced back to code further up this same function still
-        // being stuck awaiting a hung MSAL call, never actually reaching the close at all.
-        // A close requested from the parent (dialog.close() on its host-held handle, in
-        // taskpane.html / commands.js) is the same kind of close as a manual one -- so ask
-        // for that first, and keep this page's own closeContainer() only as a fallback in
-        // case nothing is listening.
-        messageParent({ action: "close" });
-        setTimeout(() => {
-            try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
-        }, 1500);
+        // Auto-close disabled 2026-10-07 while the AppDomains manifest fix is still
+        // propagating (see CLAUDE.md) -- leaving this window open on purpose so pending-
+        // batch outcomes and errors stay visible instead of disappearing immediately.
+        // The parent-initiated close plumbing (messageParent({action:"close"}) and the
+        // taskpane.html/commands.js listeners for it) is still in place and working, just
+        // not called here; re-add the two lines below to turn it back on:
+        //   messageParent({ action: "close" });
+        //   setTimeout(() => { try { Office.context.ui.closeContainer(); } catch (err) { window.close(); } }, 1500);
     }
   </script>
 </body>
