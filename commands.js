@@ -74,9 +74,27 @@ function onMessageSendHandler(event) {
       function finish(allowEvent) {
         if (settled) return;
         settled = true;
+        clearTimeout(readyTimeoutId);
         try { dialog.close(); } catch (err) { /* already closing/closed on its own */ }
         event.completed({ allowEvent: allowEvent });
       }
+
+      // Bounded safety net, added 2026-10-07 after a live incident: a teammate's send sat
+      // on Outlook's own "taking longer than expected" warning indefinitely (root cause:
+      // a missing AppDomains entry made an MSAL call inside the dialog hang instead of
+      // erroring -- see manifest2.xml's AppDomains comment). Outlook's own SendMode=
+      // SoftBlock timeout is the ultimate backstop, but its exact duration isn't
+      // documented and evidently isn't tight enough for good UX -- this is deliberately
+      // duplicated now, not left to that net alone.
+      //
+      // This only guards the dialog actually coming alive -- it does NOT cap how long a
+      // user gets to pick a project. The dialog pings back {action:"ready"} the moment it
+      // renders anything real (sign-in prompt or the picker), which clears this; from then
+      // on the user has as much time as they want, same as before.
+      const readyTimeoutId = setTimeout(() => {
+        console.error("File on Send dialog never confirmed it loaded -- failing open.");
+        finish(true);
+      }, 20000);
 
       dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
         let message;
@@ -84,6 +102,11 @@ function onMessageSendHandler(event) {
           message = JSON.parse(arg.message);
         } catch (err) {
           finish(true);
+          return;
+        }
+
+        if (message.action === "ready") {
+          clearTimeout(readyTimeoutId);
           return;
         }
 

@@ -261,6 +261,47 @@ list-head + refresh button, button hint subtext, context/summary box
 styling — its interaction model (virtual-highlight-index nav, not real
 DOM focus) was deliberately left alone.
 
+**Incident, 2026-10-07 — sends hanging on "add-in taking longer than
+expected"**: a teammate (classic Outlook for Windows) got stuck on
+Outlook's own slow-add-in warning when sending, with no visible picker
+and no way forward except "Don't Send." Mitigated immediately with a
+`FILE_ON_SEND_ENABLED` kill switch at the top of `commands.js` —
+`onMessageSendHandler` short-circuits to `event.completed({allowEvent:
+true})` before touching the dialog at all. This deploys in ~10 minutes
+(GitHub Pages' CDN cache on `commands.js`), not the hours a manifest
+change takes to propagate — worth remembering for any future
+send-blocking incident, since the manifest's `LaunchEvent` wiring itself
+can't be the fast lever.
+
+Root cause: `manifest2.xml`'s `AppDomains` only listed
+`prassummation.github.io`, missing `https://login.microsoftonline.com` —
+MSAL's authority host, used by both `acquireTokenSilent` (a hidden
+iframe) and `loginPopup` (an actual popup) from *inside* the dialog.
+`AppDomains` isn't just about `displayDialogAsync`'s own target URL; it
+also gates navigation happening inside an already-open dialog. Without
+that entry, Office's dialog host can block that in-dialog navigation
+silently instead of raising a catchable error, so the MSAL call just
+hangs forever rather than resolving or rejecting — explaining why it
+worked in testing (an already-cached, unexpired token resolves straight
+from local storage, no navigation needed) but hung for someone signing
+in fresh. Fixed by adding the entry — but like any `AppDomains` change,
+this is a manifest edit, so it's subject to the same slow propagation as
+the kill switch's root problem.
+
+Because of that propagation lag, also added a second, faster-deploying
+layer of defense in `commands.js`: a 20-second bounded timeout on the
+dialog actually becoming interactive, cleared the moment the dialog
+pings back `{action:"ready"}` (added to `file-on-send-dialog.html`'s
+`showApp`, fired the instant it renders either the sign-in prompt or the
+picker). This deliberately does NOT cap how long a user gets to actually
+pick a project — once "ready" is received, the user has as much time as
+they want, same as before. It only bounds the "did the dialog even wake
+up" phase, which is exactly what failed here. `SendMode="SoftBlock"`'s
+own built-in timeout remains the ultimate backstop, but its duration
+isn't documented and evidently isn't tight enough for a good incident
+experience on its own — deliberately duplicated now, not left solely to
+that net.
+
 **Why it exists**: Office.js task panes have no background-execution model —
 closing the pane kills its JS immediately, with no way to prevent closing or
 to resume afterward. Users were closing the sidebar mid-action (e.g. mid

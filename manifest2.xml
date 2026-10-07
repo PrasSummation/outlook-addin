@@ -5,7 +5,7 @@
            xsi:type="MailApp">
   
   <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id>
-  <Version>1.0.0.14</Version>
+  <Version>1.0.0.15</Version>
   <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
@@ -15,13 +15,26 @@
   <HighResolutionIconUrl DefaultValue="https://prassummation.github.io/outlook-addin/logo-symbol-80x80.png" />
   <SupportUrl DefaultValue="https://prassummation.github.io/outlook-addin/" />
 
-  <!-- Added alongside LaunchEvent/OnMessageSend: Office.context.ui.displayDialogAsync's own
-       rule is that its target URL's domain must either match the add-in's own origin or be
-       listed here. file-on-send-dialog.html (and file-email-dialog.html) are same-origin
-       already, so this has turned out to be unnecessary in practice, but it's free to keep
-       declared. -->
+  <!-- https://prassummation.github.io: displayDialogAsync's own target-URL rule (its domain
+       must match the add-in's origin or be listed here); file-on-send-dialog.html and
+       file-email-dialog.html are same-origin already, so this one is technically redundant,
+       kept for clarity anyway.
+
+       https://login.microsoftonline.com: NOT redundant; added 2026-10-07 after a live
+       incident. This is MSAL's authority host (see msalConfig.auth.authority in both
+       dialogs), and AppDomains governs more than just displayDialogAsync's own target; it
+       also gates navigation *inside* an already-open dialog, which is exactly what MSAL
+       does for both acquireTokenSilent (a hidden iframe) and loginPopup (an actual popup
+       window); both navigate here. Without this listed, Office's dialog host can block
+       that navigation silently rather than raising a catchable error, so the MSAL call
+       just hangs forever instead of resolving or rejecting. Root-caused this way: it only
+       ever failed for someone signing in fresh (no cached token, so acquireTokenSilent
+       actually needed the network round-trip), never for an already-signed-in session
+       resolving straight from its local token cache, which is exactly the difference
+       between "worked when tested" and "hung for a teammate." -->
   <AppDomains>
     <AppDomain>https://prassummation.github.io</AppDomain>
+    <AppDomain>https://login.microsoftonline.com</AppDomain>
   </AppDomains>
 
   <Hosts>

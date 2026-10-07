@@ -291,6 +291,11 @@
     function showApp(show) {
         document.getElementById("appBody").style.display = show ? "block" : "none";
         document.getElementById("signInPrompt").style.display = show ? "none" : "block";
+        // Tells commands.js's bounded ready-timeout to stand down -- this is the first
+        // point where something real has actually rendered (sign-in prompt or the
+        // picker), so whatever happens from here is a user taking their time, not a
+        // hung dialog.
+        messageParent({ action: "ready" });
     }
 
     async function signInAndGetToken(request, isUserAction) {
