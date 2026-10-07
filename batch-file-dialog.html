@@ -893,6 +893,22 @@
         return errorText;
     }
 
+    // Runs `worker` over `items` with at most `limit` in flight at once. Used to dispatch
+    // every chunk across every project close together in time -- see handleConfirmInner's own
+    // comment for why that matters more than it might seem.
+    function runWithConcurrency(items, limit, worker) {
+        return new Promise((resolve) => {
+            if (items.length === 0) { resolve(); return; }
+            let next = 0, done = 0;
+            function startNext() {
+                if (next >= items.length) return;
+                const item = items[next++];
+                Promise.resolve(worker(item)).finally(() => { done++; if (done === items.length) resolve(); else startNext(); });
+            }
+            for (let k = 0; k < Math.min(limit, items.length); k++) startNext();
+        });
+    }
+
     // One chunk's POST, retried up to BF_CHUNK_MAX_RETRIES times if it throws (network error,
     // bridge timeout, etc.) before actually giving up on it. Always returns a real result
     // object -- on final failure, a synthesized one marking every item in the chunk as failed
@@ -921,49 +937,21 @@
         }
     }
 
-    // Categorizes+moves one project's worth of emails: a pre-flight master-category check
-    // (once per project, not per chunk), then the chunked FileEmailBatch POSTs -- strictly
-    // one at a time (not concurrent; see BATCH_CHUNK_SIZE's own comment for why), awaited and
-    // reported via onChunkDone after each one, so a large folder shows real, incrementally
-    // updating progress rather than a single "continuing in the background" that never gets
-    // checked again.
-    async function fileGroup(group, emailsToFileFolderId, onChunkDone) {
-        let categoryPreExisted = true;
-        try {
-            categoryPreExisted = (await withTimeout(findMasterCategory(group.categoryName), 8000, "findMasterCategory")) !== null;
-        } catch (err) {
-            console.error(`Could not check master category list beforehand for "${group.categoryName}":`, err);
-            categoryPreExisted = true;
-        }
-
-        const now = new Date().toISOString();
-        const batchEntries = chunkArray(group.items, BATCH_CHUNK_SIZE).map(chunk => ({
-            batchId: crypto.randomUUID(), categoryName: group.categoryName, total: chunk.length,
-            startedAt: now, lastAttemptAt: now, retryCount: 0,
-            items: chunk, destinationFolderId: emailsToFileFolderId, categoryPreExisted
-        }));
-        batchEntries.forEach(addFeBatchToStorage);
-
-        let succeededTotal = 0;
-        for (const entry of batchEntries) {
-            const result = await postChunkWithRetry(entry);
-            succeededTotal += result.succeeded || 0;
-            onChunkDone(entry, result);
-        }
-
-        if (!categoryPreExisted && succeededTotal > 0) {
-            try {
-                const masterEntry = await findMasterCategory(group.categoryName);
-                if (masterEntry) await deleteMasterCategory(masterEntry.id);
-            } catch (err) {
-                console.error(`Could not clean up the auto-created master category for "${group.categoryName}":`, err);
-            }
-        }
-    }
-
     function handleConfirm() {
         return guardAgainstClose(handleConfirmInner);
     }
+
+    // Seen live: this dialog can be closed by the host partway through a long run, for
+    // reasons outside this page's own control -- and a batch whose request was never actually
+    // sent yet is lost outright when that happens (nothing to resume, nothing server-side was
+    // ever started for it). A chunk the server HAS received, on the other hand, keeps running
+    // to completion regardless of whether this dialog still exists a moment later (same
+    // guarantee file-email-dialog.html's own postFeBatch already relies on). So the only real
+    // defense against an unpredictable early close is to get every chunk's request sent as
+    // early as possible -- dispatched together with bounded concurrency, not fired one at a
+    // time waiting for each to fully finish (a strictly sequential run across ~30 chunks could
+    // take 15-20 minutes, all of it exposed to whatever is closing this window).
+    const BF_DISPATCH_CONCURRENCY = 4;
 
     async function handleConfirmInner() {
         const groups = buildProjectGroups();
@@ -979,8 +967,34 @@
             console.error("Could not resolve the Emails to File folder:", err);
         }
 
+        // Build and record every chunk for every project up front -- addFeBatchToStorage
+        // happens here, before any dispatching starts, so even a chunk whose request hasn't
+        // gone out yet is still tracked in fileEmailPendingBatches and checkable later via
+        // File Email's own pending-batches notice if this dialog disappears before reaching it.
+        const now = new Date().toISOString();
+        const allEntries = [];
+        const categoryPreExisted = new Map();
+        for (const group of groups) {
+            let preExisted = true;
+            try {
+                preExisted = (await withTimeout(findMasterCategory(group.categoryName), 8000, "findMasterCategory")) !== null;
+            } catch (err) {
+                console.error(`Could not check master category list beforehand for "${group.categoryName}":`, err);
+                preExisted = true;
+            }
+            categoryPreExisted.set(group.categoryName, preExisted);
+            const entries = chunkArray(group.items, BATCH_CHUNK_SIZE).map(chunk => ({
+                batchId: crypto.randomUUID(), categoryName: group.categoryName, total: chunk.length,
+                startedAt: now, lastAttemptAt: now, retryCount: 0,
+                items: chunk, destinationFolderId: emailsToFileFolderId, categoryPreExisted: preExisted
+            }));
+            entries.forEach(addFeBatchToStorage);
+            allEntries.push(...entries);
+        }
+
         const totalEmails = groups.reduce((n, g) => n + g.items.length, 0);
         const progress = new Map(groups.map(g => [g.categoryName, { total: g.items.length, succeeded: 0, failed: 0, failureDetails: [] }]));
+        const groupSucceeded = new Map(groups.map(g => [g.categoryName, 0]));
 
         function renderProgress(finished) {
             const succeededSum = [...progress.values()].reduce((n, p) => n + p.succeeded, 0);
@@ -994,7 +1008,8 @@
                 .map(d => `<div class="row" style="color:#B3401F;">${escapeHtml(d)}</div>`).join("");
             document.getElementById("bfResultSummary").innerHTML = `
                 <div class="summary-box">
-                    <div class="row">${finished ? "Done" : "Filing in progress — leave this window open"} — ` +
+                    <div class="row">${finished ? "Done" : "Filing in progress — this continues on the server even if this " +
+                        "window closes; reopen Batch File Folder or File Email later to check"} — ` +
                     `${succeededSum} of ${totalEmails} filed so far${failedSum ? `, ${failedSum} failed` : ""}.</div>
                     ${rows}
                     ${failureNotes}
@@ -1003,16 +1018,30 @@
 
         renderProgress(false);
 
+        await runWithConcurrency(allEntries, BF_DISPATCH_CONCURRENCY, async (entry) => {
+            const result = await postChunkWithRetry(entry);
+            const p = progress.get(entry.categoryName);
+            p.succeeded += result.succeeded || 0;
+            p.failed += result.failed || 0;
+            p.failureDetails.push(...(result.items || [])
+                .filter(i => i.status === "failed")
+                .map(i => `"${i.subject}" (${entry.categoryName}) — ${describeFeItemError(i.error)}`));
+            groupSucceeded.set(entry.categoryName, (groupSucceeded.get(entry.categoryName) || 0) + (result.succeeded || 0));
+            renderProgress(false);
+        });
+
+        // Master-category cleanup, once per project, after all of its chunks have resolved --
+        // safe to just check again even if this dialog didn't see every chunk finish (e.g. it
+        // reopened mid-run): findMasterCategory/deleteMasterCategory are idempotent in effect.
         for (const group of groups) {
-            await fileGroup(group, emailsToFileFolderId, (entry, result) => {
-                const p = progress.get(entry.categoryName);
-                p.succeeded += result.succeeded || 0;
-                p.failed += result.failed || 0;
-                p.failureDetails.push(...(result.items || [])
-                    .filter(i => i.status === "failed")
-                    .map(i => `"${i.subject}" (${entry.categoryName}) — ${describeFeItemError(i.error)}`));
-                renderProgress(false);
-            });
+            if (categoryPreExisted.get(group.categoryName)) continue;
+            if ((groupSucceeded.get(group.categoryName) || 0) === 0) continue;
+            try {
+                const masterEntry = await findMasterCategory(group.categoryName);
+                if (masterEntry) await deleteMasterCategory(masterEntry.id);
+            } catch (err) {
+                console.error(`Could not clean up the auto-created master category for "${group.categoryName}":`, err);
+            }
         }
 
         renderProgress(true);

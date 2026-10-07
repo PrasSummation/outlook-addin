@@ -520,14 +520,31 @@ pass, rather than one-at-a-time via File Email. Opens `batch-file-dialog.html`.
     very plausibly aborted those in-flight `fetch()` calls mid-request, silently losing
     whatever hadn't completed yet. This is the most likely explanation for "starts processing
     but doesn't go through all emails."
-  Fixed: chunks dispatch strictly one at a time now (`BATCH_CHUNK_SIZE` dropped to 25),
-  `postChunkWithRetry` retries a chunk that throws up to `BF_CHUNK_MAX_RETRIES` times before
-  giving up on it, and `handleConfirmInner` now *awaits* every chunk across every project
-  group before returning — so the existing close-guard genuinely covers the whole operation,
-  and the result screen shows real, live-updating per-project succeeded/failed counts (with
-  item-level failure reasons) instead of an optimistic one-line message. Trade-off: slower
-  wall-clock for a very large folder (strictly sequential, not concurrent) in exchange for not
-  silently dropping work — explicitly the right trade for this feature.
+  First fix made it worse: dispatching strictly sequentially (one chunk fully awaited before
+  the next starts) meant a ~30-chunk run could take 15-20 minutes end to end, and the user
+  then reported the dialog window **closing by itself** partway through a run — for reasons
+  outside this page's own control (not a bug in this code closing it; something about the
+  Outlook/WebView host itself, still unconfirmed exactly what). A chunk whose request was
+  never actually sent yet is lost outright when that happens — there's nothing server-side to
+  keep running, because nothing was ever started for it. Sequential dispatch maximized exactly
+  that exposure window.
+  **Current design**: front-load dispatch instead. Every chunk for every project is built and
+  recorded in `fileEmailPendingBatches` up front (before any network calls), then all of them
+  are fired together with bounded concurrency (`BF_DISPATCH_CONCURRENCY = 4`, `BATCH_CHUNK_SIZE
+  = 25`) rather than awaited one at a time. The reasoning: once a chunk's request has actually
+  reached the Azure Function, it keeps running to completion server-side regardless of whether
+  this dialog still exists a moment later (the same guarantee file-email-dialog.html's own
+  `postFeBatch` already relies on) — so the only real defense against an unpredictable early
+  close is minimizing how long it takes to get every request *sent*, not how long it takes to
+  see every result. `postChunkWithRetry` still retries a chunk that throws before giving up,
+  and the result screen still shows live succeeded/failed counts as responses come back, now
+  explicitly saying "this continues on the server even if this window closes" since that's
+  the honest behavior rather than something to hide.
+  **Not yet confirmed**: whether this actually prevents the self-closing dialog, since the
+  cause of the close itself is still unknown — this only shrinks the window during which an
+  early close costs you unsent work. A large table (742+ rows, each with its own input and
+  shared datalist) is a plausible contributor to host/WebView memory pressure over a long
+  session, but unconfirmed; worth revisiting with real telemetry if this still recurs.
 
 ## Recurring code patterns
 
