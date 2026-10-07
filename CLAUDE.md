@@ -313,10 +313,42 @@ worked during earlier testing purely because of a fresh/cached token
 window, same as File on Send's. Fixed with a `withTimeout()` wrapper (8
 seconds) around both calls, so a hang falls through to their existing
 `catch` fallback instead of leaving the dialog stuck on "Starting..."
-forever. Didn't bother timing out `postFeBatch` itself — it's already
+forever. Didn't bother timing out `postFeBatch` itself at first — it's already
 fire-and-forget and doesn't block the dialog closing, and an eventual
 non-response there is already handled by the existing pending-batch
-retry/notice mechanism.
+retry/notice mechanism. (Revisited below — it turned out to matter for
+a different reason.)
+
+**Two more bugs found the same evening, both in `file-email-dialog.html`**:
+
+1. **Confirm step auto-skipped itself.** Pressing Enter in the filter
+   box to select a highlighted project calls `selectFeProject()`
+   synchronously, which shows `stepConfirm` and focuses
+   `feConfirmButton` — all within that same keydown event. Since
+   `handleFeFilterKeydown` only called `e.preventDefault()` (which stops
+   the default action, not propagation), that same keydown then bubbled
+   up to the document-level "Enter accepts Confirm" listener, which saw
+   `stepConfirm` now visible and `e.target` still the filter box (not a
+   BUTTON — `e.target` doesn't follow a focus change mid-bubble), and
+   immediately called `handleFeConfirm()` — confirming the exact
+   keystroke that had just selected the project, before the user ever
+   saw the Confirm screen. Fixed with `e.stopPropagation()` in that
+   Enter branch.
+
+2. **The dialog still wasn't closing promptly even after the
+   `withTimeout` fix above.** Root cause: `postFeBatch` itself requests
+   `bridgeRequest` (`MailboxBridge.Call`) — a *third* scope, used
+   nowhere else in this dialog — so it can be the first thing needing a
+   silent token for it, hitting the same blocked-navigation hang,
+   upstream of the `fetch()` call the existing `AbortController` is
+   wired to. Aborting that signal can't reach a hang that occurs before
+   the fetch is ever made. Wrapped both of `postFeBatch`'s auth calls in
+   the same `withTimeout()` so the promise at least settles and the
+   fire-and-forget `.catch` actually runs — but flagged honestly: if the
+   dialog's *host* is the one refusing to close while a navigation is
+   still in flight (rather than our own JS just being stuck), no amount
+   of timing out our own promise can force that — that part should
+   resolve once the `AppDomains` fix actually finishes propagating.
 
 **Why it exists**: Office.js task panes have no background-execution model —
 closing the pane kills its JS immediately, with no way to prevent closing or

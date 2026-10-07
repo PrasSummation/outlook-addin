@@ -570,6 +570,15 @@
             setFeHighlight(Math.max(feHighlightIndex - 1, 0));
         } else if (e.key === "Enter") {
             e.preventDefault();
+            // Also stop this exact keydown from bubbling to the document-level Enter
+            // handler below -- selectFeProject synchronously shows stepConfirm and moves
+            // focus to feConfirmButton, all within this same event, and the bubbling
+            // listener was then seeing "Enter pressed while stepConfirm is visible" and
+            // immediately confirming, auto-skipping the Confirm screen entirely before the
+            // user ever saw it. e.target is still this filter box throughout the bubble
+            // (it doesn't follow the focus change), so the listener's own BUTTON check
+            // never caught this.
+            e.stopPropagation();
             if (feHighlightIndex >= 0 && feFilteredEntries[feHighlightIndex]) {
                 selectFeProject(feFilteredEntries[feHighlightIndex].name);
             }
@@ -718,9 +727,18 @@
     const FE_BATCH_MAX_RETRIES = 2;
 
     async function postFeBatch(entry, signal) {
-        const graphToken = await signInAndGetToken(mailWriteRequest, true);
+        // Same withTimeout treatment as the Confirm step's pre-flight checks, and for the
+        // same reason -- bridgeRequest in particular is never requested anywhere else in
+        // this dialog, so this can be the first thing needing a silent token for it. This
+        // call happens upstream of the fetch() below, so the AbortController passed in as
+        // `signal` can't reach a hang here at all -- it's only wired to that fetch. Timing
+        // this out at least lets this promise settle (so the fire-and-forget .catch above
+        // actually runs) instead of leaving it dangling forever; it does NOT guarantee the
+        // dialog window itself can still close promptly, if the host is the one holding it
+        // open pending that navigation.
+        const graphToken = await withTimeout(signInAndGetToken(mailWriteRequest, true), 8000, "signInAndGetToken(mailWriteRequest)");
         if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
-        const bridgeToken = await signInAndGetToken(bridgeRequest, true);
+        const bridgeToken = await withTimeout(signInAndGetToken(bridgeRequest, true), 8000, "signInAndGetToken(bridgeRequest)");
         if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
 
         const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
