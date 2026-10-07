@@ -148,12 +148,19 @@
         ENPER: "Energy/Perth", ENADL: "Energy/Adelaide"
     };
     const SUGGEST_API_URL = "https://summation-email-index.azurewebsites.net";
-    const BATCH_CHUNK_SIZE = 50; // items per FileEmailBatch POST -- this is the "overcome the
+    const BATCH_CHUNK_SIZE = 25; // items per FileEmailBatch POST -- this is the "overcome the
                                  // item-count limit" bit: a folder's whole contents get split
                                  // into chunks this size, each its own tracked batch, rather
-                                 // than one unbounded request.
+                                 // than one unbounded request. Kept smaller than File Email's
+                                 // own usual single-batch size, and fired strictly one at a
+                                 // time (see BF_CHUNK_MAX_RETRIES below) -- each chunk does up
+                                 // to 3 sequential Graph calls per item inside one HTTP
+                                 // request, and firing several of those concurrently against
+                                 // the same mailbox turned out to make individual chunks more
+                                 // likely to time out, not less -- exactly where emails could
+                                 // silently fail to go through on a large folder.
     const BF_SUGGEST_CONCURRENCY = 4;
-    const BF_POST_CONCURRENCY = 3;
+    const BF_CHUNK_MAX_RETRIES = 2;
 
     const msalConfig = {
       auth: {
@@ -203,26 +210,6 @@
         const out = [];
         for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
         return out;
-    }
-
-    // Runs `worker` over `items` with at most `limit` in flight at once, preserving result
-    // order. Used both for the per-row suggestion lookups and for dispatching batch chunks --
-    // same "don't fire an unbounded burst of requests" principle either way.
-    function runWithConcurrency(items, limit, worker) {
-        return new Promise((resolve) => {
-            if (items.length === 0) { resolve([]); return; }
-            const results = new Array(items.length);
-            let next = 0, done = 0;
-            function startNext() {
-                if (next >= items.length) return;
-                const i = next++;
-                Promise.resolve(worker(items[i], i))
-                    .then(r => { results[i] = r; })
-                    .catch(() => { results[i] = null; })
-                    .finally(() => { done++; if (done === items.length) resolve(results); else startNext(); });
-            }
-            for (let k = 0; k < Math.min(limit, items.length); k++) startNext();
-        });
     }
 
     // ---- Initial context from the URL (the opener's detectFileEmailSelection() result --
@@ -898,12 +885,49 @@
         return [...groups.entries()].map(([categoryName, items]) => ({ categoryName, items }));
     }
 
+    function describeFeItemError(errorText) {
+        if (!errorText) return "unknown error";
+        if (/ErrorItemNotFound|ErrorInvalidIdMalformed|does not exist|\(404\)|404 \(Not Found\)/i.test(errorText)) {
+            return "this email appears to have been moved or deleted since filing was started";
+        }
+        return errorText;
+    }
+
+    // One chunk's POST, retried up to BF_CHUNK_MAX_RETRIES times if it throws (network error,
+    // bridge timeout, etc.) before actually giving up on it. Always returns a real result
+    // object -- on final failure, a synthesized one marking every item in the chunk as failed
+    // with the real error message, so the caller never has to treat "threw" and "reported
+    // failed" as two different cases.
+    async function postChunkWithRetry(entry) {
+        let attempt = 0;
+        while (true) {
+            try {
+                const result = await postFeBatch(entry);
+                removeFeBatchFromStorage(entry.batchId);
+                return result;
+            } catch (err) {
+                if (attempt >= BF_CHUNK_MAX_RETRIES) {
+                    console.error(`Batch File Folder: chunk for "${entry.categoryName}" failed after ${attempt + 1} attempt(s), giving up:`, err);
+                    return {
+                        succeeded: 0, failed: entry.total,
+                        items: entry.items.map(i => ({ subject: i.subject, status: "failed", error: err.message }))
+                    };
+                }
+                attempt++;
+                entry.retryCount = attempt;
+                entry.lastAttemptAt = new Date().toISOString();
+                console.error(`Batch File Folder: chunk for "${entry.categoryName}" failed, retrying (attempt ${attempt + 1} of ${BF_CHUNK_MAX_RETRIES + 1}):`, err);
+            }
+        }
+    }
+
     // Categorizes+moves one project's worth of emails: a pre-flight master-category check
-    // (once per project, not per chunk), then the chunked FileEmailBatch POSTs themselves,
-    // fired with limited concurrency and NOT awaited here -- same fire-and-forget principle
-    // as file-email-dialog.html's own postFeBatch usage, the bridge keeps each chunk running
-    // to completion server-side regardless of whether this dialog is still open.
-    async function fileGroup(group, emailsToFileFolderId) {
+    // (once per project, not per chunk), then the chunked FileEmailBatch POSTs -- strictly
+    // one at a time (not concurrent; see BATCH_CHUNK_SIZE's own comment for why), awaited and
+    // reported via onChunkDone after each one, so a large folder shows real, incrementally
+    // updating progress rather than a single "continuing in the background" that never gets
+    // checked again.
+    async function fileGroup(group, emailsToFileFolderId, onChunkDone) {
         let categoryPreExisted = true;
         try {
             categoryPreExisted = (await withTimeout(findMasterCategory(group.categoryName), 8000, "findMasterCategory")) !== null;
@@ -920,28 +944,21 @@
         }));
         batchEntries.forEach(addFeBatchToStorage);
 
-        runWithConcurrency(batchEntries, BF_POST_CONCURRENCY, async (entry) => {
-            try {
-                const result = await postFeBatch(entry);
-                removeFeBatchFromStorage(entry.batchId);
-                return result;
-            } catch (err) {
-                console.error(`Batch File Folder: a chunk for "${group.categoryName}" failed after this dialog moved on:`, err);
-                return null;
-            }
-        }).then(async (results) => {
-            if (categoryPreExisted) return;
-            const succeeded = results.filter(Boolean).reduce((n, r) => n + (r.succeeded || 0), 0);
-            if (succeeded === 0) return;
+        let succeededTotal = 0;
+        for (const entry of batchEntries) {
+            const result = await postChunkWithRetry(entry);
+            succeededTotal += result.succeeded || 0;
+            onChunkDone(entry, result);
+        }
+
+        if (!categoryPreExisted && succeededTotal > 0) {
             try {
                 const masterEntry = await findMasterCategory(group.categoryName);
                 if (masterEntry) await deleteMasterCategory(masterEntry.id);
             } catch (err) {
                 console.error(`Could not clean up the auto-created master category for "${group.categoryName}":`, err);
             }
-        });
-
-        return batchEntries;
+        }
     }
 
     function handleConfirm() {
@@ -962,17 +979,43 @@
             console.error("Could not resolve the Emails to File folder:", err);
         }
 
-        for (const group of groups) {
-            await fileGroup(group, emailsToFileFolderId);
+        const totalEmails = groups.reduce((n, g) => n + g.items.length, 0);
+        const progress = new Map(groups.map(g => [g.categoryName, { total: g.items.length, succeeded: 0, failed: 0, failureDetails: [] }]));
+
+        function renderProgress(finished) {
+            const succeededSum = [...progress.values()].reduce((n, p) => n + p.succeeded, 0);
+            const failedSum = [...progress.values()].reduce((n, p) => n + p.failed, 0);
+            const rows = [...progress.entries()].map(([name, p]) => {
+                const pending = p.total - p.succeeded - p.failed;
+                return `<div class="row">${escapeHtml(name)}: ${p.succeeded} filed` +
+                    `${p.failed ? `, ${p.failed} failed` : ""}${pending > 0 ? `, ${pending} remaining` : ""} (of ${p.total})</div>`;
+            }).join("");
+            const failureNotes = [...progress.values()].flatMap(p => p.failureDetails).slice(0, 20)
+                .map(d => `<div class="row" style="color:#B3401F;">${escapeHtml(d)}</div>`).join("");
+            document.getElementById("bfResultSummary").innerHTML = `
+                <div class="summary-box">
+                    <div class="row">${finished ? "Done" : "Filing in progress — leave this window open"} — ` +
+                    `${succeededSum} of ${totalEmails} filed so far${failedSum ? `, ${failedSum} failed` : ""}.</div>
+                    ${rows}
+                    ${failureNotes}
+                </div>`;
         }
 
-        const totalEmails = groups.reduce((n, g) => n + g.items.length, 0);
-        const breakdown = groups.map(g => `<div class="row">${escapeHtml(g.categoryName)}: ${g.items.length} email(s)</div>`).join("");
-        document.getElementById("bfResultSummary").innerHTML = `
-            <div class="summary-box">
-                <div class="row">Filing ${totalEmails} email(s) across ${groups.length} project(s) — continuing in the background.</div>
-                ${breakdown}
-            </div>`;
+        renderProgress(false);
+
+        for (const group of groups) {
+            await fileGroup(group, emailsToFileFolderId, (entry, result) => {
+                const p = progress.get(entry.categoryName);
+                p.succeeded += result.succeeded || 0;
+                p.failed += result.failed || 0;
+                p.failureDetails.push(...(result.items || [])
+                    .filter(i => i.status === "failed")
+                    .map(i => `"${i.subject}" (${entry.categoryName}) — ${describeFeItemError(i.error)}`));
+                renderProgress(false);
+            });
+        }
+
+        renderProgress(true);
     }
   </script>
 </body>

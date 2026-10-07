@@ -502,18 +502,32 @@ pass, rather than one-at-a-time via File Email. Opens `batch-file-dialog.html`.
   with a resumable link, replacing the old silent-swallow-into-console.error) and a
   `totalItemCount` mismatch check, so at least any future stop is now reported honestly
   rather than silently mistaken for success.
-  **Current diagnostic step**: split the load into two phases —
-  `collectFolderRoster` (Phase 1) does *only* `nextLink` paging into an in-memory array, no
-  DOM writes, no `addRow`, no suggestion queue running at all; `renderRosterIntoTable`
-  (Phase 2) only starts once Phase 1 is fully done. If the cap still happens during Phase 1
-  alone, that conclusively points at Graph/Exchange itself (throttling, or a genuine
-  per-mailbox limit) rather than at anything the rendering/suggestion work was doing
-  concurrently with the network calls. If Phase 1 completes but the table still stops short,
-  the problem is on the rendering side instead. Trade-off accepted for this diagnostic build:
-  no rows render at all until the whole folder's roster is collected (previously incremental)
-  — restore incremental rendering once the actual cause is confirmed. Next idea if this still
-  doesn't resolve it: the `/messages/delta` endpoint, which reads the mailbox's replication
-  log directly rather than through any index.
+  The collect-then-render split (`collectFolderRoster` Phase 1, pure in-memory `nextLink`
+  paging with no DOM writes at all, then `renderRosterIntoTable` Phase 2 once that's fully
+  done) confirmed the *loading* side was actually fine — a real test loaded and rendered all
+  742 emails in a large folder correctly. The cap turned out to be a completely separate bug
+  on the **write side** (Confirm), not loading at all:
+  - `fileGroup`'s dispatch fired chunks concurrently and never looked at their results — it
+    declared "continuing in the background" the instant the POSTs were sent, without ever
+    checking whether they actually succeeded.
+  - `FileEmailBatch` is synchronous per chunk (up to 3 Graph calls per item, sequentially,
+    inside one HTTP request/response) — so firing multiple chunks concurrently against the
+    *same* mailbox made individual chunks slower and more timeout-prone, not faster.
+  - Worst of all: because `handleConfirmInner` returned almost immediately (not awaiting the
+    fire-and-forget dispatch), the `beforeunload`/`guardAgainstClose` warning only covered
+    the instant of kicking requests off, not the minutes of real work still in flight — if the
+    dialog closed (or was closed) while chunks were still running, the webview tearing down
+    very plausibly aborted those in-flight `fetch()` calls mid-request, silently losing
+    whatever hadn't completed yet. This is the most likely explanation for "starts processing
+    but doesn't go through all emails."
+  Fixed: chunks dispatch strictly one at a time now (`BATCH_CHUNK_SIZE` dropped to 25),
+  `postChunkWithRetry` retries a chunk that throws up to `BF_CHUNK_MAX_RETRIES` times before
+  giving up on it, and `handleConfirmInner` now *awaits* every chunk across every project
+  group before returning — so the existing close-guard genuinely covers the whole operation,
+  and the result screen shows real, live-updating per-project succeeded/failed counts (with
+  item-level failure reasons) instead of an optimistic one-line message. Trade-off: slower
+  wall-clock for a very large folder (strictly sequential, not concurrent) in exchange for not
+  silently dropping work — explicitly the right trade for this feature.
 
 ## Recurring code patterns
 
