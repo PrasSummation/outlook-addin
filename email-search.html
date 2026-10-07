@@ -34,9 +34,10 @@
     #syncStatus{margin-left:auto;font-size:11px;color:var(--grey-300);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px}
     #syncStatus.changed{color:#9FD6A8}
     #syncStatus.bad{color:#F2B24D}
-    #syncBtn{flex:none;width:30px;height:30px;border:1px solid #555;border-radius:4px;background:none;color:var(--grey-200);font-size:15px;line-height:1}
-    #syncBtn:hover{border-color:var(--green);color:#fff}
-    #syncBtn.spin{animation:spin .9s linear infinite}
+    #syncBtn,#rebuildKeywordsBtn{flex:none;width:30px;height:30px;border:1px solid #555;border-radius:4px;background:none;color:var(--grey-200);font-size:15px;line-height:1}
+    #syncBtn:hover,#rebuildKeywordsBtn:hover{border-color:var(--green);color:#fff}
+    #syncBtn.spin,#rebuildKeywordsBtn.spin{animation:spin .9s linear infinite}
+    #rebuildKeywordsBtn:disabled{opacity:.5;cursor:default}
     @keyframes spin{to{transform:rotate(360deg)}}
 
     /* three panes */
@@ -166,6 +167,7 @@
       <option value="relevance">Best match</option>
     </select>
     <span id="syncStatus" title="The index checks both Hub libraries for new, changed and deleted emails every 5 minutes"></span>
+    <button id="rebuildKeywordsBtn" title="Rebuild the content-based suggestion keywords now, instead of waiting for the next scheduled run">&#8635;</button>
     <span id="who"></span>
   </header>
   <div id="signIn"><div><p>Sign in with your Summation account to search project emails.</p><button class="btn primary" id="signInBtn">Sign in</button><p id="signInErr" class="pv-line"></p></div></div>
@@ -699,6 +701,28 @@
     loadStatus();
     setInterval(loadStatus, 60000);
   }
+
+  // Manual trigger for the content-based suggestion keywords (SPEC_ContentBasedProjectSuggestions.md)
+  // -- keyword_timer already runs this every 6 hours on its own; this just lets someone pull in
+  // today's newly-filed emails right now instead of waiting. Always the cheap incremental run,
+  // never the ?full=1 recount (that's an operational recovery tool, not a button for everyday use).
+  $("rebuildKeywordsBtn").addEventListener("click", async () => {
+    const btn = $("rebuildKeywordsBtn");
+    btn.disabled = true;
+    btn.classList.add("spin");
+    const status = $("syncStatus");
+    try {
+      const result = await (await api("/api/keywords/rebuild", { method: "POST" })).json();
+      status.textContent = `Suggestion keywords updated — ${result.emails} new email(s) across ${result.projects} project(s), ${result.seconds}s`;
+      status.className = "changed";
+    } catch (err) {
+      status.textContent = `Keyword rebuild failed: ${err.message}`;
+      status.className = "bad";
+    } finally {
+      btn.classList.remove("spin");
+      btn.disabled = false;
+    }
+  });
 
   $("signInBtn").addEventListener("click", async () => {
     $("signInErr").textContent = "";
