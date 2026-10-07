@@ -311,8 +311,41 @@
         return path.split("/").map(encodeURIComponent).join("/");
     }
 
+    // A folder with hundreds/thousands of emails means dozens of sequential Graph calls --
+    // without retrying, one transient 429/503 (or a dropped connection) partway through used
+    // to silently stop the whole load, with nothing but a console.error to show for it (the
+    // folder just looked "done" early). Every Graph GET in this file goes through this retry
+    // wrapper now: honors Retry-After on 429s, exponential backoff otherwise, up to
+    // GRAPH_MAX_RETRIES before actually giving up.
+    const GRAPH_MAX_RETRIES = 5;
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function graphBackoffMs(attempt) {
+        return Math.min(1000 * Math.pow(2, attempt), 16000);
+    }
+
+    async function graphFetchWithRetry(url, token, attempt = 0) {
+        let response;
+        try {
+            response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        } catch (networkErr) {
+            if (attempt >= GRAPH_MAX_RETRIES) throw networkErr;
+            await sleep(graphBackoffMs(attempt));
+            return graphFetchWithRetry(url, token, attempt + 1);
+        }
+        if ((response.status === 429 || response.status === 503 || response.status === 504) && attempt < GRAPH_MAX_RETRIES) {
+            const retryAfter = parseFloat(response.headers.get("Retry-After"));
+            await sleep(!isNaN(retryAfter) ? retryAfter * 1000 : graphBackoffMs(attempt));
+            return graphFetchWithRetry(url, token, attempt + 1);
+        }
+        return response;
+    }
+
     async function graphGet(url, token) {
-        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        const response = await graphFetchWithRetry(url, token);
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
@@ -321,7 +354,7 @@
     }
 
     async function graphGetOrNull(url, token) {
-        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        const response = await graphFetchWithRetry(url, token);
         if (response.status === 404) return null;
         if (!response.ok) {
             const errorText = await response.text();
@@ -361,6 +394,7 @@
     function resetToDetect() {
         bfMessages = [];
         bfCounts = { skip: 0, resolved: 0, unresolved: 0 };
+        bfSeenIds.clear();
         bfFolderInfo = null;
         document.getElementById("bfTableBody").innerHTML = "";
         document.getElementById("bfBulkCheckbox").checked = false;
@@ -400,7 +434,7 @@
             showBfStep("work");
             renderFolderHeader();
             loadProjectFolderNames();
-            loadFolderMessagesPaged(folder.id, token);
+            loadFolderMessagesPaged(folder.id);
         } catch (err) {
             console.error("Could not detect the target folder:", err);
             status.textContent = `Error: ${err.message}`;
@@ -472,32 +506,80 @@
     }
 
     // ---- Loading the folder's emails, paged (this is the other half of "overcome the
-    // item-count limit" -- Graph's own @odata.nextLink pagination, followed until exhausted,
-    // rather than a single bounded request) ----
+    // item-count limit") ----
+    // Deliberately NOT using @odata.nextLink: on a large folder with $orderby, Graph's own
+    // nextLink chain was observed to stop prematurely (around ~300 items in testing) with no
+    // error at all -- just no further nextLink, so the load looked complete when it wasn't.
+    // Paging instead by a receivedDateTime cursor (each page's own $filter=receivedDateTime
+    // lt <last item's timestamp>) sidesteps that chain entirely and is a well-understood
+    // pattern for enumerating large mail folders. A page shorter than PAGE_SIZE (or empty)
+    // means there's nothing left. One known, accepted edge case: if multiple messages share
+    // the exact same receivedDateTime value and a page boundary falls between them, the ones
+    // after the cursor on that same timestamp could be skipped -- rare enough (sub-second
+    // precision) not to be worth a secondary tiebreaker for now.
+
+    const BF_PAGE_SIZE = 100;
+    const BF_SELECT_FIELDS = "id,subject,from,conversationId,receivedDateTime";
 
     let bfMessages = [];
     let bfCounts = { skip: 0, resolved: 0, unresolved: 0 };
+    const bfSeenIds = new Set(); // guards against double-adding a row if a retry re-requests a page already (partly) applied
 
-    async function loadFolderMessagesPaged(folderId, token) {
+    function buildFolderPageUrl(folderId, cursor) {
         let url = `https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(folderId)}/messages` +
-            "?$select=id,subject,from,conversationId,receivedDateTime&$orderby=receivedDateTime desc&$top=100";
-        let loaded = 0;
-        while (url) {
+            `?$select=${BF_SELECT_FIELDS}&$orderby=receivedDateTime desc&$top=${BF_PAGE_SIZE}`;
+        if (cursor) url += `&$filter=${encodeURIComponent(`receivedDateTime lt ${cursor}`)}`;
+        return url;
+    }
+
+    async function loadFolderMessagesPaged(folderId) {
+        await pageThroughFolderMessages(folderId, null, 0);
+    }
+
+    async function pageThroughFolderMessages(folderId, cursor, loaded) {
+        let nextCursor = cursor;
+        while (true) {
             let page;
             try {
-                page = await graphGet(url, token);
+                const token = (await signInAndGetToken(mailWriteRequest, false)) || (await signInAndGetToken(mailWriteRequest, true));
+                if (!token) throw new Error("Could not refresh mailbox access.");
+                page = await graphGet(buildFolderPageUrl(folderId, nextCursor), token);
             } catch (err) {
-                console.error("Could not load a page of folder messages:", err);
-                break;
+                console.error("Could not load a page of folder messages, stopping to show this clearly rather than pretending it's done:", err);
+                showFolderLoadError(folderId, nextCursor, loaded, err);
+                return;
             }
-            for (const msg of (page.value || [])) {
+            const batch = page.value || [];
+            if (batch.length === 0) break;
+            for (const msg of batch) {
+                if (bfSeenIds.has(msg.id)) continue;
+                bfSeenIds.add(msg.id);
                 addRow(msg);
                 loaded++;
             }
+            nextCursor = batch[batch.length - 1].receivedDateTime;
             updateLoadProgress(loaded, false);
-            url = page["@odata.nextLink"] || null;
+            if (batch.length < BF_PAGE_SIZE) break;
         }
         updateLoadProgress(loaded, true);
+        updateConfirmEnabled();
+    }
+
+    // Surfaces a real, visible error instead of the old silent stop -- with a retry link that
+    // resumes from exactly this cursor rather than restarting the whole folder from scratch.
+    function showFolderLoadError(folderId, cursor, loaded, err) {
+        const el = document.getElementById("bfLoadProgress");
+        if (!el) return;
+        el.innerHTML = `${loaded} email(s) loaded so far — stopped early (${escapeHtml(err.message)}). ` +
+            `<a href="#" id="bfRetryLoadLink">Retry loading the rest</a>`;
+        const link = document.getElementById("bfRetryLoadLink");
+        if (link) {
+            link.addEventListener("click", (e) => {
+                e.preventDefault();
+                el.textContent = `Retrying... (${loaded} loaded so far)`;
+                pageThroughFolderMessages(folderId, cursor, loaded);
+            });
+        }
         updateConfirmEnabled();
     }
 

@@ -489,9 +489,17 @@ pass, rather than one-at-a-time via File Email. Opens `batch-file-dialog.html`.
   an outcome from a batch-file run surfaces in File Email's existing pending-batches notice
   too. The master-category pre-flight/cleanup (`findMasterCategory`/`deleteMasterCategory`)
   runs once per *project group*, not once per chunk.
-- **Not yet tested live** (same caveat as everything in this repo's local preview tooling —
-  see "Known test gap" below): real verification needs a folder with a genuinely large number
-  of emails in actual Outlook, not just a handful in testing.
+- **Found live, fixed same day**: a large real folder stopped loading silently around ~300
+  emails with no error shown at all. Root cause: relying on Graph's own `@odata.nextLink` for
+  paging, which stopped producing a further link on a large `$orderby`-sorted folder well
+  before the folder's actual `totalItemCount` was reached — Graph gave no error, the link
+  just stopped appearing. Fixed by abandoning `nextLink` entirely in favor of a
+  `receivedDateTime` cursor (`$filter=receivedDateTime lt <last item's timestamp>` each page,
+  terminating on a short/empty page instead of a missing link) — a load that stops for a
+  genuine reason (network/throttling) now also shows a visible "N loaded so far, stopped
+  early (reason) — Retry" message with a link that resumes from exactly that cursor, instead
+  of silently pretending to be done. All Graph GETs in this file also now retry through
+  `GRAPH_MAX_RETRIES` (honoring `Retry-After` on 429s) before actually giving up.
 
 ## Recurring code patterns
 
