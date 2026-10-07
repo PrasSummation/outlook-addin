@@ -83,6 +83,8 @@
     .folder-item.selected{background:var(--green-pale);box-shadow:inset 2px 0 0 var(--green)}
     .folder-item .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--grey-900)}
     .folder-item .tag{flex:none;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.03em;color:var(--grey-400)}
+    .folder-item.suggested .name{color:var(--green-dark);font-weight:600}
+    .folder-item.suggested .tag{font-family:var(--font-body);color:var(--green-dark);text-transform:none;letter-spacing:0}
     .empty-message{padding:12px;color:var(--grey-400);font-size:12px}
     #listStatus{font-size:10.5px;color:var(--grey-400);margin-top:6px}
     #skipSaveButton{display:block;margin-top:14px;text-align:center;width:100%}
@@ -227,6 +229,18 @@
     const sitesRequest = { scopes: ["Sites.Selected"] };
     const bridgeRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/MailboxBridge.Call"] };
     const mailWriteRequest = { scopes: ["Mail.ReadWrite", "MailboxSettings.ReadWrite"] };
+    const indexRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/EmailIndex.Access"] };
+    const SUGGEST_API_URL = "https://summation-email-index.azurewebsites.net";
+
+    // Bounded wrapper for a promise that might hang instead of rejecting (e.g. a blocked
+    // silent-auth iframe) -- ported from file-email-dialog.html, same reasoning: a
+    // suggestions fetch must never be able to hang this dialog open.
+    function withTimeout(promise, ms, label) {
+        return Promise.race([
+            promise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
+        ]);
+    }
 
     let msalInstance;
 
@@ -327,6 +341,7 @@
             showApp(true);
             loadFolderNames();
             focusSearchBoxOnce();
+            fetchSuggestions();
         } catch (err) {
             console.error("Sign in failed:", err);
         }
@@ -339,6 +354,7 @@
                 showApp(true);
                 loadFolderNames();
                 focusSearchBoxOnce();
+                fetchSuggestions();
             } else {
                 showApp(false);
             }
@@ -433,6 +449,45 @@
         return true;
     }
 
+    function matchesProjectCode(folderName, code) {
+        const match = /^([a-zA-Z]{5}\d{5})(?:[_-]|$)/.exec(folderName || "");
+        return !!match && !!code && match[1].toUpperCase() === code.toUpperCase();
+    }
+
+    // ---- Content-based project suggestions (SPEC_ContentBasedProjectSuggestions.md) ----
+    // Deliberately lighter-weight than File Email's version: this dialog fires at send time,
+    // before the outgoing item is a Graph-addressable object, so there's no message to read
+    // from/to/cc/body off without a fresh Graph round-trip against "the original" (which would
+    // mean requesting mailWriteRequest interactively right as the dialog opens, before the
+    // user's done anything -- too intrusive for a nice-to-have). Subject + conversationId are
+    // already sitting in sendContext from commands.js's own detection, so this signal is
+    // index-token-only: silent (isUserAction=false), never a surprise consent popup, and the
+    // conversationId alone still drives the strongest signal (an exact thread match) for any
+    // reply/forward.
+    let sendSuggestions = [];
+
+    async function fetchSuggestions() {
+        try {
+            const indexToken = await withTimeout(signInAndGetToken(indexRequest, false), 4000, "suggest: index token");
+            if (!indexToken) return;
+            const account = msalInstance.getActiveAccount();
+            const params = new URLSearchParams({
+                self: (account && account.username) || "",
+                conversationId: sendContext.conversationId || "",
+                subject: (sendContext.subject || "").slice(0, 1000)
+            });
+            const response = await withTimeout(fetch(`${SUGGEST_API_URL}/api/suggest?${params}`, {
+                headers: { Authorization: `Bearer ${indexToken}` }
+            }), 4000, "suggest: api call");
+            if (!response.ok) return;
+            const data = await response.json();
+            sendSuggestions = data.suggestions || [];
+            renderFolderList(document.getElementById("fosFilterBox").value);
+        } catch (err) {
+            console.error("Could not load suggested projects (non-fatal):", err);
+        }
+    }
+
     // ---- Step / project list ----
 
     function showStep(step) {
@@ -501,10 +556,31 @@
         list.innerHTML = "";
         const selectedService = document.querySelector('input[name="fosService"]:checked').value;
         const normalizedFilter = (filter || "").toLowerCase();
-        filteredEntries = folderEntries
-            .filter(entry => serviceFilterMatches(selectedService, entry.combo))
-            .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
-            .sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name));
+
+        // Suggested rows: only while the search box is empty, and only entries that still
+        // resolve to a real, currently-listed folder matching the current service filter --
+        // re-checked at every render, not just once (HANDOFF_MLPredictor_DeepDive.md §9).
+        const suggestedEntries = [];
+        if (!normalizedFilter) {
+            const seen = new Set();
+            for (const s of sendSuggestions) {
+                const match = folderEntries.find(entry =>
+                    matchesProjectCode(entry.name, s.projectCode) && serviceFilterMatches(selectedService, entry.combo));
+                if (!match || seen.has(match.name)) continue;
+                seen.add(match.name);
+                suggestedEntries.push({ ...match, suggested: true, reason: s.reason });
+            }
+        }
+        const suggestedNames = new Set(suggestedEntries.map(e => e.name));
+
+        filteredEntries = [
+            ...suggestedEntries,
+            ...folderEntries
+                .filter(entry => serviceFilterMatches(selectedService, entry.combo))
+                .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
+                .filter(entry => !suggestedNames.has(entry.name))
+                .sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name))
+        ];
 
         if (filteredEntries.length === 0) {
             const empty = document.createElement("div");
@@ -516,17 +592,17 @@
 
         filteredEntries.forEach((entry, index) => {
             const item = document.createElement("div");
-            item.className = "folder-item";
+            item.className = "folder-item" + (entry.suggested ? " suggested" : "");
             item.tabIndex = -1;
 
             const name = document.createElement("span");
             name.className = "name";
-            name.textContent = entry.name;
+            name.textContent = entry.suggested ? `Suggested — ${entry.name}` : entry.name;
             item.appendChild(name);
 
             const tag = document.createElement("span");
             tag.className = "tag";
-            tag.textContent = `${entry.combo} · ${entry.source}`;
+            tag.textContent = entry.suggested ? entry.reason : `${entry.combo} · ${entry.source}`;
             item.appendChild(tag);
 
             item.addEventListener("click", () => selectProject(entry.name, item));

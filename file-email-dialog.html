@@ -71,6 +71,8 @@
     .folder-item.selected{background:var(--green-pale);box-shadow:inset 2px 0 0 var(--green)}
     .folder-item .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--grey-900)}
     .folder-item .tag{flex:none;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.03em;color:var(--grey-400)}
+    .folder-item.suggested .name{color:var(--green-dark);font-weight:600}
+    .folder-item.suggested .tag{font-family:var(--font-body);color:var(--green-dark);text-transform:none;letter-spacing:0}
     .empty-message{padding:12px;color:var(--grey-400);font-size:12px}
     #feSetupStatus{font-size:10.5px;color:var(--grey-400);margin-top:6px}
 
@@ -187,6 +189,8 @@
     const sitesRequest = { scopes: ["Sites.Selected"] };
     const bridgeRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/MailboxBridge.Call"] };
     const mailWriteRequest = { scopes: ["Mail.ReadWrite", "MailboxSettings.ReadWrite"] };
+    const indexRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/EmailIndex.Access"] };
+    const SUGGEST_API_URL = "https://summation-email-index.azurewebsites.net";
 
     let msalInstance;
 
@@ -371,10 +375,67 @@
         return match ? parseInt(match[1], 10) : -Infinity;
     }
 
+    function matchesProjectCode(folderName, code) {
+        const match = /^([a-zA-Z]{5}\d{5})(?:[_-]|$)/.exec(folderName || "");
+        return !!match && !!code && match[1].toUpperCase() === code.toUpperCase();
+    }
+
     function serviceFilterMatches(selectedService, combo) {
         if (selectedService === "Energy") return combo.startsWith("EN");
         if (selectedService === "Sustainability") return combo.startsWith("SU");
         return !combo.startsWith("EN") && !combo.startsWith("SU");
+    }
+
+    // ---- Content-based project suggestions (SPEC_ContentBasedProjectSuggestions.md) ----
+    // Best-effort only: never requested interactively (isUserAction=false throughout), so a
+    // user who's never granted EmailIndex.Access just silently sees no suggestions rather
+    // than an unexpected consent popup while they're trying to pick a project. Scored by the
+    // hosted email-index's own /api/suggest, which already merges the relational (thread/
+    // person/domain) and content-keyword signals -- this dialog only has to render the result.
+    let feSuggestions = [];
+    let feSuggestionsLoadedFor = null;
+
+    async function fetchFeSuggestions(item) {
+        if (!item || feSuggestionsLoadedFor === item.restId) return;
+        feSuggestionsLoadedFor = item.restId;
+        feSuggestions = [];
+        try {
+            const graphToken = await withTimeout(signInAndGetToken(mailWriteRequest, false), 4000, "suggest: graph token");
+            if (!graphToken) return;
+            const message = await withTimeout(graphGetOrNull(
+                `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(item.restId)}` +
+                "?$select=from,toRecipients,ccRecipients,conversationId,subject,bodyPreview",
+                graphToken
+            ), 4000, "suggest: message lookup");
+            if (!message || feSuggestionsLoadedFor !== item.restId) return;
+
+            const indexToken = await withTimeout(signInAndGetToken(indexRequest, false), 4000, "suggest: index token");
+            if (!indexToken) return;
+
+            const addrList = (recipients) => (recipients || [])
+                .map(r => r.emailAddress && r.emailAddress.address).filter(Boolean).join(",");
+            const account = msalInstance.getActiveAccount();
+            const params = new URLSearchParams({
+                self: (account && account.username) || "",
+                from: (message.from && message.from.emailAddress && message.from.emailAddress.address) || "",
+                to: addrList(message.toRecipients),
+                cc: addrList(message.ccRecipients),
+                conversationId: message.conversationId || "",
+                subject: (message.subject || "").slice(0, 1000),
+                body: (message.bodyPreview || "").slice(0, 1000)
+            });
+            const response = await withTimeout(fetch(`${SUGGEST_API_URL}/api/suggest?${params}`, {
+                headers: { Authorization: `Bearer ${indexToken}` }
+            }), 4000, "suggest: api call");
+            if (!response.ok || feSuggestionsLoadedFor !== item.restId) return;
+            const data = await response.json();
+            if (feSuggestionsLoadedFor !== item.restId) return; // selection moved on while this was in flight
+            feSuggestions = data.suggestions || [];
+        } catch (err) {
+            console.error("Could not load suggested projects (non-fatal):", err);
+        } finally {
+            if (feSuggestionsLoadedFor === item.restId) renderFeFolderList(document.getElementById("feFilterBox").value);
+        }
     }
 
     // ---- Context / step rendering ----
@@ -418,6 +479,9 @@
         } else {
             renderFeFolderList(document.getElementById("feFilterBox").value);
         }
+        // Best-effort, not awaited -- never delays showing the folder list itself, and
+        // fetchFeSuggestions no-ops if already loaded/loading for this same item.
+        fetchFeSuggestions(feState.items[0]);
         // Only steal focus the first time this shows the picker (dialog open, or a live
         // selection update arriving while "no selection" was showing) -- not on every
         // subsequent live update, which would otherwise yank focus away from someone
@@ -519,10 +583,31 @@
         list.innerHTML = "";
         const selectedService = document.querySelector('input[name="feService"]:checked').value;
         const normalizedFilter = (filter || "").toLowerCase();
-        feFilteredEntries = feFolderEntries
-            .filter(entry => serviceFilterMatches(selectedService, entry.combo))
-            .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
-            .sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name));
+
+        // Suggested rows: only while the search box is empty, and only entries that still
+        // resolve to a real, currently-listed folder matching the current service filter --
+        // re-checked at every render, not just once (HANDOFF_MLPredictor_DeepDive.md §9).
+        const suggestedEntries = [];
+        if (!normalizedFilter) {
+            const seen = new Set();
+            for (const s of feSuggestions) {
+                const match = feFolderEntries.find(entry =>
+                    matchesProjectCode(entry.name, s.projectCode) && serviceFilterMatches(selectedService, entry.combo));
+                if (!match || seen.has(match.name)) continue;
+                seen.add(match.name);
+                suggestedEntries.push({ ...match, suggested: true, reason: s.reason });
+            }
+        }
+        const suggestedNames = new Set(suggestedEntries.map(e => e.name));
+
+        feFilteredEntries = [
+            ...suggestedEntries,
+            ...feFolderEntries
+                .filter(entry => serviceFilterMatches(selectedService, entry.combo))
+                .filter(entry => entry.name.toLowerCase().includes(normalizedFilter))
+                .filter(entry => !suggestedNames.has(entry.name))
+                .sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name))
+        ];
         feHighlightIndex = feFilteredEntries.length > 0 ? 0 : -1;
 
         if (feFilteredEntries.length === 0) {
@@ -535,16 +620,16 @@
 
         feFilteredEntries.forEach((entry, index) => {
             const item = document.createElement("div");
-            item.className = "folder-item" + (index === feHighlightIndex ? " selected" : "");
+            item.className = "folder-item" + (index === feHighlightIndex ? " selected" : "") + (entry.suggested ? " suggested" : "");
 
             const name = document.createElement("span");
             name.className = "name";
-            name.textContent = entry.name;
+            name.textContent = entry.suggested ? `Suggested — ${entry.name}` : entry.name;
             item.appendChild(name);
 
             const tag = document.createElement("span");
             tag.className = "tag";
-            tag.textContent = `${entry.combo} · ${entry.source}`;
+            tag.textContent = entry.suggested ? entry.reason : `${entry.combo} · ${entry.source}`;
             item.appendChild(tag);
 
             item.addEventListener("click", () => selectFeProject(entry.name));

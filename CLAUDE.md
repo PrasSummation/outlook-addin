@@ -408,6 +408,46 @@ testing inside real Outlook.
 (same pattern as the taskpane — see below) so closing *that* tab mid-action
 at least warns the user.
 
+## Content-based project suggestions (2026-10-07)
+
+Both picker dialogs now show up to a few "Suggested — ⟨Project Name⟩ (reason)" rows above
+the normal folder list, sourced from the hosted `email-index` repo's `/api/suggest`
+endpoint (which merges a relational thread/person/domain signal with a new content-keyword
+signal — see that repo's `SPEC_ContentBasedProjectSuggestions.md`, the shared source of
+truth for this feature across both repos). Only ever additive to the existing list — same
+rows, just reordered/prefixed, following `HANDOFF_MLPredictor_DeepDive.md` §9's UI rules:
+shown only while the search box is empty, hidden the instant typing starts, re-validated
+against the current folder list and service filter at every render (not just once), and
+deduplicated so a suggested project doesn't also appear again further down the list.
+
+- **Always best-effort, never interactive.** Every token acquisition for this feature uses
+  `isUserAction: false` — if the signed-in user has never granted the add-in's
+  `EmailIndex.Access` scope, suggestions just silently don't appear rather than popping up
+  an unexpected consent dialog while someone's mid-filing. Once granted anywhere (e.g.
+  `email-search.html`), it's silently available everywhere else too — consent is per user+app
+  registration, not per page.
+- **`file-email-dialog.html`**: has a real, Graph-addressable message already selected, so it
+  does a silent `mailWriteRequest` Graph lookup (`$select=from,toRecipients,ccRecipients,
+  conversationId,subject,bodyPreview`) for the first selected item, then calls `/api/suggest`
+  with all of that. Guarded against a stale response landing after the selection moved on
+  (`feSuggestionsLoadedFor`).
+- **`file-on-send-dialog.html`**: fires at send time, before the outgoing item is a
+  Graph-addressable object at all — deliberately lighter-weight than File Email's version.
+  Rather than forcing an interactive `mailWriteRequest` consent right as the dialog opens
+  (too intrusive for a nice-to-have, and `findOriginalMessage()`'s own lookup is already
+  deferred until a project's actually picked), this only sends `subject` and
+  `conversationId` — both already sitting in `sendContext` from `commands.js`'s own
+  detection, no extra Graph round-trip needed. `conversationId` alone still drives the
+  strongest signal (an exact thread match) for any reply/forward.
+- Both dialogs share the same `matchesProjectCode(folderName, code)` helper (leading
+  `CODE` matched against the folder name, same regex family as `extractProjectNumber`) to
+  resolve a suggestion's bare project code back to one of the currently-loaded folder
+  entries — same code-based resolution principle as the legacy ML doc's §8, just without
+  the alias-derivation layer since the index already deals in real project codes.
+- Still outstanding (see the spec's own §8 open questions): no real-world tuning yet on how
+  relational vs. content scores combine, nor on the new `keyword_timer`'s 6-hour rebuild
+  schedule in `email-index` — both are first-cut defaults, not measured.
+
 ## Recurring code patterns
 
 - **`guardAgainstClose(fn)` / `actionInProgress` / `beforeunload`**: used
