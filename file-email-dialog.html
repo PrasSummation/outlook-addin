@@ -135,8 +135,8 @@
 
     <div id="feStepResult" style="display: none;">
       <div id="feResultSummary"></div>
-      <button id="feStartOverButton">File Another</button>
-      <button id="feCloseButton" class="link-button">Close</button>
+      <button id="feCloseButton">Close</button>
+      <button id="feStartOverButton" class="link-button">File Another</button>
     </div>
   </div>
 
@@ -245,7 +245,14 @@
         document.getElementById("feBackToPickButton").addEventListener("click", () => showFeStep("pick"));
         document.getElementById("feStartOverButton").addEventListener("click", resetToPick);
         document.getElementById("feCloseButton").addEventListener("click", () => {
-            try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
+            // Parent-initiated close, same fix as the Confirm step's own close plumbing
+            // (see CLAUDE.md "Follow-up, closing File Email's dialog turned out not to need
+            // any of this waiting at all") -- this dialog's own closeContainer() call is the
+            // unreliable half of that bug, confirmed live; messaging the opener to call
+            // dialog.close() on its own host-held handle is the reliable one. Self-close kept
+            // only as a delayed fallback in case nothing is listening.
+            messageParent({ action: "close" });
+            setTimeout(() => { try { Office.context.ui.closeContainer(); } catch (err) { window.close(); } }, 1500);
         });
 
         // Enter anywhere on the Confirm step accepts it, like a dialog's default button --
@@ -444,6 +451,9 @@
         document.getElementById("feStepPick").style.display = step === "pick" ? "block" : "none";
         document.getElementById("feStepConfirm").style.display = step === "confirm" ? "block" : "none";
         document.getElementById("feStepResult").style.display = step === "result" ? "block" : "none";
+        // Close is the default action on the result step -- focused so Enter confirms it,
+        // same as Confirm's own button being focused when that step shows.
+        if (step === "result") document.getElementById("feCloseButton").focus();
     }
 
     let hasFocusedFilterBox = false;
