@@ -446,14 +446,21 @@
         document.getElementById("bfFolderHeader").innerHTML = `
             <div class="summary-box">
                 <div class="row"><span class="label">Folder:</span> ${escapeHtml(bfFolderInfo.displayName)}</div>
-                <div class="row" id="bfLoadProgress">Loading emails: 0 of ${bfFolderInfo.totalItemCount}...</div>
+                <div class="row" id="bfLoadProgress">Collecting the folder's email list: 0 of ${bfFolderInfo.totalItemCount}...</div>
+                <div class="row" id="bfLoadWarning" style="display:none;color:#B3401F;"></div>
             </div>`;
     }
 
-    function updateLoadProgress(loaded, done) {
+    function updateLoadProgress(text) {
         const el = document.getElementById("bfLoadProgress");
+        if (el) el.textContent = text;
+    }
+
+    function showLoadWarning(html) {
+        const el = document.getElementById("bfLoadWarning");
         if (!el) return;
-        el.textContent = done ? `${loaded} email(s) loaded.` : `Loading emails: ${loaded} of ${bfFolderInfo.totalItemCount}...`;
+        el.innerHTML = html;
+        el.style.display = html ? "block" : "none";
     }
 
     // ---- Project folder list (for the datalist + resolving a suggestion's code to a name) ----
@@ -505,28 +512,30 @@
         return match ? match.name : null;
     }
 
-    // ---- Loading the folder's emails, paged (this is the other half of "overcome the
-    // item-count limit") ----
+    // ---- Loading the folder's emails: a two-phase enumerate-then-render ----
     // History: first built on @odata.nextLink + $orderby=receivedDateTime desc -- stopped
-    // silently around ~300 items on a large folder. Switched to a receivedDateTime $filter
-    // cursor instead, still combined with $orderby -- same silent stop, just slightly later.
-    // Both used $orderby, which is the real suspect: Exchange's $filter/$orderby on mail
-    // messages is served from a search index, and a folder that's mostly an old, rarely-
-    // touched backlog (exactly what this feature is for) can have items that search hasn't
-    // caught up on, so sorted/filtered enumeration quietly returns fewer than the folder
-    // actually has -- no error, because nothing failed, the index is just behind. Dropping
-    // $orderby entirely (no sort needed for this table anyway) takes Graph off that search
-    // path and back to plain mailbox-table enumeration via @odata.nextLink, which doesn't
-    // have this limitation. If this turns out not to fully fix it either, the next thing to
-    // try is the /messages/delta endpoint, which reads the mailbox's replication log directly
-    // rather than any index at all.
+    // silently around ~300 items. Switched to a receivedDateTime $filter cursor -- same
+    // silent stop, just slightly later. Dropped $orderby entirely next (the suspected cause:
+    // $filter/$orderby on mail is served from Exchange's search index, and a rarely-touched
+    // backlog folder can have items that index hasn't caught up on) -- still capped around
+    // the same mark. That rules out sorting as the cause.
+    //
+    // This phase split is the next diagnostic step: Phase 1 (collectFolderRoster) does
+    // *nothing* but follow @odata.nextLink into a plain in-memory array -- no DOM writes, no
+    // addRow, no suggestion queue, nothing else running at all. Phase 2 (renderRosterIntoTable)
+    // only starts once Phase 1 is completely finished, building every row from the already-
+    // collected roster. If the cap still happens in Phase 1 alone, that conclusively points at
+    // Graph/Exchange itself (throttling, or a genuine per-request limit on this mailbox) rather
+    // than at anything this page's own rendering/suggestion work was doing concurrently with
+    // the network calls. If Phase 1 completes but the table still stops short, the problem is
+    // on the rendering side instead. Either way this split finally tells us which.
 
     const BF_PAGE_SIZE = 100;
     const BF_SELECT_FIELDS = "id,subject,from,conversationId,receivedDateTime";
 
     let bfMessages = [];
     let bfCounts = { skip: 0, resolved: 0, unresolved: 0 };
-    const bfSeenIds = new Set(); // guards against double-adding a row if a retry re-requests a page already (partly) applied
+    const bfSeenIds = new Set(); // guards against double-adding a row if a retry re-collects overlapping pages
 
     function buildFolderFirstPageUrl(folderId) {
         return `https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(folderId)}/messages` +
@@ -534,11 +543,18 @@
     }
 
     async function loadFolderMessagesPaged(folderId) {
-        await pageThroughFolderMessages(folderId, buildFolderFirstPageUrl(folderId), 0);
+        const roster = await collectFolderRoster(folderId, buildFolderFirstPageUrl(folderId), []);
+        if (roster === null) return; // an error banner is already showing, with its own retry link
+        renderRosterIntoTable(roster);
     }
 
-    async function pageThroughFolderMessages(folderId, startUrl, startLoaded) {
-        let url = startUrl, loaded = startLoaded;
+    // Phase 1: pure network enumeration into memory, no rendering at all. Returns null (after
+    // showing an error banner with its own retry) if a page genuinely fails; otherwise always
+    // returns whatever was collected, even if that falls short of totalItemCount -- the
+    // mismatch is reported, but Phase 2 still runs on whatever we did get.
+    async function collectFolderRoster(folderId, startUrl, accumulated) {
+        let url = startUrl;
+        const items = accumulated;
         while (url) {
             let page;
             try {
@@ -546,62 +562,65 @@
                 if (!token) throw new Error("Could not refresh mailbox access.");
                 page = await graphGet(url, token);
             } catch (err) {
-                console.error("Could not load a page of folder messages, stopping to show this clearly rather than pretending it's done:", err);
-                showFolderLoadError(folderId, url, loaded, err);
-                return;
+                console.error("Could not collect the folder's message list, stopping to show this clearly:", err);
+                showFolderLoadError(folderId, url, items, err);
+                return null;
             }
-            for (const msg of (page.value || [])) {
-                if (bfSeenIds.has(msg.id)) continue;
-                bfSeenIds.add(msg.id);
-                addRow(msg);
-                loaded++;
-            }
-            updateLoadProgress(loaded, false);
+            for (const msg of (page.value || [])) items.push(msg);
+            updateLoadProgress(`Collecting the folder's email list: ${items.length}` +
+                (bfFolderInfo ? ` of ${bfFolderInfo.totalItemCount}` : "") + "...");
             url = page["@odata.nextLink"] || null;
         }
-        updateLoadProgress(loaded, true);
-        // Belt-and-suspenders: nextLink ran out "normally" (no error), but if that's still
-        // short of what the folder itself reports, something silently truncated the
-        // enumeration -- say so plainly instead of leaving a confidently-wrong "done".
-        if (bfFolderInfo && loaded < bfFolderInfo.totalItemCount) {
-            showFolderCountMismatch(folderId, loaded, bfFolderInfo.totalItemCount);
+        if (bfFolderInfo && items.length < bfFolderInfo.totalItemCount) {
+            // nextLink ran out "normally" (no error) but short of what the folder itself
+            // reports -- something truncated the enumeration itself, in Phase 1, before any
+            // rendering happened at all. Say so plainly; still render what we did get.
+            showLoadWarning(`Only collected ${items.length} of ${bfFolderInfo.totalItemCount} email(s) the folder ` +
+                `reports — Graph's paging stopped without an error. ` +
+                `<a href="#" id="bfReloadLink">Reload the folder from scratch</a> to try again.`);
+            const link = document.getElementById("bfReloadLink");
+            if (link) {
+                link.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    document.getElementById("bfTableBody").innerHTML = "";
+                    bfMessages = [];
+                    bfCounts = { skip: 0, resolved: 0, unresolved: 0 };
+                    bfSeenIds.clear();
+                    showLoadWarning("");
+                    loadFolderMessagesPaged(folderId);
+                });
+            }
         }
+        return items;
+    }
+
+    // Phase 2: build every row from the already-collected roster -- no further Graph paging
+    // calls happen here, only the (separate, email-index) suggestion lookups per row.
+    function renderRosterIntoTable(roster) {
+        updateLoadProgress(`Collected ${roster.length} email(s) — rendering...`);
+        for (const msg of roster) {
+            if (bfSeenIds.has(msg.id)) continue;
+            bfSeenIds.add(msg.id);
+            addRow(msg);
+        }
+        updateLoadProgress(`${bfMessages.length} email(s) loaded.`);
         updateConfirmEnabled();
     }
 
     // Surfaces a real, visible error instead of the old silent stop -- with a retry link that
-    // resumes from exactly this nextLink rather than restarting the whole folder from scratch.
-    function showFolderLoadError(folderId, url, loaded, err) {
-        const el = document.getElementById("bfLoadProgress");
-        if (!el) return;
-        el.innerHTML = `${loaded} email(s) loaded so far — stopped early (${escapeHtml(err.message)}). ` +
-            `<a href="#" id="bfRetryLoadLink">Retry loading the rest</a>`;
+    // resumes Phase 1 from exactly this nextLink rather than restarting from scratch.
+    function showFolderLoadError(folderId, url, itemsSoFar, err) {
+        showLoadWarning(`${itemsSoFar.length} email id(s) collected so far — stopped early (${escapeHtml(err.message)}). ` +
+            `<a href="#" id="bfRetryLoadLink">Retry collecting the rest</a>`);
         const link = document.getElementById("bfRetryLoadLink");
         if (link) {
-            link.addEventListener("click", (e) => {
+            link.addEventListener("click", async (e) => {
                 e.preventDefault();
-                el.textContent = `Retrying... (${loaded} loaded so far)`;
-                pageThroughFolderMessages(folderId, url, loaded);
-            });
-        }
-        updateConfirmEnabled();
-    }
-
-    function showFolderCountMismatch(folderId, loaded, total) {
-        const el = document.getElementById("bfLoadProgress");
-        if (!el) return;
-        el.innerHTML = `${loaded} email(s) loaded, but the folder reports ${total} total — Graph stopped paging ` +
-            `early without an error. <a href="#" id="bfReloadLink">Reload the folder from scratch</a> to try again.`;
-        const link = document.getElementById("bfReloadLink");
-        if (link) {
-            link.addEventListener("click", (e) => {
-                e.preventDefault();
-                document.getElementById("bfTableBody").innerHTML = "";
-                bfMessages = [];
-                bfCounts = { skip: 0, resolved: 0, unresolved: 0 };
-                bfSeenIds.clear();
-                el.textContent = "Reloading...";
-                loadFolderMessagesPaged(folderId);
+                showLoadWarning(`Retrying... (${itemsSoFar.length} collected so far)`);
+                const roster = await collectFolderRoster(folderId, url, itemsSoFar);
+                if (roster === null) return;
+                showLoadWarning("");
+                renderRosterIntoTable(roster);
             });
         }
     }

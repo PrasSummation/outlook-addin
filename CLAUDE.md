@@ -489,17 +489,31 @@ pass, rather than one-at-a-time via File Email. Opens `batch-file-dialog.html`.
   an outcome from a batch-file run surfaces in File Email's existing pending-batches notice
   too. The master-category pre-flight/cleanup (`findMasterCategory`/`deleteMasterCategory`)
   runs once per *project group*, not once per chunk.
-- **Found live, fixed same day**: a large real folder stopped loading silently around ~300
-  emails with no error shown at all. Root cause: relying on Graph's own `@odata.nextLink` for
-  paging, which stopped producing a further link on a large `$orderby`-sorted folder well
-  before the folder's actual `totalItemCount` was reached — Graph gave no error, the link
-  just stopped appearing. Fixed by abandoning `nextLink` entirely in favor of a
-  `receivedDateTime` cursor (`$filter=receivedDateTime lt <last item's timestamp>` each page,
-  terminating on a short/empty page instead of a missing link) — a load that stops for a
-  genuine reason (network/throttling) now also shows a visible "N loaded so far, stopped
-  early (reason) — Retry" message with a link that resumes from exactly that cursor, instead
-  of silently pretending to be done. All Graph GETs in this file also now retry through
-  `GRAPH_MAX_RETRIES` (honoring `Retry-After` on 429s) before actually giving up.
+- **Found live, still being chased as of 2026-10-07**: a large real folder stops loading
+  silently around ~200-300 emails. Three fixes tried so far, same cap each time:
+  1. `@odata.nextLink` paging stopped producing a further link well short of the folder's own
+     `totalItemCount`, no error at all.
+  2. Switched to a `receivedDateTime` cursor (`$filter=receivedDateTime lt <last item's
+     timestamp>`) in case `$orderby`'s search-index backing was the cause — same cap, just
+     slightly later.
+  3. Dropped `$orderby`/`$filter` entirely, back to plain `nextLink` — ruled out sorting as
+     the cause, cap persisted regardless.
+  Every attempt also added real error surfacing (a visible "stopped early — Retry" banner
+  with a resumable link, replacing the old silent-swallow-into-console.error) and a
+  `totalItemCount` mismatch check, so at least any future stop is now reported honestly
+  rather than silently mistaken for success.
+  **Current diagnostic step**: split the load into two phases —
+  `collectFolderRoster` (Phase 1) does *only* `nextLink` paging into an in-memory array, no
+  DOM writes, no `addRow`, no suggestion queue running at all; `renderRosterIntoTable`
+  (Phase 2) only starts once Phase 1 is fully done. If the cap still happens during Phase 1
+  alone, that conclusively points at Graph/Exchange itself (throttling, or a genuine
+  per-mailbox limit) rather than at anything the rendering/suggestion work was doing
+  concurrently with the network calls. If Phase 1 completes but the table still stops short,
+  the problem is on the rendering side instead. Trade-off accepted for this diagnostic build:
+  no rows render at all until the whole folder's roster is collected (previously incremental)
+  — restore incremental rendering once the actual cause is confirmed. Next idea if this still
+  doesn't resolve it: the `/messages/delta` endpoint, which reads the mailbox's replication
+  log directly rather than through any index.
 
 ## Recurring code patterns
 
