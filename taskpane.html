@@ -84,15 +84,15 @@
 
     /* ── Action tiles ──────────────────────────────────────────────────── */
     #topActions{display:block;margin:0 0 18px}
-    #newProjectButton,#convertProjectButton,#convertToArchiveButton,#searchMailboxButton,#fileEmailButton,#emailSearchButton{width:100%;margin:0 0 9px;padding:11px 12px;
+    #newProjectButton,#convertProjectButton,#convertToArchiveButton,#searchMailboxButton,#fileEmailButton,#batchFileButton,#emailSearchButton{width:100%;margin:0 0 9px;padding:11px 12px;
       background:#fff;border:1px solid var(--grey-200);border-radius:10px;
       font-weight:400;color:inherit;transition:box-shadow 180ms ease,transform 180ms ease}
-    #newProjectButton:hover,#convertProjectButton:hover,#convertToArchiveButton:hover,#searchMailboxButton:hover,#fileEmailButton:hover,#emailSearchButton:hover{background:#fff;
+    #newProjectButton:hover,#convertProjectButton:hover,#convertToArchiveButton:hover,#searchMailboxButton:hover,#fileEmailButton:hover,#batchFileButton:hover,#emailSearchButton:hover{background:#fff;
       border-color:var(--grey-200);transform:translateY(-2px);box-shadow:0 6px 14px rgba(0,0,0,.09)}
     .tile{display:flex;align-items:center;gap:11px;text-align:left}
     .tile .ico{flex:none;display:flex;align-items:center;justify-content:center;
       width:28px;height:28px;border-radius:4px;background:var(--green-pale)}
-    #convertProjectButton .tile .ico,#convertToArchiveButton .tile .ico,#searchMailboxButton .tile .ico,#fileEmailButton .tile .ico{background:var(--grey-100)}
+    #convertProjectButton .tile .ico,#convertToArchiveButton .tile .ico,#searchMailboxButton .tile .ico,#fileEmailButton .tile .ico,#batchFileButton .tile .ico{background:var(--grey-100)}
     .tile .txt{display:block}
     .tile .txt b{display:block;font-size:13px;font-weight:600;color:var(--grey-900)}
     .tile .txt i{display:block;font-style:normal;font-size:10.5px;color:var(--grey-400);margin-top:2px}
@@ -178,6 +178,7 @@
       <button id="convertProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2 7h10M8.5 3.5 12 7l-3.5 3.5"/></svg></span><span class="txt"><b>Change BD to Active project</b><i>Move an Archive folder into Active</i></span></span></button>
       <button id="convertToArchiveButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M12 7H2M5.5 3.5 2 7l3.5 3.5"/></svg></span><span class="txt"><b>Convert Active to Archive</b><i>Move a project folder from Active into Archive</i></span></span></button>
       <button id="fileEmailButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2 2.5h10v9H2z"/><path d="M2 3l5 4 5-4"/></svg></span><span class="txt"><b>File Email</b><i>Tag selected email(s) with a project and stage them for filing</i></span></span></button>
+      <button id="batchFileButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M1.5 2.5h4v4h-4z"/><path d="M8.5 2.5h4v4h-4z"/><path d="M1.5 7.5h4v4h-4z"/><path d="M8.5 7.5h4v4h-4z"/></svg></span><span class="txt"><b>Batch File Folder</b><i>Work through every email in a folder and assign a project to each</i></span></span></button>
       <button id="emailSearchButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.5"><circle cx="6" cy="6" r="4"/><path d="M9.5 9.5 13 13"/></svg></span><span class="txt"><b>Email Search</b><i>Search every filed email across all projects</i></span></span></button>
       <button id="searchMailboxButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><circle cx="6" cy="6" r="4"/><path d="M9.5 9.5 13 13"/></svg></span><span class="txt"><b>Search Shared Mailbox Online -legacy</b><i>Find any project mailbox and open it in Outlook Web</i></span></span></button>
     </div>
@@ -323,7 +324,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.2";
+    const APP_VERSION = "11.3";
 
     let msalInstance;
     let folderEntries = [];
@@ -485,6 +486,7 @@
             el.addEventListener("change", () => renderSharedMailboxSearchList(document.getElementById("smFilterBox").value))
         );
         document.getElementById("fileEmailButton").addEventListener("click", openFileEmailDialog);
+        document.getElementById("batchFileButton").addEventListener("click", openBatchFileDialog);
         // File Email's picker now runs in its own dialog window (file-email-dialog.html)
         // rather than inline here -- a freshly-opened task pane (as opposed to clicking
         // this tile inside an already-focused one) wasn't reliably getting real OS keyboard
@@ -855,6 +857,7 @@
         document.getElementById("convertToArchiveButton").style.display = "none";
         document.getElementById("searchMailboxButton").style.display = "none";
         document.getElementById("fileEmailButton").style.display = "none";
+        document.getElementById("batchFileButton").style.display = "none";
         document.getElementById("emailSearchButton").style.display = "none";
         document.getElementById("newProjectWizard").style.display = "block";
         npState = {};
@@ -871,6 +874,7 @@
         document.getElementById("convertToArchiveButton").style.display = "block";
         document.getElementById("searchMailboxButton").style.display = "block";
         document.getElementById("fileEmailButton").style.display = "block";
+        document.getElementById("batchFileButton").style.display = "block";
         document.getElementById("emailSearchButton").style.display = "block";
     }
 
@@ -1082,6 +1086,7 @@
         document.getElementById("convertToArchiveButton").style.display = "none";
         document.getElementById("searchMailboxButton").style.display = "none";
         document.getElementById("fileEmailButton").style.display = "none";
+        document.getElementById("batchFileButton").style.display = "none";
         document.getElementById("emailSearchButton").style.display = "none";
         document.getElementById("convertWizard").style.display = "block";
         cvState = {};
@@ -1097,6 +1102,7 @@
         document.getElementById("convertToArchiveButton").style.display = "block";
         document.getElementById("searchMailboxButton").style.display = "block";
         document.getElementById("fileEmailButton").style.display = "block";
+        document.getElementById("batchFileButton").style.display = "block";
         document.getElementById("emailSearchButton").style.display = "block";
     }
 
@@ -1244,6 +1250,7 @@
         document.getElementById("convertToArchiveButton").style.display = "none";
         document.getElementById("searchMailboxButton").style.display = "none";
         document.getElementById("fileEmailButton").style.display = "none";
+        document.getElementById("batchFileButton").style.display = "none";
         document.getElementById("emailSearchButton").style.display = "none";
         document.getElementById("convertToArchiveWizard").style.display = "block";
         caState = {};
@@ -1259,6 +1266,7 @@
         document.getElementById("convertToArchiveButton").style.display = "block";
         document.getElementById("searchMailboxButton").style.display = "block";
         document.getElementById("fileEmailButton").style.display = "block";
+        document.getElementById("batchFileButton").style.display = "block";
         document.getElementById("emailSearchButton").style.display = "block";
     }
 
@@ -1403,6 +1411,7 @@
         document.getElementById("convertToArchiveButton").style.display = "none";
         document.getElementById("searchMailboxButton").style.display = "none";
         document.getElementById("fileEmailButton").style.display = "none";
+        document.getElementById("batchFileButton").style.display = "none";
         document.getElementById("emailSearchButton").style.display = "none";
         document.getElementById("searchMailboxWizard").style.display = "block";
         document.getElementById("smFilterBox").value = "";
@@ -1416,6 +1425,7 @@
         document.getElementById("convertToArchiveButton").style.display = "block";
         document.getElementById("searchMailboxButton").style.display = "block";
         document.getElementById("fileEmailButton").style.display = "block";
+        document.getElementById("batchFileButton").style.display = "block";
         document.getElementById("emailSearchButton").style.display = "block";
     }
 
@@ -1607,6 +1617,41 @@
             });
             activeFileEmailDialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
                 activeFileEmailDialog = null;
+            });
+        });
+    }
+
+    // ---- Batch File Folder ----
+    // Reuses detectFileEmailSelection() purely to get one selected item's restId -- that's
+    // all batch-file-dialog.html needs, since it looks up that item's actual parentFolderId
+    // via Graph itself and then works through every email in that folder, not just what's
+    // selected. See batch-file-dialog.html's own header comment for why Office.js has no
+    // direct "what folder is open" API, which is why this indirection exists at all.
+
+    let activeBatchFileDialog = null;
+
+    async function openBatchFileDialog() {
+        const context = await detectFileEmailSelection();
+        const url = `https://prassummation.github.io/outlook-addin/batch-file-dialog.html?context=${encodeURIComponent(JSON.stringify(context))}`;
+        Office.context.ui.displayDialogAsync(url, { height: 90, width: 60 }, (asyncResult) => {
+            if (asyncResult.status === Office.AsyncResultStatus.Failed) {
+                console.error("Could not open Batch File Folder:", asyncResult.error);
+                const status = document.getElementById("statusMessage");
+                if (status) status.textContent = `Could not open Batch File Folder: ${asyncResult.error.message}`;
+                return;
+            }
+            activeBatchFileDialog = asyncResult.value;
+            // Same parent-initiated close pattern as File Email's own dialog -- see that
+            // file's CLAUDE.md writeup for why the dialog's own closeContainer() call isn't
+            // the reliable half of this.
+            activeBatchFileDialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
+                try {
+                    const message = JSON.parse(arg.message);
+                    if (message.action === "close") activeBatchFileDialog.close();
+                } catch (err) { /* ignore malformed messages */ }
+            });
+            activeBatchFileDialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
+                activeBatchFileDialog = null;
             });
         });
     }

@@ -38,6 +38,7 @@ project mailbox.
 | `file-email-dialog.html` | The File Email picker, as an `Office.context.ui.displayDialogAsync` dialog rather than inline in the taskpane (changed 2026-10-06 — see "File Email is a dialog, not a wizard" below). Self-contained like `complete-action.html` (own MSAL sign-in, own copies of the Graph/bridge helpers), reads its initial selection context from its own URL query string, and receives live selection updates from whichever page opened it via `Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, ...)`. |
 | `commands.js` / `commands.html` | UI-less ribbon/event command functions — see its own header comments for the two different ways Outlook clients load this file. Holds `onMessageSendHandler` (the **File on Send** feature, live as of 2026-10-06 — see its own section below; replaced an earlier phase-1 probe) and `fileEmailDialogHandler` (the ribbon's dedicated File Email button — detects the selection and opens `file-email-dialog.html`, duplicating taskpane.html's own copy of that same detection logic). |
 | `file-on-send-dialog.html` | The File on Send project picker, opened by `commands.js`'s `onMessageSendHandler` via `displayDialogAsync` when a message is sent. Built from the separately-approved mockup at https://claude.ai/artifact/EqTMRsGos3VHXtspmZPXpp. See "File on Send is live" below. |
+| `batch-file-dialog.html` | Batch File Folder (added 2026-10-07): works through every email in a whole folder at once, each row getting its own project (or Skip), or one project applied to all via a bulk checkbox. Opened from the taskpane's own tile, same dialog architecture as the other two. See "Batch File Folder" below. |
 | `complete-action.html` | Standalone execution page. Does the actual long-running work (SharePoint writes, mailbox creation) for the three taskpane wizards. See "The handoff pattern" below — this file exists specifically so closing the taskpane mid-action doesn't abort the action. |
 | `help-guide.html` | Standalone page, linked from the taskpane footer ("Help Guide"). Staff-facing walkthrough of the four things people actually use day to day: File Email (manual), the automatic background filing pass, sent-email auto-save (not live yet), and Email Search. Update this whenever one of those workflows changes. |
 | `email-search.html` | The hosted email index/search page, linked from the taskpane's **Email Search** button. Generated from the `email-index` repo's own prototype `search.html` by a scratch script there — **edits to one must be mirrored in the other by hand**, this repo doesn't regenerate it. MSAL sign-in against this repo's same app registration, calls the hosted Function App described in the email-index repo's `HANDOFF.md`. |
@@ -447,6 +448,50 @@ deduplicated so a suggested project doesn't also appear again further down the l
 - Still outstanding (see the spec's own §8 open questions): no real-world tuning yet on how
   relational vs. content scores combine, nor on the new `keyword_timer`'s 6-hour rebuild
   schedule in `email-index` — both are first-cut defaults, not measured.
+
+## Batch File Folder (2026-10-07)
+
+A new taskpane tile (`batchFileButton`, alongside the File Email tile — no new ribbon button,
+no manifest change) for working through a whole folder of accumulated, unfiled emails in one
+pass, rather than one-at-a-time via File Email. Opens `batch-file-dialog.html`.
+
+- **Folder detection has no dedicated API to lean on.** Office.js has no way to ask "what
+  folder is currently open in the navigation pane." The workaround: `openBatchFileDialog()`
+  (taskpane.html) reuses `detectFileEmailSelection()` — the exact same function File Email
+  uses — purely to get *one* selected item's `restId`. The dialog then does its own Graph
+  lookup (`GET /me/messages/{restId}?$select=parentFolderId`) to find out which folder that
+  item actually lives in, and lists *every* email in that folder, not just what was selected.
+  If nothing is selected, the dialog just asks for a selection and stops there.
+- **Paging past Graph's own page-size limits**: the folder's emails are read via
+  `@odata.nextLink` pagination (`$top=100` per page), rendering each page's rows into the
+  table as it arrives rather than waiting for the whole folder to load first — a folder with
+  thousands of emails still shows something immediately.
+- **UI**: each row gets a plain `<input list="...">` backed by one shared `<datalist>` of
+  every project folder name, not a native `<select>` per row — a `<select>` with hundreds of
+  `<option>`s replicated across potentially thousands of rows would be real DOM weight; a
+  single shared datalist is effectively free per row. Leaving a row blank means Skip.
+- **Bulk mode** ("Assign 1 project to all emails"): checking it swaps in one single project
+  picker that applies to literally every row and disables the per-row inputs; unchecking it
+  restores whatever each row had before, untouched. Deliberately override, not default-fill —
+  confirmed with the user before building it, since the other reading (just pre-filling a
+  starting value) is just as plausible from the spec alone.
+- **Content-based suggestions, lighter-weight than File Email's own**: each row calls
+  `/api/suggest` with only `subject`/`from`/`conversationId` — all already sitting in the
+  folder-listing response's own `$select`, no extra per-row Graph call needed (unlike File
+  Email's version, which does fetch the full message for its one selected item). Run through
+  a small concurrency-limited queue (4 at a time), not fired for every row at once. Same
+  always-silent (`isUserAction: false`) token rule as everywhere else this feature appears.
+- **Dispatch reuses File Email's bridge plumbing verbatim**: rows are grouped by resolved
+  project, each group's items are chunked (`BATCH_CHUNK_SIZE = 50`) into separate
+  `FileEmailBatch` POSTs — this is the "overcome the item-count limit" part on the write side,
+  mirroring the read-side pagination — fired with limited concurrency (3 at a time), tracked
+  in the *same* `fileEmailPendingBatches` localStorage key File Email's own dialog reads, so
+  an outcome from a batch-file run surfaces in File Email's existing pending-batches notice
+  too. The master-category pre-flight/cleanup (`findMasterCategory`/`deleteMasterCategory`)
+  runs once per *project group*, not once per chunk.
+- **Not yet tested live** (same caveat as everything in this repo's local preview tooling —
+  see "Known test gap" below): real verification needs a folder with a genuinely large number
+  of emails in actual Outlook, not just a handful in testing.
 
 ## Recurring code patterns
 
