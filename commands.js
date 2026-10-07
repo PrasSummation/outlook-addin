@@ -28,7 +28,22 @@
  * always with allowEvent:true unless the user explicitly chose "Back to email".
  */
 
+// EMERGENCY KILL SWITCH, 2026-10-07: flip to true to re-enable. Team reported sends
+// hanging on Outlook's own "add-in taking longer than expected" / "Don't Send" warning
+// for a classic-Windows-Outlook user right after this went live -- root cause not yet
+// found. The manifest's LaunchEvent wiring itself is slow to change (sideloaded/admin
+// manifest updates can take hours to propagate), but commands.js is fetched fresh by
+// Outlook at send time from GitHub Pages on a 10-minute CDN cache -- much faster to
+// actually take effect. While this is false, every send is allowed through immediately,
+// untagged, without ever trying to open the dialog.
+const FILE_ON_SEND_ENABLED = false;
+
 function onMessageSendHandler(event) {
+  if (!FILE_ON_SEND_ENABLED) {
+    event.completed({ allowEvent: true });
+    return;
+  }
+
   const item = Office.context.mailbox.item;
 
   item.getComposeTypeAsync((composeTypeResult) => {
