@@ -114,6 +114,14 @@ function Copy-ItemAndWait {
 }
 
 function Send-IndexNotify {
+    # Best-effort, same as email-filing-sync's own Invoke-IndexApi -- the index's own delta
+    # scan will pick this file up within a few minutes regardless (same tolerance that notify
+    # call relies on), so this never throws into the caller's own move/delete result. A
+    # transient failure (timeout/network/5xx) gets up to 5 attempts with a short backoff; a
+    # 4xx is a client error retrying can't fix, so it fails fast. Used to swallow every
+    # failure with no trace at all -- now that both Function Apps are confirmed to actually
+    # ship traces to Application Insights, an exhausted failure is surfaced via Write-Warning
+    # instead of vanishing silently.
     param($Item, [string]$NewItemId, [string]$WebUrl, [int64]$Size)
     if (-not $indexAccessToken -or -not $indexBaseUrl) { return }
     $relativePath = "$targetBranchPath/$targetFolderName/Emails/$($Item.fileName)"
@@ -137,14 +145,29 @@ function Send-IndexNotify {
         webUrl         = $WebUrl
         filedVia       = "Reclassify"
     } | ConvertTo-Json -Depth 6
-    try {
-        Invoke-RestMethod -Method Post -Uri "$indexBaseUrl/api/emails" `
-            -Headers @{ Authorization = "Bearer $indexAccessToken"; "Content-Type" = "application/json" } `
-            -Body $payload -TimeoutSec 15 -ErrorAction Stop | Out-Null
-    } catch {
-        # Best-effort: the index's own delta scan will pick this file up within a few minutes
-        # regardless (same tolerance email-filing-sync's own notify call relies on).
+
+    $maxAttempts = 5
+    $lastError = $null
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            Invoke-RestMethod -Method Post -Uri "$indexBaseUrl/api/emails" `
+                -Headers @{ Authorization = "Bearer $indexAccessToken"; "Content-Type" = "application/json" } `
+                -Body $payload -TimeoutSec 15 -ErrorAction Stop | Out-Null
+            return
+        } catch {
+            $lastError = $_
+            $statusCode = $null
+            if ($_.Exception.Response) { $statusCode = [int]$_.Exception.Response.StatusCode }
+            if ($statusCode -and $statusCode -ge 400 -and $statusCode -lt 500) {
+                Write-Warning "ReclassifyEmailBatch: index notify POST $indexBaseUrl/api/emails returned $statusCode for batch $batchId / messageId $($Item.messageId) -- not retrying a client error. $($_.Exception.Message)"
+                return
+            }
+            if ($attempt -lt $maxAttempts) {
+                Start-Sleep -Seconds ([Math]::Min(8, [Math]::Pow(2, $attempt)))
+            }
+        }
     }
+    Write-Warning "ReclassifyEmailBatch: index notify POST $indexBaseUrl/api/emails failed after $maxAttempts attempts for batch $batchId / messageId $($Item.messageId) -- $($lastError.Exception.Message)"
 }
 
 $emailsFolderId = $null

@@ -37,10 +37,12 @@ $totals = [ordered]@{
     skippedNoCategory      = 0
     skippedNoProjectFolder = 0
     failed                 = 0
+    notifyFailed           = 0
     sentFiled                  = 0
     sentAlreadyFiled           = 0
     sentSkippedNoProjectFolder = 0
     sentFailed                 = 0
+    sentNotifyFailed            = 0
 }
 
 foreach ($user in $staff) {
@@ -128,7 +130,7 @@ foreach ($user in $staff) {
                     }
 
                     $library = if ($folderEntry.Source -eq "Active") { "Summation Hub - Active Projects" } else { "Summation Hub - Archieve Projects" }
-                    Invoke-IndexApi -Method Post -Path "/api/emails" -Body @{
+                    $notifyResult = Invoke-IndexApi -Method Post -Path "/api/emails" -Body @{
                         messageId      = $msg.internetMessageId
                         projectCode    = $projectCode
                         library        = $library
@@ -145,7 +147,8 @@ foreach ($user in $staff) {
                         size           = $stampedBytes.Length
                         filedBy        = $upn
                         filedVia       = "FileOnSend"
-                    } | Out-Null
+                    }
+                    if (-not $notifyResult.Success) { $totals.sentNotifyFailed++ }
 
                     Write-Host "EmailFilingSync: FILED SENT ($($folderEntry.Source)/$projectCode) $label -> $finalName"
                     $totals.sentFiled++
@@ -269,7 +272,7 @@ foreach ($user in $staff) {
                 }
 
                 $library = if ($folderEntry.Source -eq "Active") { "Summation Hub - Active Projects" } else { "Summation Hub - Archieve Projects" }
-                Invoke-IndexApi -Method Post -Path "/api/emails" -Body @{
+                $notifyResult = Invoke-IndexApi -Method Post -Path "/api/emails" -Body @{
                     messageId    = $msg.internetMessageId
                     projectCode  = $projectCode
                     library      = $library
@@ -286,7 +289,8 @@ foreach ($user in $staff) {
                     size         = $stampedBytes.Length
                     filedBy      = $upn
                     filedVia     = "SyncTool"
-                } | Out-Null
+                }
+                if (-not $notifyResult.Success) { $totals.notifyFailed++ }
 
                 Write-Host "EmailFilingSync: FILED ($($folderEntry.Source)/$projectCode) $label -> $finalName"
                 $totals.filed++

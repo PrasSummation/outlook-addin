@@ -369,32 +369,57 @@ function Send-GraphLargeFile {
 }
 
 function Invoke-IndexApi {
-    # Best-effort only -- every caller treats a thrown error here as "index unreachable,
-    # carry on" per the index brief's Must requirement ("never fail a save because the
-    # index is unreachable"). Short timeouts because the configured base URL is, today,
-    # almost always http://127.0.0.1:8792 -- a loopback address on whichever staff PC
-    # happens to be running the prototype indexer, which this cloud-hosted Function can
-    # essentially never reach. That's expected, not a bug; the file route still indexes
-    # the email once OneDrive syncs it to that PC.
+    # Best-effort only -- never throws, so a caller's own save never fails over this, per the
+    # index brief's Must requirement ("never fail a save because the index is unreachable").
+    # Used to silently swallow every failure on the historical reasoning that the configured
+    # base URL was almost always http://127.0.0.1:8792 -- a loopback address on whichever
+    # staff PC happened to be running the prototype indexer, essentially never reachable from
+    # this cloud-hosted Function. That's no longer true (the index is now a real hosted
+    # Function App), so a transient failure (timeout/network/5xx) is retried up to
+    # $MaxAttempts times with a short backoff, and an exhausted failure is surfaced via
+    # Write-Warning instead of vanishing. A 4xx is a client error retrying can never fix, so
+    # it fails fast without burning through the remaining attempts.
+    #
+    # Returns a [pscustomobject]@{ Success; Data } rather than bare data-or-$null, so a caller
+    # that wants to count notify failures (see SyncEmails/run.ps1's notifyFailed/
+    # sentNotifyFailed totals) can tell "exhausted and gave up" apart from "nothing configured,
+    # nothing attempted" -- both of which have Data = $null.
     param(
         [Parameter(Mandatory)][ValidateSet("Get", "Post")][string]$Method,
         [Parameter(Mandatory)][string]$Path,
         $Body,
-        [int]$TimeoutSec = 5
+        [int]$TimeoutSec = 5,
+        [int]$MaxAttempts = 5
     )
-    try {
-        $baseUrl = $env:EMAIL_INDEX_BASE_URL
-        if (-not $baseUrl) { return $null }
-        $uri = "$baseUrl$Path"
-        if ($Method -eq "Get") {
-            return Invoke-RestMethod -Method Get -Uri $uri -TimeoutSec $TimeoutSec -ErrorAction Stop
-        } else {
-            $json = $Body | ConvertTo-Json -Depth 6
-            return Invoke-RestMethod -Method Post -Uri $uri -ContentType "application/json" -Body $json -TimeoutSec $TimeoutSec -ErrorAction Stop
+    $baseUrl = $env:EMAIL_INDEX_BASE_URL
+    if (-not $baseUrl) { return [pscustomobject]@{ Success = $true; Data = $null } }
+    $uri = "$baseUrl$Path"
+    $json = if ($Method -eq "Post") { $Body | ConvertTo-Json -Depth 6 } else { $null }
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            if ($Method -eq "Get") {
+                $data = Invoke-RestMethod -Method Get -Uri $uri -TimeoutSec $TimeoutSec -ErrorAction Stop
+            } else {
+                $data = Invoke-RestMethod -Method Post -Uri $uri -ContentType "application/json" -Body $json -TimeoutSec $TimeoutSec -ErrorAction Stop
+            }
+            return [pscustomobject]@{ Success = $true; Data = $data }
+        } catch {
+            $lastError = $_
+            $statusCode = $null
+            if ($_.Exception.Response) { $statusCode = [int]$_.Exception.Response.StatusCode }
+            if ($statusCode -and $statusCode -ge 400 -and $statusCode -lt 500) {
+                Write-Warning "EmailFilingSync: index API $Method $Path returned $statusCode -- not retrying a client error. $($_.Exception.Message)"
+                return [pscustomobject]@{ Success = $false; Data = $null }
+            }
+            if ($attempt -lt $MaxAttempts) {
+                Start-Sleep -Seconds ([Math]::Min(8, [Math]::Pow(2, $attempt)))
+            }
         }
-    } catch {
-        return $null
     }
+    Write-Warning "EmailFilingSync: index API $Method $Path failed after $MaxAttempts attempts -- $($lastError.Exception.Message)"
+    return [pscustomobject]@{ Success = $false; Data = $null }
 }
 
 Export-ModuleMember -Function `

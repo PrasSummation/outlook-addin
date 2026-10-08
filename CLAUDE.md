@@ -615,6 +615,78 @@ when 1+ rows are checked (Bulk download, Bulk reclassify, Clear selection).
   touch `batch-file-dialog.html` — it has no equivalent Sustainability/Energy toggle at all
   (its combo maps are always loaded unfiltered), so there's nothing analogous to add there.
 
+## Index-notify retries + visible failure logging (2026-10-08)
+
+Prompted by a real incident: an email was correctly uploaded to SharePoint by
+`email-filing-sync`, but didn't show up in search for over 90 minutes. Root cause turned out
+to be `email-index`'s own `sync_timer` (its independent Graph-delta backstop, see that repo's
+own notes) having a stuck delta cursor for the Active drive — but investigating it surfaced a
+second, older problem worth fixing at the same time: both of this repo's "notify the index
+right away" call sites were a single best-effort attempt that silently swallowed every
+failure, on the historical reasoning that the index used to live at an unreachable
+`127.0.0.1` address so failure was the permanent expected case. That hasn't been true for a
+while — the index is a real hosted Function App now — but the silent-swallow code was never
+revisited until now.
+
+- **`email-filing-sync/Modules/EmailFilingSync/EmailFilingSync.psm1`'s `Invoke-IndexApi`**:
+  now retries a transient failure (timeout/network/5xx) up to 5 attempts with a short
+  backoff (2s/4s/8s, capped), fails fast without retrying on a 4xx (retrying a client error
+  can't help), and surfaces an exhausted failure via `Write-Warning` instead of vanishing —
+  confirmed today that Application Insights actually receives traces from this Function App
+  now, so this isn't a no-op. Its return shape changed from bare data-or-`$null` to
+  `[pscustomobject]@{ Success; Data }`, so `SyncEmails/run.ps1` can tell "exhausted and gave
+  up" apart from "nothing configured, nothing attempted" (both have `Data = $null`) — updated
+  both of its call sites (the Inbox pass and the Sent Items/File-on-Send pass) to capture and
+  check `.Success` rather than discarding the result with `| Out-Null`.
+- **`SyncEmails/run.ps1`'s `$totals`** gained `notifyFailed` and `sentNotifyFailed` (matching
+  the existing `sent*` naming convention), incremented whenever a filing's notify call
+  exhausts its retries, so a human skimming Application Insights can see at a glance whether
+  notifies are failing on a given run — not just whether the save itself failed. The filing
+  still always succeeds regardless of notify outcome; this is purely visibility.
+- **`exchange-bridge/ReclassifyEmailBatch/run.ps1`'s `Send-IndexNotify`** (very recently
+  added alongside Reclassify project, see that section above) had the exact same single-
+  attempt swallow-everything shape — given the identical retry/backoff/fail-fast-on-4xx
+  treatment and a `Write-Warning` on exhaustion, naming the batch id and message id so a
+  failure is traceable to a specific reclassify. Not wired into any counter (ReclassifyEmailBatch
+  already returns a per-item result array with its own `status`/`error` fields for the
+  Graph copy/delete; notify failure was deliberately left out of that per-item status since
+  it was never meant to affect whether reclassify itself reports success).
+
+**Not yet confirmed**: no retry/backoff has been watched fire against the real hosted index
+under an actual outage — this is written from first principles (same shape as other retry
+code elsewhere in the codebase), not measured against a real failure yet.
+
+## `email-index` sync_timer self-healing for a stuck delta cursor (2026-10-08)
+
+The other half of the same incident above: `sync_timer`'s stored delta cursor for the Active
+drive had gotten stuck, reporting zero new items on every run for over 90 minutes, even
+though a fresh (un-cursored) delta walk immediately found the filed email. Fixed by hand that
+day (clearing `sync_state.delta_link`/`next_link` to NULL for that drive, forcing the same
+fresh-resync path `sync.py` already uses on a Graph 410) — but nobody had any visibility into
+it until a human went looking, and the stuck cursor had no way to notice itself. This lives
+in the separate `email-index` repo (`hosted/emailindex/sync.py` and `db.py`), not this one,
+but is noted here too since the incident and the fix are one piece of work with the
+index-notify changes above.
+
+`DriveSync.run()` (`sync.py`) now tracks a `consecutive_empty_runs` counter per drive (new
+`sync_state` column, `db.py`'s `SCHEMA`), reset to 0 whenever a completed run finds any delta
+items at all. On a completed run that finds zero items, `check_stuck_cursor()` only acts once
+that counter reaches 3 in a row (so a couple of minutes of normal Graph propagation lag is
+never mistaken for stuck) — and even then, only if the `emails` table has picked up a row for
+that same library with `indexed_at` newer than the drive's own `finished_at` from before this
+run (i.e. filing *is* happening and the index *does* know about it, via the notify path above
+— just not corroborated by this drive's own delta scan). If both are true, it clears that
+drive's `delta_link`/`next_link` to NULL (the same fresh-resync path as a 410) and logs
+exactly why via `log.warning` (consecutive empty-run count, newer-row count, the cutoff
+timestamp compared against) so a future recurrence is debuggable from Application Insights
+without a human needing to go hunting again.
+
+**Not yet confirmed**: the "3 consecutive empty runs" threshold (~10-15 minutes at the timer's
+5-minute cadence) is a reasonable first guess balancing "don't wait an hour like today"
+against "don't react to one quiet run", not something watched fire for real yet — worth
+revisiting if it either fires on a genuinely quiet period (too sensitive) or still takes too
+long to catch a real stuck cursor (not sensitive enough).
+
 ## Recurring code patterns
 
 - **`guardAgainstClose(fn)` / `actionInProgress` / `beforeunload`**: used
