@@ -602,6 +602,19 @@ when 1+ rows are checked (Bulk download, Bulk reclassify, Clear selection).
   target (harmless — it just copies the file to itself with `(1)` appended via Graph's own
   rename-on-conflict behavior and the old one gets deleted — but pointless).
 
+## Two small UI fixes (2026-10-08)
+
+- `email-search.html`'s preview pane now shows `${projectCode}_${projectName}` in the
+  `.pv-date` tag instead of just the bare code (data was already in the API response, just
+  not displayed) — mirrored into `email-index`'s prototype `search.html` too, since that file's
+  own `renderPreview` had the identical structure. Result-list rows' own smaller project tag
+  (`renderResults()`) is untouched — out of scope.
+- `file-email-dialog.html`'s service filter gained an "All" radio option, before Sustainability
+  and Energy, now the default-checked one — `serviceFilterMatches()` short-circuits to `true`
+  for it, so "All" just means no service filter rather than a third hardcoded list. Didn't
+  touch `batch-file-dialog.html` — it has no equivalent Sustainability/Energy toggle at all
+  (its combo maps are always loaded unfiltered), so there's nothing analogous to add there.
+
 ## Recurring code patterns
 
 - **`guardAgainstClose(fn)` / `actionInProgress` / `beforeunload`**: used

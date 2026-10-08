@@ -111,7 +111,8 @@
       <div id="fePickBody" style="display: none;">
         <label>Service</label>
         <div class="radio-row">
-          <label><input type="radio" name="feService" value="Sustainability" checked /> Sustainability</label>
+          <label><input type="radio" name="feService" value="All" checked /> All</label>
+          <label><input type="radio" name="feService" value="Sustainability" /> Sustainability</label>
           <label><input type="radio" name="feService" value="Energy" /> Energy</label>
         </div>
         <div class="list-head">
@@ -388,6 +389,7 @@
     }
 
     function serviceFilterMatches(selectedService, combo) {
+        if (selectedService === "All") return true;
         if (selectedService === "Energy") return combo.startsWith("EN");
         if (selectedService === "Sustainability") return combo.startsWith("SU");
         return !combo.startsWith("EN") && !combo.startsWith("SU");

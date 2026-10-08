@@ -131,6 +131,7 @@
     .pv-line{font-size:12px;color:var(--grey-500);margin-top:2px}
     .pv-line b{color:var(--grey-600);font-weight:600}
     .pv-date{flex:none;font-size:12px;color:var(--grey-500);text-align:right}
+    .pv-date .tag{display:inline-block;max-width:220px;white-space:normal;overflow-wrap:break-word;text-align:right}
     .pv-actions{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
     .btn{padding:6px 12px;border:1px solid var(--grey-200);background:#fff;border-radius:4px;color:var(--grey-900);font-size:12.5px;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
     .btn:hover{border-color:var(--grey-400)}
@@ -689,7 +690,7 @@
           <div class="pv-name">${esc(e.fromName)} <span class="pv-addr">&lt;${esc(e.fromEmail || "unknown")}&gt;</span></div>
           ${peopleLine("To", e.to)}${peopleLine("Cc", e.cc)}
         </div>
-        <div class="pv-date">${esc(fmtFullDate(e.sent))}<br><span class="tag">${esc(e.projectCode)}</span></div>
+        <div class="pv-date">${esc(fmtFullDate(e.sent))}<br><span class="tag">${esc(e.projectCode)}${e.projectName ? "_" + esc(e.projectName) : ""}</span></div>
       </div>
       <div class="pv-actions">
         <a class="btn primary" href="${esc(e.originalUrl)}" title="Download the filed copy; opening it starts Outlook, where Reply / Reply All / Forward work">Open in Outlook</a>
