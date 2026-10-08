@@ -117,11 +117,20 @@ function Send-IndexNotify {
     # Best-effort, same as email-filing-sync's own Invoke-IndexApi -- the index's own delta
     # scan will pick this file up within a few minutes regardless (same tolerance that notify
     # call relies on), so this never throws into the caller's own move/delete result. A
-    # transient failure (timeout/network/5xx) gets up to 5 attempts with a short backoff; a
+    # transient failure (timeout/network/5xx) gets a couple of attempts with a short backoff; a
     # 4xx is a client error retrying can't fix, so it fails fast. Used to swallow every
     # failure with no trace at all -- now that both Function Apps are confirmed to actually
     # ship traces to Application Insights, an exhausted failure is surfaced via Write-Warning
     # instead of vanishing silently.
+    #
+    # Deliberately fewer attempts and a shorter timeout than email-filing-sync's own
+    # Invoke-IndexApi (5 attempts, 15s each): this runs once per item inside a single
+    # invocation's sequential foreach over up to RC_CHUNK_SIZE (20) items, against a 9-minute
+    # function timeout (host.json). 5 attempts x 15s here would add up to ~100s per item if the
+    # index were down -- across 20 items that alone blows the whole budget, and a mid-batch
+    # timeout means BatchBlob never gets written at all (it's one output binding, written once
+    # at the very end), so every item that genuinely succeeded before the timeout would report
+    # as "not found" forever. 2 attempts x 8s keeps this call's worst case to ~18s/item.
     param($Item, [string]$NewItemId, [string]$WebUrl, [int64]$Size)
     if (-not $indexAccessToken -or -not $indexBaseUrl) { return }
     $relativePath = "$targetBranchPath/$targetFolderName/Emails/$($Item.fileName)"
@@ -146,13 +155,13 @@ function Send-IndexNotify {
         filedVia       = "Reclassify"
     } | ConvertTo-Json -Depth 6
 
-    $maxAttempts = 5
+    $maxAttempts = 2
     $lastError = $null
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         try {
             Invoke-RestMethod -Method Post -Uri "$indexBaseUrl/api/emails" `
                 -Headers @{ Authorization = "Bearer $indexAccessToken"; "Content-Type" = "application/json" } `
-                -Body $payload -TimeoutSec 15 -ErrorAction Stop | Out-Null
+                -Body $payload -TimeoutSec 8 -ErrorAction Stop | Out-Null
             return
         } catch {
             $lastError = $_
@@ -163,7 +172,7 @@ function Send-IndexNotify {
                 return
             }
             if ($attempt -lt $maxAttempts) {
-                Start-Sleep -Seconds ([Math]::Min(8, [Math]::Pow(2, $attempt)))
+                Start-Sleep -Seconds 2
             }
         }
     }
