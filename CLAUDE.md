@@ -546,6 +546,62 @@ pass, rather than one-at-a-time via File Email. Opens `batch-file-dialog.html`.
   shared datalist) is a plausible contributor to host/WebView memory pressure over a long
   session, but unconfirmed; worth revisiting with real telemetry if this still recurs.
 
+## Reclassify project + multiselect bulk actions (2026-10-08)
+
+Added to `email-search.html`: a "Reclassify project" button in the preview pane's actions row
+(next to Open in Outlook/SharePoint, Show conversation), a checkbox (or ctrl/cmd-click) on
+every result row for multiselect, and a bulk action bar that replaces the normal result count
+when 1+ rows are checked (Bulk download, Bulk reclassify, Clear selection).
+
+- **Reclassify's actual SharePoint move needed a write-capable Graph identity.**
+  `email-index`'s own Function App only has read `Sites.Selected` by design (it just indexes
+  what's already there). Rather than granting it write and taking on a new permission scope,
+  this reuses the signed-in user's own delegated `Sites.Selected` permission — the same one
+  Batch File Folder already uses to upload directly to SharePoint — proxied through a new
+  `exchange-bridge` endpoint (`ReclassifyEmailBatch`/`ReclassifyEmailBatchStatus`, same
+  survive-disconnect shape as `FileEmailBatch`: the request keeps running server-side to
+  completion even if the tab closes, result written once to the same `file-email-batches`
+  blob container under a `reclassify-{batchId}.json` name). The move itself is always
+  copy-to-destination-then-delete-original (polling Graph's async copy monitor), never a
+  `PATCH` move — Graph's move isn't reliable across document libraries, and copy+delete works
+  identically whether the destination is the same library (Active/Archive) or the other one.
+- **The target-project picker reuses Batch File Folder's own project-folder list** (live
+  Graph listing of every branch-path folder, client-side, via the user's own `Sites.Selected`
+  token) rather than `email-index`'s `/api/facet?key=project`, which only knows projects that
+  already have at least one indexed email — the picker here needs to find a brand-new project
+  folder too.
+- **The index is updated by the same best-effort notify `email-filing-sync` already uses**
+  (`POST /api/emails` right after the move succeeds) rather than teaching `exchange-bridge` to
+  write to email-index's Azure SQL directly, or teaching email-index to delete rows itself.
+  The *old* row is left for `sync_timer`'s own delta scan to clean up (it already does this —
+  a deleted SharePoint item removes its row) within its normal ~5-minute cadence, so there's a
+  short window where a just-reclassified email can show under both its old and new project, or
+  briefly neither. Chosen over building an immediate two-way update because it needed zero new
+  code on the index side beyond what was already there and deployed.
+- **Bulk download is a new, pure-read `GET /api/bulk-download?ids=...`** on `email-index`
+  itself (zips the original `.eml`/`.msg` files, reusing the same `load_original`/cache path
+  `/api/email/{id}` already uses) — no new permission needed since it only reads. Pulled down
+  via `fetch()` + a Blob URL (not a plain `<a href>`) since it needs the same bearer-token
+  `api()` helper every other call on this page uses, unlike the signed, unauthenticated
+  `/api/dl/...` links used for individual attachment/original downloads.
+- **`/api/email/{id}`'s response gained `driveId`/`itemId`/`sentUtc`** (previously used only
+  server-side for `load_original`) — the reclassify payload needs the file's current SharePoint
+  location, and `sentUtc` round-trips cleanly into the notify call's `sentUtc` field without a
+  date-parse-and-reformat step.
+- **Not mirrored into `email-index`'s own prototype `search.html`.** That prototype has no
+  MSAL/auth at all (a local, unauthenticated dev tool) — Reclassify's whole design leans on the
+  signed-in user's own delegated tokens, so it doesn't translate there without first deciding
+  what auth the prototype would even use. Flagging here rather than silently mirroring
+  something that wouldn't actually work, per this file's usual "edits to one must be mirrored
+  in the other by hand" rule.
+- **Known v1 scope cuts**: no resume-after-tab-close for a reclassify batch (unlike Batch File
+  Folder's `fileEmailPendingBatches` localStorage recovery) — reclassify selections are
+  expected to be small (a handful of emails at a time), so this was judged not worth the extra
+  machinery yet; worth adding the same pattern if bulk reclassify turns out to be used on large
+  selections. No guard against picking the email's own current project as the reclassify
+  target (harmless — it just copies the file to itself with `(1)` appended via Graph's own
+  rename-on-conflict behavior and the old one gets deleted — but pointless).
+
 ## Recurring code patterns
 
 - **`guardAgainstClose(fn)` / `actionInProgress` / `beforeunload`**: used

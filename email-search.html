@@ -90,10 +90,21 @@
     .chip button{border:none;background:none;color:var(--green-dark);font-size:14px;line-height:1;padding:0 4px}
 
     /* result list */
-    #resHead{position:sticky;top:0;background:#fff;z-index:2;padding:10px 14px;border-bottom:1px solid var(--grey-200);font-size:12px;color:var(--grey-500);display:flex;justify-content:space-between}
-    .r{position:relative;padding:10px 14px 10px 17px;border-bottom:1px solid var(--grey-100);cursor:pointer}
+    #resHead{position:sticky;top:0;background:#fff;z-index:2;padding:10px 14px;border-bottom:1px solid var(--grey-200);font-size:12px;color:var(--grey-500);display:flex;justify-content:space-between;align-items:center;gap:8px}
+    #bulkBar{display:flex;align-items:center;gap:10px;width:100%}
+    #bulkBar b{color:var(--grey-900);font-size:12.5px;white-space:nowrap}
+    #bulkBar .spacer{flex:1}
+    #bulkBar button{padding:5px 10px;border:1px solid var(--grey-200);background:#fff;border-radius:4px;color:var(--grey-900);font-size:12px}
+    #bulkBar button:hover{border-color:var(--grey-400)}
+    #bulkBar button.primary{background:var(--green);border-color:var(--green);color:#fff}
+    #bulkBar button.primary:hover{background:var(--green-dark)}
+    #bulkBar .clearsel{background:none;border:none;color:#C8102E;padding:0;font-size:12px}
+    #bulkBar .clearsel:hover{text-decoration:underline}
+    .r{position:relative;padding:10px 14px 10px 36px;border-bottom:1px solid var(--grey-100);cursor:pointer}
     .r:hover{background:var(--grey-50)}
     .r.sel{background:var(--green-pale);box-shadow:inset 3px 0 0 var(--green)}
+    .r.checked{background:#F1F8FF}
+    .r-check{position:absolute;left:12px;top:13px;width:15px;height:15px;cursor:pointer}
     .r-l1{display:flex;align-items:baseline;gap:8px}
     .r-from{flex:1;font-weight:600;color:var(--grey-900);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
     .r-date{flex:none;font-size:11px;color:var(--grey-500)}
@@ -137,6 +148,28 @@
     .pv-index dl{display:grid;grid-template-columns:130px 1fr;gap:3px 10px;margin:8px 0 0}
     .pv-index dt{color:var(--grey-500)}
     .pv-index dd{margin:0;font-family:var(--font-mono);word-break:break-all;color:var(--grey-600)}
+    /* reclassify overlay */
+    #rcOverlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:30}
+    #rcOverlay.open{display:flex}
+    #rcPanel{background:#fff;border-radius:8px;width:420px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+    #rcHead{padding:16px 18px 10px;font-size:15px;font-weight:600;color:var(--grey-900)}
+    #rcSub{padding:0 18px 10px;font-size:12px;color:var(--grey-500);margin-top:-6px}
+    #rcBody{padding:0 18px 18px;overflow-y:auto}
+    #rcBody .ta input{width:100%;padding:8px 10px;border:1px solid var(--grey-200);border-radius:4px;font:13px var(--font-body)}
+    #rcList{max-height:260px;overflow-y:auto;border:1px solid var(--grey-200);border-radius:4px;margin-top:6px}
+    #rcList:empty{display:none}
+    .rc-opt{padding:7px 10px;cursor:pointer;font-size:12.5px;color:var(--grey-900);border-bottom:1px solid var(--grey-100)}
+    .rc-opt:last-child{border-bottom:none}
+    .rc-opt:hover,.rc-opt.active{background:var(--green-pale)}
+    .rc-opt i{font-style:normal;color:var(--grey-400);font-size:10.5px;margin-left:6px}
+    #rcPicked{margin-top:8px;font-size:12.5px}
+    #rcPicked .chip{margin:0}
+    #rcFoot{padding:12px 18px;border-top:1px solid var(--grey-200);display:flex;justify-content:flex-end;gap:8px}
+    #rcFoot button{padding:7px 14px;border:1px solid var(--grey-200);background:#fff;border-radius:4px;font-size:12.5px}
+    #rcFoot button.primary{background:var(--green);border-color:var(--green);color:#fff}
+    #rcFoot button.primary:disabled{opacity:.5;cursor:default}
+    #rcProgress{padding:0 18px 14px;font-size:12.5px;color:var(--grey-600)}
+    #rcProgress .err{margin:8px 0 0;font-size:11.5px}
     #signIn{position:fixed;inset:52px 0 0;display:none;align-items:center;justify-content:center;background:#fff;z-index:5}
     #signIn div{text-align:center;max-width:360px}
     #signIn p{margin:0 0 14px}
@@ -178,10 +211,45 @@
     <main id="preview"><div id="pvEmpty">Select an email to read it</div><div id="pv"></div></main>
   </div>
 
+  <div id="rcOverlay">
+    <div id="rcPanel" role="dialog" aria-label="Reclassify project">
+      <div id="rcHead"></div>
+      <div id="rcSub"></div>
+      <div id="rcBody">
+        <div class="ta">
+          <input type="text" id="rcInput" placeholder="Search project code or name…" autocomplete="off" />
+          <div id="rcList"></div>
+        </div>
+        <div id="rcPicked"></div>
+      </div>
+      <div id="rcProgress" style="display:none"></div>
+      <div id="rcFoot">
+        <button id="rcCancel">Cancel</button>
+        <button id="rcConfirm" class="primary" disabled>Reclassify</button>
+      </div>
+    </div>
+  </div>
+
 <script>
   // The index API: an Azure Function behind App Service Authentication. Every call carries a
   // token for the add-in's EmailIndex.Access scope, from the same MSAL sign-in as the other pages.
   const API_URL = "https://summation-email-index.azurewebsites.net";
+  // Reclassify's actual SharePoint move and its exchange-bridge call -- see "Reclassify
+  // project" below. Same drive/branch map Batch File Folder already uses to resolve project
+  // folders client-side, so the project picker here also finds brand-new projects with zero
+  // filed emails yet (email-index's own /api/facet project list only knows projects that
+  // already have at least one indexed email).
+  const BRIDGE_URL = "https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net";
+  const ACTIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5wp-OK02_E3RbZkRH_jE_Lr";
+  const ARCHIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5zGiD4R7k2PQZMwL6mUreXS";
+  const ACTIVE_BRANCH_PATH = {
+    SUPER: "Sustainability/Perth", SUADL: "Sustainability/Adelaide",
+    ENPER: "Energy/Perth", ENADL: "Energy/Adelaide"
+  };
+  const ARCHIVE_BRANCH_PATH = {
+    SUPER: "Sustainability/Perth", SUADL: "Sustainability/Archived_Adelaide",
+    ENPER: "Energy/Perth", ENADL: "Energy/Adelaide"
+  };
   const msalInstance = new msal.PublicClientApplication({
     auth: {
       clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
@@ -191,22 +259,81 @@
     cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
   });
   const indexRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/EmailIndex.Access"] };
+  const sitesRequest = { scopes: ["Sites.Selected"] };
+  const bridgeRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/MailboxBridge.Call"] };
 
-  async function getToken(interactive = false) {
+  // General-purpose token getter for any of the above requests (getToken() below is the
+  // original single-purpose indexRequest helper every existing /api/* call already uses).
+  async function acquireToken(request, interactive = false) {
     const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
     if (account) {
       msalInstance.setActiveAccount(account);
       try {
-        return (await msalInstance.acquireTokenSilent({ ...indexRequest, account })).accessToken;
+        return (await msalInstance.acquireTokenSilent({ ...request, account })).accessToken;
       } catch (err) {
         if (!interactive || !(err instanceof msal.InteractionRequiredAuthError)) throw err;
-        return (await msalInstance.acquireTokenPopup(indexRequest)).accessToken;
+        return (await msalInstance.acquireTokenPopup(request)).accessToken;
       }
     }
     if (!interactive) return null;
-    const login = await msalInstance.loginPopup(indexRequest);
+    const login = await msalInstance.loginPopup(request);
     msalInstance.setActiveAccount(login.account);
     return login.accessToken;
+  }
+
+  async function getToken(interactive = false) {
+    return acquireToken(indexRequest, interactive);
+  }
+
+  // ---- Reclassify project: the live SharePoint project-folder list ----
+  // Loaded once, lazily, the first time the reclassify picker opens (not on every page load --
+  // most visits never touch this). Ported from Batch File Folder's loadProjectFolderNames().
+  let projectFolderEntries = null, projectFolderPromise = null;
+
+  async function graphGetOrNull(url, token) {
+    const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!resp.ok) return null;
+    return resp.json();
+  }
+
+  async function listProjectFolders(driveId, path, token) {
+    const data = await graphGetOrNull(
+      `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${path.split("/").map(encodeURIComponent).join("/")}:/children?$select=id,name,folder&$top=999`,
+      token);
+    return data ? (data.value || []).filter(e => e.folder) : [];
+  }
+
+  function extractProjectNumber(name) {
+    const m = /^[a-zA-Z]{5}(\d{5})[_-]/.exec(name || "");
+    return m ? parseInt(m[1], 10) : -Infinity;
+  }
+
+  async function loadProjectFolderEntries() {
+    if (projectFolderEntries) return projectFolderEntries;
+    if (projectFolderPromise) return projectFolderPromise;
+    projectFolderPromise = (async () => {
+      const token = await acquireToken(sitesRequest, true);
+      const combos = Object.keys(ACTIVE_BRANCH_PATH);
+      const [active, archive] = await Promise.all([
+        Promise.all(combos.map(async combo => {
+          const folders = await listProjectFolders(ACTIVE_DRIVE_ID, ACTIVE_BRANCH_PATH[combo], token);
+          return folders.filter(f => !/template/i.test(f.name)).map(f => ({
+            name: f.name, driveId: ACTIVE_DRIVE_ID, branchPath: ACTIVE_BRANCH_PATH[combo],
+            library: "Summation Hub - Active Projects", source: "Active"
+          }));
+        })),
+        Promise.all(combos.map(async combo => {
+          const folders = await listProjectFolders(ARCHIVE_DRIVE_ID, ARCHIVE_BRANCH_PATH[combo], token);
+          return folders.filter(f => !/template/i.test(f.name)).map(f => ({
+            name: f.name, driveId: ARCHIVE_DRIVE_ID, branchPath: ARCHIVE_BRANCH_PATH[combo],
+            library: "Summation Hub - Archieve Projects", source: "Archive"
+          }));
+        }))
+      ]);
+      projectFolderEntries = [...active.flat(), ...archive.flat()].sort((a, b) => extractProjectNumber(b.name) - extractProjectNumber(a.name));
+      return projectFolderEntries;
+    })();
+    return projectFolderPromise;
   }
 
   // fetch() against the index API with the bearer token; a lapsed sign-in shows the sign-in panel.
@@ -244,6 +371,7 @@
   // filters: { fieldKey: [{ value, label }] } — labels kept so chips read nicely.
   const state = { q: "", sort: "date", filters: {}, dateFrom: "", dateTo: "", conv: null, convLabel: "", page: 1 };
   let results = [], total = 0, selectedId = null, searchSeq = 0;
+  let multiSelected = new Set(); // ids checked/ctrl-clicked in the result list, for bulk actions
 
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -450,11 +578,11 @@
   }
 
   function renderResults() {
-    $("resCount").textContent = `${total} result${total === 1 ? "" : "s"}`;
-    $("resHint").textContent = state.sort === "relevance" && state.q ? "best match" : "newest first";
+    renderResHead();
     if (!results.length) { $("resList").innerHTML = `<div class="empty">No emails match.</div>`; return; }
     let html = results.map(r => `
-      <div class="r ${r.id === selectedId ? "sel" : ""}" data-id="${r.id}">
+      <div class="r ${r.id === selectedId ? "sel" : ""} ${multiSelected.has(r.id) ? "checked" : ""}" data-id="${r.id}">
+        <input type="checkbox" class="r-check" data-id="${r.id}" ${multiSelected.has(r.id) ? "checked" : ""} aria-label="Select this email" />
         <div class="r-l1"><span class="r-from">${esc(r.fromName || r.fromEmail)}</span><span class="r-date">${esc(fmtListDate(r.sent))}</span></div>
         <div class="r-l2">${r.hasAttachments ? `<svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="#787878" stroke-width="1.4" aria-label="Has attachments"><path d="M11.5 6.5 7 11a3 3 0 0 1-4.2-4.2l4.6-4.6a2 2 0 0 1 2.8 2.8L5.6 9.6a1 1 0 0 1-1.4-1.4L8.4 4"/></svg>` : ""}<span class="r-subj">${esc(r.subject || "(no subject)")}</span></div>
         <div class="r-snip">${highlight(r.snippet)}</div>
@@ -463,6 +591,56 @@
     if (results.length < total) html += `<button id="more">Load more (${total - results.length} remaining)</button>`;
     $("resList").innerHTML = html;
   }
+
+  // ---- Multiselect + bulk actions ----
+
+  function renderResHead() {
+    const head = $("resHead");
+    if (!multiSelected.size) {
+      head.innerHTML = `<span id="resCount">${total} result${total === 1 ? "" : "s"}</span><span id="resHint">${state.sort === "relevance" && state.q ? "best match" : "newest first"}</span>`;
+      return;
+    }
+    head.innerHTML = `<div id="bulkBar">
+      <b>${multiSelected.size} selected</b>
+      <button type="button" class="clearsel" id="bulkClear">Clear selection</button>
+      <span class="spacer"></span>
+      <button type="button" id="bulkDownload">Bulk download</button>
+      <button type="button" class="primary" id="bulkReclassify">Bulk reclassify</button>
+    </div>`;
+  }
+
+  function toggleMulti(id, force) {
+    const on = force ?? !multiSelected.has(id);
+    if (on) multiSelected.add(id); else multiSelected.delete(id);
+    document.querySelector(`.r[data-id="${id}"]`)?.classList.toggle("checked", on);
+    const cb = document.querySelector(`.r-check[data-id="${id}"]`);
+    if (cb) cb.checked = on;
+    renderResHead();
+  }
+
+  async function downloadBlob(path, filename) {
+    const resp = await api(path);
+    if (!resp.ok) throw new Error(`Download failed (${resp.status})`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  $("resHead").addEventListener("click", async ev => {
+    if (ev.target.id === "bulkClear") { multiSelected.clear(); renderResHead(); renderResults(); return; }
+    if (ev.target.id === "bulkDownload") {
+      const btn = ev.target;
+      btn.disabled = true; const original = btn.textContent; btn.textContent = "Downloading…";
+      try { await downloadBlob(`/api/bulk-download?ids=${[...multiSelected].join(",")}`, "emails.zip"); }
+      catch (err) { alert(`Couldn't download: ${err.message}`); }
+      finally { btn.disabled = false; btn.textContent = original; }
+      return;
+    }
+    if (ev.target.id === "bulkReclassify") { openReclassify([...multiSelected]); return; }
+  });
 
   function clearPreview() {
     selectedId = null;
@@ -517,6 +695,7 @@
         <a class="btn primary" href="${esc(e.originalUrl)}" title="Download the filed copy; opening it starts Outlook, where Reply / Reply All / Forward work">Open in Outlook</a>
         ${/^https:\/\//i.test(e.webUrl || "") ? `<a class="btn" href="${esc(e.webUrl)}" target="_blank" rel="noopener">Open in SharePoint</a>` : ""}
         ${e.conversationId ? `<button class="btn" id="pvConv">Show conversation</button>` : ""}
+        ${e.itemId ? `<button class="btn" id="pvReclassify">Reclassify project</button>` : ""}
       </div>
       ${e.labelStatus === "mismatch" ? `<div class="banner warn">Saved in ${esc(e.projectCode)}'s folder, but labelled ${esc(e.labelCodes.join(", "))} in Outlook. Move the file or fix the label.</div>` : ""}
       ${e.attachments.length ? `<div class="pv-atts">${e.attachments.map(a => `<a class="att" href="${esc(a.url)}" title="${esc(a.name)}"><svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.4"><path d="M3 1.5h5l3 3v8H3z"/><path d="M8 1.5v3h3"/></svg><span>${esc(a.name)}</span><i>${fmtSize(a.size)}</i></a>`).join("")}</div>` : ""}
@@ -548,6 +727,7 @@
       runSearch();
     };
     if ($("pvShowImg")) $("pvShowImg").onclick = () => renderPreview(e, true);
+    if ($("pvReclassify")) $("pvReclassify").onclick = () => openReclassify([e.id]);
   }
 
   // Fit the iframe to its content. Re-run on resize: body height depends on the pane's width.
@@ -559,6 +739,193 @@
   }
   let resizeTimer;
   window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(sizeFrame, 150); });
+
+  // ---- Reclassify project ----
+  // Moves one or more already-filed emails' SharePoint file into a different project's Emails
+  // folder. The actual move runs server-side in exchange-bridge (ReclassifyEmailBatch), using
+  // the signed-in user's own Sites.Selected permission -- the same one Batch File Folder
+  // already uses to write to SharePoint directly. This page only resolves which project was
+  // picked and which emails are involved, then hands the rest off and polls for completion.
+  const RC_CHUNK_SIZE = 20, RC_DISPATCH_CONCURRENCY = 3;
+  let rcIds = [], rcEntries = [], rcPicked = null, rcActive = -1;
+
+  function rcProjectCode(name) {
+    const m = /^([a-zA-Z]{5}\d{5})/.exec(name || "");
+    return m ? m[1].toUpperCase() : null;
+  }
+
+  function openReclassify(ids) {
+    rcIds = ids; rcPicked = null; rcActive = -1;
+    $("rcHead").textContent = ids.length === 1 ? "Reclassify project" : `Reclassify ${ids.length} emails`;
+    $("rcSub").textContent = "Search for the project to move " + (ids.length === 1 ? "this email" : "these emails") + " into.";
+    $("rcInput").value = ""; $("rcInput").disabled = false;
+    $("rcList").innerHTML = "";
+    $("rcPicked").innerHTML = "";
+    $("rcProgress").style.display = "none"; $("rcProgress").innerHTML = "";
+    $("rcConfirm").disabled = true; $("rcConfirm").textContent = "Reclassify";
+    $("rcCancel").textContent = "Cancel";
+    $("rcOverlay").classList.add("open");
+    $("rcInput").focus();
+    loadProjectFolderEntries().then(entries => {
+      rcEntries = entries;
+      if (document.activeElement === $("rcInput")) renderRcOptions();
+    }).catch(err => { $("rcList").innerHTML = `<div class="rc-opt" style="color:#C8102E">Couldn't load the project list: ${esc(err.message)}</div>`; });
+  }
+
+  function closeReclassify() { $("rcOverlay").classList.remove("open"); }
+
+  function renderRcOptions() {
+    const term = $("rcInput").value.trim().toLowerCase();
+    if (!rcEntries.length) {
+      $("rcList").innerHTML = `<div class="rc-opt">Loading project list…</div>`;
+      return;
+    }
+    const words = term.split(/\s+/).filter(Boolean);
+    const matches = (term ? rcEntries.filter(e => words.every(w => e.name.toLowerCase().includes(w))) : rcEntries).slice(0, 30);
+    rcActive = matches.length ? 0 : -1;
+    $("rcList").innerHTML = matches.length
+      ? matches.map((e, i) => `<div class="rc-opt ${i === 0 ? "active" : ""}" data-i="${i}">${esc(e.name)}<i>${e.source}</i></div>`).join("")
+      : `<div class="rc-opt">No matching project folder</div>`;
+    $("rcList")._matches = matches;
+  }
+
+  function pickRc(entry) {
+    rcPicked = entry;
+    $("rcPicked").innerHTML = `<div class="chip">Move to: ${esc(entry.name)}<button type="button" id="rcUnpick" aria-label="Remove">×</button></div>`;
+    $("rcInput").value = ""; $("rcList").innerHTML = ""; $("rcInput").blur();
+    $("rcConfirm").disabled = false;
+  }
+
+  async function fetchEmailDetail(id) {
+    const resp = await api(`/api/email/${id}`);
+    if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).error || `Couldn't load email ${id}`);
+    return resp.json();
+  }
+
+  async function runWithConcurrency(items, limit, worker) {
+    let i = 0;
+    async function next() { while (i < items.length) { const item = items[i++]; await worker(item); } }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, next));
+  }
+
+  function chunkArray(arr, size) {
+    const out = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  }
+
+  async function submitReclassify() {
+    if (!rcPicked) return;
+    const targetProjectCode = rcProjectCode(rcPicked.name);
+    $("rcInput").disabled = true;
+    $("rcConfirm").disabled = true;
+    $("rcConfirm").textContent = "Working…";
+    const prog = $("rcProgress");
+    prog.style.display = "block";
+    prog.innerHTML = `<div>Loading email details…</div>`;
+
+    let details;
+    try {
+      details = await Promise.all(rcIds.map(id => fetchEmailDetail(id).catch(err => ({ __error: err.message, id }))));
+    } catch (err) {
+      prog.innerHTML = `<div class="err">Couldn't load the selected emails: ${esc(err.message)}</div>`;
+      $("rcConfirm").disabled = false; $("rcConfirm").textContent = "Reclassify";
+      return;
+    }
+    const items = [], preFailed = [];
+    for (const d of details) {
+      if (d.__error) { preFailed.push({ emailId: d.id, error: d.__error }); continue; }
+      if (!d.driveId || !d.itemId) { preFailed.push({ emailId: d.id, error: "Not yet indexed with a SharePoint location" }); continue; }
+      items.push({
+        emailId: d.id, driveId: d.driveId, itemId: d.itemId, fileName: d.fileName,
+        messageId: d.messageId, subject: d.subject, fromName: d.fromName, fromEmail: d.fromEmail,
+        to: d.to, cc: d.cc, sentUtc: d.sentUtc, conversationId: d.conversationId
+      });
+    }
+    if (!items.length) {
+      prog.innerHTML = `<div class="err">Nothing to reclassify: ${preFailed.map(f => esc(f.error)).join("; ")}</div>`;
+      $("rcConfirm").disabled = false; $("rcConfirm").textContent = "Reclassify";
+      return;
+    }
+
+    prog.innerHTML = `<div>Signing in to SharePoint and the email index…</div>`;
+    let graphToken, bridgeToken, indexToken;
+    try {
+      [graphToken, bridgeToken, indexToken] = await Promise.all([
+        acquireToken(sitesRequest, true), acquireToken(bridgeRequest, true), acquireToken(indexRequest, true)
+      ]);
+    } catch (err) {
+      prog.innerHTML = `<div class="err">Sign-in failed: ${esc(err.message)}</div>`;
+      $("rcConfirm").disabled = false; $("rcConfirm").textContent = "Reclassify";
+      return;
+    }
+
+    const chunks = chunkArray(items, RC_CHUNK_SIZE);
+    let succeeded = 0, failed = preFailed.length;
+    const failures = [...preFailed];
+    const renderProg = () => {
+      const done = succeeded + failed;
+      prog.innerHTML = `<div>${done} of ${items.length + preFailed.length} processed — ${succeeded} moved${failed ? `, ${failed} failed` : ""}.</div>`
+        + (failures.length ? `<div class="err">${failures.slice(0, 10).map(f => esc(`Email ${f.emailId}: ${f.error}`)).join("<br>")}</div>` : "");
+    };
+    renderProg();
+
+    await runWithConcurrency(chunks, RC_DISPATCH_CONCURRENCY, async chunk => {
+      const batchId = crypto.randomUUID();
+      try {
+        const resp = await fetch(`${BRIDGE_URL}/api/reclassify-email-batch/${batchId}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            graphAccessToken: graphToken, indexAccessToken: indexToken, indexBaseUrl: API_URL,
+            targetProjectCode, targetFolderName: rcPicked.name, targetDriveId: rcPicked.driveId,
+            targetBranchPath: rcPicked.branchPath, targetLibrary: rcPicked.library, items: chunk
+          })
+        });
+        if (!resp.ok) throw new Error(`Bridge returned ${resp.status}`);
+        const result = await resp.json();
+        for (const item of result.items || []) {
+          if (item.status === "done") succeeded++;
+          else { failed++; failures.push({ emailId: item.emailId, error: item.error || "Unknown error" }); }
+        }
+      } catch (err) {
+        for (const item of chunk) { failed++; failures.push({ emailId: item.emailId, error: err.message }); }
+      }
+      renderProg();
+    });
+
+    $("rcCancel").textContent = "Close";
+    multiSelected.clear();
+    runSearch();
+  }
+
+  $("rcInput").addEventListener("input", renderRcOptions);
+  $("rcInput").addEventListener("focus", renderRcOptions);
+  $("rcInput").addEventListener("keydown", ev => {
+    const matches = $("rcList")._matches || [];
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      if (!matches.length) return;
+      rcActive = (rcActive + (ev.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length;
+      $("rcList").querySelectorAll(".rc-opt").forEach((el, i) => el.classList.toggle("active", i === rcActive));
+      $("rcList").querySelector(".rc-opt.active")?.scrollIntoView({ block: "nearest" });
+    } else if (ev.key === "Enter") {
+      ev.preventDefault();
+      if (rcActive >= 0 && matches[rcActive]) pickRc(matches[rcActive]);
+    }
+  });
+  $("rcList").addEventListener("mousedown", ev => {
+    const opt = ev.target.closest(".rc-opt");
+    const matches = $("rcList")._matches || [];
+    const i = opt && +opt.dataset.i;
+    if (opt && matches[i]) { ev.preventDefault(); pickRc(matches[i]); }
+  });
+  $("rcPicked").addEventListener("click", ev => {
+    if (ev.target.id === "rcUnpick") { rcPicked = null; $("rcPicked").innerHTML = ""; $("rcConfirm").disabled = true; }
+  });
+  $("rcCancel").addEventListener("click", closeReclassify);
+  $("rcConfirm").addEventListener("click", submitReclassify);
+  $("rcOverlay").addEventListener("mousedown", ev => { if (ev.target.id === "rcOverlay") closeReclassify(); });
 
   // ---- events ----
   let debounce;
@@ -654,7 +1021,11 @@
   $("resList").addEventListener("click", ev => {
     if (ev.target.id === "more") { state.page++; runSearch(true); return; }
     const row = ev.target.closest(".r");
-    if (row) select(+row.dataset.id);
+    if (!row) return;
+    const id = +row.dataset.id;
+    if (ev.target.classList.contains("r-check")) { toggleMulti(id, ev.target.checked); return; }
+    if (ev.ctrlKey || ev.metaKey) { toggleMulti(id); return; }
+    select(id);
   });
   document.addEventListener("keydown", ev => {
     if (ev.target.tagName === "INPUT" || ev.target.tagName === "SELECT") return;

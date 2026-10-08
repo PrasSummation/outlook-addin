@@ -1,0 +1,24 @@
+{
+  "bindings": [
+    {
+      "authLevel": "anonymous",
+      "type": "httpTrigger",
+      "direction": "in",
+      "name": "Request",
+      "methods": ["post"],
+      "route": "reclassify-email-batch/{batchId}"
+    },
+    {
+      "type": "http",
+      "direction": "out",
+      "name": "Response"
+    },
+    {
+      "type": "blob",
+      "direction": "out",
+      "name": "BatchBlob",
+      "path": "file-email-batches/reclassify-{batchId}.json",
+      "connection": "AzureWebJobsStorage"
+    }
+  ]
+}
