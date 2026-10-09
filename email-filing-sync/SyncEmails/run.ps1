@@ -130,7 +130,7 @@ foreach ($user in $staff) {
                     }
 
                     $library = if ($folderEntry.Source -eq "Active") { "Summation Hub - Active Projects" } else { "Summation Hub - Archieve Projects" }
-                    $notifyResult = Invoke-IndexApi -Method Post -Path "/api/emails" -Body @{
+                    $notifyBody = @{
                         messageId      = $msg.internetMessageId
                         projectCode    = $projectCode
                         library        = $library
@@ -148,7 +148,16 @@ foreach ($user in $staff) {
                         filedBy        = $upn
                         filedVia       = "FileOnSend"
                     }
-                    if (-not $notifyResult.Success) { $totals.sentNotifyFailed++ }
+                    $notifyResult = Invoke-IndexApi -Method Post -Path "/api/emails" -Body $notifyBody
+                    if (-not $notifyResult.Success) {
+                        $totals.sentNotifyFailed++
+                        # Durably queue the exact same payload rather than leaving this email to
+                        # wait on sync_timer's much slower full-library backstop.
+                        $queued = Invoke-IndexApi -Method Post -Path "/api/emails/pending" -Body $notifyBody -MaxAttempts 2
+                        if (-not $queued.Success) {
+                            Write-Warning "EmailFilingSync: notify AND pending-queue both failed for $finalName -- relying on sync_timer's backstop"
+                        }
+                    }
 
                     Write-Host "EmailFilingSync: FILED SENT ($($folderEntry.Source)/$projectCode) $label -> $finalName"
                     $totals.sentFiled++
@@ -272,7 +281,7 @@ foreach ($user in $staff) {
                 }
 
                 $library = if ($folderEntry.Source -eq "Active") { "Summation Hub - Active Projects" } else { "Summation Hub - Archieve Projects" }
-                $notifyResult = Invoke-IndexApi -Method Post -Path "/api/emails" -Body @{
+                $notifyBody = @{
                     messageId    = $msg.internetMessageId
                     projectCode  = $projectCode
                     library      = $library
@@ -290,7 +299,16 @@ foreach ($user in $staff) {
                     filedBy      = $upn
                     filedVia     = "SyncTool"
                 }
-                if (-not $notifyResult.Success) { $totals.notifyFailed++ }
+                $notifyResult = Invoke-IndexApi -Method Post -Path "/api/emails" -Body $notifyBody
+                if (-not $notifyResult.Success) {
+                    $totals.notifyFailed++
+                    # Durably queue the exact same payload rather than leaving this email to
+                    # wait on sync_timer's much slower full-library backstop.
+                    $queued = Invoke-IndexApi -Method Post -Path "/api/emails/pending" -Body $notifyBody -MaxAttempts 2
+                    if (-not $queued.Success) {
+                        Write-Warning "EmailFilingSync: notify AND pending-queue both failed for $finalName -- relying on sync_timer's backstop"
+                    }
+                }
 
                 Write-Host "EmailFilingSync: FILED ($($folderEntry.Source)/$projectCode) $label -> $finalName"
                 $totals.filed++

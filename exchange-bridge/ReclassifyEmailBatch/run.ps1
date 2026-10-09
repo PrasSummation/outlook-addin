@@ -130,7 +130,9 @@ function Send-IndexNotify {
     # index were down -- across 20 items that alone blows the whole budget, and a mid-batch
     # timeout means BatchBlob never gets written at all (it's one output binding, written once
     # at the very end), so every item that genuinely succeeded before the timeout would report
-    # as "not found" forever. 2 attempts x 8s keeps this call's worst case to ~18s/item.
+    # as "not found" forever. 2 attempts x 8s keeps this call's worst case to ~18s/item, plus
+    # one more short (5s), single-attempt POST to durably queue the payload if those exhaust --
+    # ~23s/item worst case, still comfortably inside the per-item budget above.
     param($Item, [string]$NewItemId, [string]$WebUrl, [int64]$Size)
     if (-not $indexAccessToken -or -not $indexBaseUrl) { return }
     $relativePath = "$targetBranchPath/$targetFolderName/Emails/$($Item.fileName)"
@@ -177,6 +179,15 @@ function Send-IndexNotify {
         }
     }
     Write-Warning "ReclassifyEmailBatch: index notify POST $indexBaseUrl/api/emails failed after $maxAttempts attempts for batch $batchId / messageId $($Item.messageId) -- $($lastError.Exception.Message)"
+    # Durably queue the exact same payload rather than leaving this email to wait on
+    # sync_timer's much slower full-library backstop.
+    try {
+        Invoke-RestMethod -Method Post -Uri "$indexBaseUrl/api/emails/pending" `
+            -Headers @{ Authorization = "Bearer $indexAccessToken"; "Content-Type" = "application/json" } `
+            -Body $payload -TimeoutSec 5 -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Warning "ReclassifyEmailBatch: durably queuing the failed notify also failed for batch $batchId / messageId $($Item.messageId) -- relying on sync_timer's backstop. $($_.Exception.Message)"
+    }
 }
 
 $emailsFolderId = $null
