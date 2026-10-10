@@ -113,12 +113,12 @@ foreach ($user in $staff) {
                 $labelsAsFound = @($msg.categories)
 
                 if (-not $isDuplicate) {
-                    $emlBytes = Invoke-RestMethod -Method Get `
+                    $emlRaw = Invoke-RestMethod -Method Get `
                         -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)/`$value" `
                         -Headers @{ Authorization = "Bearer $token" } -ErrorAction Stop
-                    # See the main pass below for why this re-encodes as Latin1 rather than
-                    # trusting Invoke-RestMethod's own UTF-8 decoding of a MIME document.
-                    $originalBytes = [System.Text.Encoding]::GetEncoding(28591).GetBytes($emlBytes)
+                    # See the main pass below for why this branches on the actual return type
+                    # instead of always re-encoding as Latin1.
+                    $originalBytes = if ($emlRaw -is [byte[]]) { $emlRaw } else { [System.Text.Encoding]::GetEncoding(28591).GetBytes($emlRaw) }
                     $stampedBytes = Add-SummationLabelsHeader -MimeBytes $originalBytes -Labels $labelsAsFound
 
                     if ($stampedBytes.Length -gt 4MB) {
@@ -263,13 +263,22 @@ foreach ($user in $staff) {
             $labelsAsFound = @($msg.categories)
 
             if (-not $isDuplicate) {
-                $emlBytes = Invoke-RestMethod -Method Get `
+                $emlRaw = Invoke-RestMethod -Method Get `
                     -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)/`$value" `
                     -Headers @{ Authorization = "Bearer $token" } -ErrorAction Stop
-                # Invoke-RestMethod hands back raw MIME text for message/rfc822; re-encode
-                # as Latin1 bytes to round-trip it unchanged (Graph's own bytes may not be
-                # valid UTF-8 -- it's MIME, parts can carry their own encodings).
-                $originalBytes = [System.Text.Encoding]::GetEncoding(28591).GetBytes($emlBytes)
+                # Invoke-RestMethod usually hands back raw MIME text for message/rfc822, which
+                # needs re-encoding as Latin1 bytes to round-trip unchanged (Graph's own bytes
+                # may not be valid UTF-8 -- it's MIME, parts can carry their own encodings).
+                # 2026-10-08 incident: for one message (an Aconex auto-reply), Graph answered
+                # with a content type PowerShell treats as binary instead, so this had already
+                # come back as a real byte[]. Blindly re-encoding that through GetBytes() --
+                # which has no byte[] overload -- silently coerced it to a string via
+                # PowerShell's default array-to-string join (each byte rendered as a decimal
+                # number separated by spaces) instead of erroring, uploading that text as the
+                # "email" instead of the real bytes. It still parsed into a DB row with every
+                # field blank, so nothing ever flagged it as failed. Branch on what actually
+                # came back instead of assuming it's always text.
+                $originalBytes = if ($emlRaw -is [byte[]]) { $emlRaw } else { [System.Text.Encoding]::GetEncoding(28591).GetBytes($emlRaw) }
                 $stampedBytes = Add-SummationLabelsHeader -MimeBytes $originalBytes -Labels $labelsAsFound
 
                 if ($stampedBytes.Length -gt 4MB) {
