@@ -175,6 +175,35 @@ function onMessageSendHandler(event) {
 
 Office.actions.associate("onMessageSendHandler", onMessageSendHandler);
 
+// SPIKE, added 2026-10-11: validates whether Office.addin.showAsTaskpane() can force the task
+// pane open from an event handler now that the manifest declares the shared runtime (see
+// manifest2.xml's SharedRuntime/Taskpane.Url comments). OnNewMessageCompose fires on
+// New/Reply/Reply All/Forward -- but it's still an event-based handler, exactly like
+// OnMessageSend, so it STILL can't open a dialog itself (see CLAUDE.md's "File on Send is
+// architecturally broken" section for why). The point here is narrower: force the task pane
+// open, since the task pane isn't an event handler and so CAN open file-on-send-dialog.html
+// normally once it's actually showing. This handler only proves itself fired and the pane
+// opened; taskpane.html has its own matching spike banner that confirms the other half.
+// Throwaway: remove this function, its associate() call, and taskpane.html's banner together
+// if showAsTaskpane() doesn't work reliably; keep all three if it does, as the foundation for
+// the real redesign.
+function onNewMessageComposeHandler(event) {
+  try {
+    Office.addin.showAsTaskpane()
+      .then(() => event.completed())
+      .catch((err) => {
+        console.error("onNewMessageComposeHandler: showAsTaskpane() failed:", err);
+        event.completed();
+      });
+  } catch (err) {
+    // e.g. Office.addin doesn't exist on this client/build at all.
+    console.error("onNewMessageComposeHandler: threw synchronously:", err);
+    event.completed();
+  }
+}
+
+Office.actions.associate("onNewMessageComposeHandler", onNewMessageComposeHandler);
+
 /*
  * File Email, launched directly from the ribbon's dedicated "File Email" button
  * (manifest2.xml's V1.1 Summation.FileEmailButton, ActionType="ExecuteFunction" as of
