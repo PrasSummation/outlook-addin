@@ -720,7 +720,7 @@
     let bfIndexTokenPromise = null;
     function getIndexTokenOnce() {
         if (!bfIndexTokenPromise) {
-            bfIndexTokenPromise = withTimeout(signInAndGetToken(indexRequest, false), 4000, "suggest: index token").catch(() => null);
+            bfIndexTokenPromise = withTimeout(signInAndGetToken(indexRequest, false), 15000, "suggest: index token").catch(() => null);
         }
         return bfIndexTokenPromise;
     }
@@ -754,7 +754,7 @@
             });
             const response = await withTimeout(fetch(`${SUGGEST_API_URL}/api/suggest?${params}`, {
                 headers: { Authorization: `Bearer ${indexToken}` }
-            }), 4000, "suggest: api call");
+            }), 15000, "suggest: api call");
             if (!response.ok) return;
             const data = await response.json();
             const top = (data.suggestions || [])[0];

@@ -435,7 +435,7 @@
             });
             const response = await withTimeout(fetch(`${SUGGEST_API_URL}/api/suggest?${params}`, {
                 headers: { Authorization: `Bearer ${indexToken}` }
-            }), 4000, "suggest: api call");
+            }), 15000, "suggest: api call");
             if (!response.ok || feSuggestionsLoadedFor !== item.restId) return;
             const data = await response.json();
             if (feSuggestionsLoadedFor !== item.restId) return; // selection moved on while this was in flight
