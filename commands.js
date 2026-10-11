@@ -28,15 +28,18 @@
  * always with allowEvent:true unless the user explicitly chose "Back to email".
  */
 
-// EMERGENCY KILL SWITCH, 2026-10-07: flip to true to re-enable. Team reported sends
-// hanging on Outlook's own "add-in taking longer than expected" / "Don't Send" warning
-// for a classic-Windows-Outlook user right after this went live -- root cause not yet
-// found. The manifest's LaunchEvent wiring itself is slow to change (sideloaded/admin
-// manifest updates can take hours to propagate), but commands.js is fetched fresh by
-// Outlook at send time from GitHub Pages on a 10-minute CDN cache -- much faster to
-// actually take effect. While this is false, every send is allowed through immediately,
-// untagged, without ever trying to open the dialog.
-const FILE_ON_SEND_ENABLED = false;
+// EMERGENCY KILL SWITCH, 2026-10-07: sends were hanging on Outlook's own "add-in taking
+// longer than expected" / "Don't Send" warning for a classic-Windows-Outlook user right
+// after this went live. Root cause found and fixed the same day (d740991): manifest2.xml's
+// AppDomains was missing https://login.microsoftonline.com, so MSAL's silent/popup sign-in
+// from inside file-on-send-dialog.html could hang on a blocked navigation instead of
+// erroring. Left off for several days pending that manifest change propagating and a live
+// retest -- re-enabled 2026-10-11 for that retest. If sends start hanging again, flip this
+// back to false; commands.js is fetched fresh by Outlook at send time from GitHub Pages on
+// a 10-minute CDN cache, much faster to take effect than a manifest change. While this is
+// false, every send is allowed through immediately, untagged, without ever trying to open
+// the dialog.
+const FILE_ON_SEND_ENABLED = true;
 
 function onMessageSendHandler(event) {
   if (!FILE_ON_SEND_ENABLED) {
