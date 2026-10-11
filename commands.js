@@ -28,18 +28,21 @@
  * always with allowEvent:true unless the user explicitly chose "Back to email".
  */
 
-// EMERGENCY KILL SWITCH, 2026-10-07, re-tripped 2026-10-11: sends were hanging on Outlook's
-// own "add-in taking longer than expected" / "Don't Send" warning. The 2026-10-07 hang was
-// root-caused to a missing AppDomains entry (fixed in d740991) and this switch was flipped
-// back on 2026-10-11 for a live retest -- the SAME hang immediately recurred on that retest
-// (screenshot: "Summation Assistant add-in is taking longer than expected... Processing...",
-// stuck), so the AppDomains fix was NOT sufficient on its own, or this is a second, different
-// cause. Left off again pending further investigation -- do not re-enable without root-
-// causing this properly first. commands.js is fetched fresh by Outlook at send time from
-// GitHub Pages on a 10-minute CDN cache, much faster to take effect than a manifest change.
-// While this is false, every send is allowed through immediately, untagged, without ever
-// trying to open the dialog.
-const FILE_ON_SEND_ENABLED = false;
+// EMERGENCY KILL SWITCH, 2026-10-07, re-tripped 2026-10-11, re-enabled 2026-10-11 for a
+// second retest: sends were hanging on Outlook's own "add-in taking longer than expected"
+// warning, both times before this code's own dialog UI ever appeared. First incident
+// (2026-10-07) was root-caused to a missing AppDomains entry (fixed in d740991); flipping
+// this back on the same day for a retest reproduced the identical symptom, which meant that
+// fix wasn't the whole story. onMessageSendHandler's own safety timeout turned out to only
+// cover the dialog-already-open phase, leaving item.getComposeTypeAsync and
+// displayDialogAsync's own callback completely unguarded -- widened in 13a73e2 to a single
+// watchdog armed from the handler's very first line. Re-enabling now to retest THAT fix. If
+// it hangs again, flip this back to false immediately and get whatever console/network
+// diagnostics are available this time -- commands.js is fetched fresh by Outlook at send
+// time from GitHub Pages on a 10-minute CDN cache, much faster to take effect than a
+// manifest change. While this is false, every send is allowed through immediately,
+// untagged, without ever trying to open the dialog.
+const FILE_ON_SEND_ENABLED = true;
 
 function onMessageSendHandler(event) {
   if (!FILE_ON_SEND_ENABLED) {
