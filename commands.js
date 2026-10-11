@@ -187,7 +187,24 @@ Office.actions.associate("onMessageSendHandler", onMessageSendHandler);
 // Throwaway: remove this function, its associate() call, and taskpane.html's banner together
 // if showAsTaskpane() doesn't work reliably; keep all three if it does, as the foundation for
 // the real redesign.
+//
+// KILL SWITCH: flip to false to stop calling showAsTaskpane() -- propagates in ~10 minutes via
+// commands.js's own CDN cache, not a manifest change, so this is the fast lever if the
+// auto-popup itself misbehaves (pops at a bad time, too naggy, showAsTaskpane() itself errors
+// or hangs on some client). IMPORTANT, read before relying on this during a live incident:
+// this switch does NOT undo marking Taskpane.Url as shared-runtime in the manifest -- that's
+// a separate, manifest-level change this handler depends on but doesn't control, and reverting
+// IT is subject to the same slow admin-deploy propagation as the rest of the manifest. If the
+// problem turns out to be the shared runtime itself (not just this handler's behavior -- e.g.
+// the existing ribbon Summation Assistant button or File Email acting wrong), this switch
+// alone won't fix it; only another manifest push will, on manifest timescales.
+const ON_NEW_MESSAGE_COMPOSE_ENABLED = true;
+
 function onNewMessageComposeHandler(event) {
+  if (!ON_NEW_MESSAGE_COMPOSE_ENABLED) {
+    event.completed();
+    return;
+  }
   try {
     Office.addin.showAsTaskpane()
       .then(() => event.completed())
