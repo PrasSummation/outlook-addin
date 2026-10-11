@@ -47,9 +47,50 @@ function onMessageSendHandler(event) {
     return;
   }
 
+  let settled = false;
+  let dialog = null;
+
+  function finish(allowEvent) {
+    if (settled) return;
+    settled = true;
+    clearTimeout(watchdogId);
+    if (dialog) {
+      try { dialog.close(); } catch (err) { /* already closing/closed on its own */ }
+    }
+    event.completed({ allowEvent: allowEvent });
+  }
+
+  // Bounded safety net, added 2026-10-07 after a live incident, WIDENED 2026-10-11 after a
+  // second one: a teammate's send sat on Outlook's own "taking longer than expected"
+  // warning indefinitely. The original fix (a missing AppDomains entry letting an MSAL call
+  // inside the dialog hang instead of erroring -- see manifest2.xml's AppDomains comment)
+  // only armed its 20s timeout *inside* displayDialogAsync's own callback, after the dialog
+  // had already opened -- leaving item.getComposeTypeAsync and displayDialogAsync's own
+  // callback completely unguarded. A live retest of that fix reproduced the exact same
+  // symptom (Outlook's own generic warning, never this code's own dialog UI), meaning the
+  // hang happens before either of those ever completes on at least one real client (classic
+  // Windows Outlook, the same client type both times). This timer now covers the handler
+  // from its very first async call onward, as the single source of truth for "fail this
+  // send open" -- not two separately-armed timers, one of which can't even start ticking
+  // until past the point where the hang apparently occurs.
+  //
+  // Outlook's own SendMode=SoftBlock timeout remains the ultimate backstop, but its exact
+  // duration isn't documented and evidently isn't tight enough for good UX on its own.
+  //
+  // This does NOT cap how long a user gets to pick a project once the dialog is actually
+  // alive -- the dialog pings back {action:"ready"} the moment it renders anything real
+  // (sign-in prompt or the picker), which clears this; from then on the user has as much
+  // time as they want, same as always.
+  const watchdogId = setTimeout(() => {
+    console.error("onMessageSendHandler: hard timeout before the dialog confirmed it loaded -- failing open.");
+    finish(true);
+  }, 20000);
+
   const item = Office.context.mailbox.item;
 
   item.getComposeTypeAsync((composeTypeResult) => {
+    if (settled) return; // watchdog already fired before this callback got a chance to run
+
     const composeType = (composeTypeResult.status === Office.AsyncResultStatus.Succeeded && composeTypeResult.value)
       ? composeTypeResult.value.composeType // "newMail" | "reply" | "replyAll" | "forward"
       : "newMail";
@@ -64,40 +105,24 @@ function onMessageSendHandler(event) {
       encodeURIComponent(JSON.stringify(context));
 
     Office.context.ui.displayDialogAsync(url, { height: 70, width: 40 }, (asyncResult) => {
-      if (asyncResult.status === Office.AsyncResultStatus.Failed) {
-        // Couldn't open the dialog at all -- fail open, never trap a send over this.
-        console.error("Could not open File on Send dialog:", asyncResult.error);
-        event.completed({ allowEvent: true });
+      if (settled) {
+        // Watchdog already fired and allowed the send through. If the dialog went ahead
+        // and opened anyway after all that, close it rather than leave it orphaned --
+        // event.completed() must never be called a second time, though.
+        if (asyncResult.status !== Office.AsyncResultStatus.Failed) {
+          try { asyncResult.value.close(); } catch (err) { /* ignore */ }
+        }
         return;
       }
 
-      const dialog = asyncResult.value;
-      let settled = false;
-
-      function finish(allowEvent) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(readyTimeoutId);
-        try { dialog.close(); } catch (err) { /* already closing/closed on its own */ }
-        event.completed({ allowEvent: allowEvent });
+      if (asyncResult.status === Office.AsyncResultStatus.Failed) {
+        // Couldn't open the dialog at all -- fail open, never trap a send over this.
+        console.error("Could not open File on Send dialog:", asyncResult.error);
+        finish(true);
+        return;
       }
 
-      // Bounded safety net, added 2026-10-07 after a live incident: a teammate's send sat
-      // on Outlook's own "taking longer than expected" warning indefinitely (root cause:
-      // a missing AppDomains entry made an MSAL call inside the dialog hang instead of
-      // erroring -- see manifest2.xml's AppDomains comment). Outlook's own SendMode=
-      // SoftBlock timeout is the ultimate backstop, but its exact duration isn't
-      // documented and evidently isn't tight enough for good UX -- this is deliberately
-      // duplicated now, not left to that net alone.
-      //
-      // This only guards the dialog actually coming alive -- it does NOT cap how long a
-      // user gets to pick a project. The dialog pings back {action:"ready"} the moment it
-      // renders anything real (sign-in prompt or the picker), which clears this; from then
-      // on the user has as much time as they want, same as before.
-      const readyTimeoutId = setTimeout(() => {
-        console.error("File on Send dialog never confirmed it loaded -- failing open.");
-        finish(true);
-      }, 20000);
+      dialog = asyncResult.value;
 
       dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
         let message;
@@ -109,7 +134,7 @@ function onMessageSendHandler(event) {
         }
 
         if (message.action === "ready") {
-          clearTimeout(readyTimeoutId);
+          clearTimeout(watchdogId);
           return;
         }
 
