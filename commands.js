@@ -28,40 +28,22 @@
  * always with allowEvent:true unless the user explicitly chose "Back to email".
  */
 
-// EMERGENCY KILL SWITCH, 2026-10-07, re-tripped 2026-10-11, re-enabled 2026-10-11 for a
-// second retest: sends were hanging on Outlook's own "add-in taking longer than expected"
-// warning, both times before this code's own dialog UI ever appeared. First incident
-// (2026-10-07) was root-caused to a missing AppDomains entry (fixed in d740991); flipping
-// this back on the same day for a retest reproduced the identical symptom, which meant that
-// fix wasn't the whole story. onMessageSendHandler's own safety timeout turned out to only
-// cover the dialog-already-open phase, leaving item.getComposeTypeAsync and
-// displayDialogAsync's own callback completely unguarded -- widened in 13a73e2 to a single
-// watchdog armed from the handler's very first line. Re-enabling now to retest THAT fix. If
-// it hangs again, flip this back to false immediately and get whatever console/network
-// diagnostics are available this time -- commands.js is fetched fresh by Outlook at send
-// time from GitHub Pages on a 10-minute CDN cache, much faster to take effect than a
-// manifest change. While this is false, every send is allowed through immediately,
-// untagged, without ever trying to open the dialog.
-const FILE_ON_SEND_ENABLED = true;
-
-// TEMPORARY, added 2026-10-11 to diagnose the live hang: classic Windows Outlook's function-
-// command runtime has no DOM and no fetch (see this file's header comment), so there's no
-// normal way to get console/network output out of it during a real send. notificationMessages
-// is the one visible, zero-tooling channel this runtime does have -- it shows as a banner in
-// the compose window itself. Marks each checkpoint up to the point the dialog is confirmed
-// alive, since that pre-dialog stretch is the one with no other visibility at all and is where
-// both the 2026-10-07 and 2026-10-11 hangs are suspected to actually occur. Remove once the
-// hang is diagnosed; never let this break the real flow if the API itself misbehaves.
-function mark(item, step) {
-  try {
-    item.notificationMessages.replaceAsync("fileOnSendDebug", {
-      type: Office.MailboxEnums.ItemNotificationMessageType.InformationalMessage,
-      message: "File on Send debug: " + step,
-      icon: "Icon.16x16",
-      persistent: false
-    });
-  } catch (err) { /* best-effort only */ }
-}
+// EMERGENCY KILL SWITCH, 2026-10-07, re-tripped 2026-10-11 twice -- ACTUAL ROOT CAUSE FOUND
+// 2026-10-11, and it's architectural, not a bug: Office.context.ui.displayDialogAsync cannot
+// be called from an event-based handler in Outlook at all. Confirmed deterministic (every
+// single send, not intermittent) via the 2/4 checkpoint marker added to diagnose this --
+// displayDialogAsync's own callback never fires, every time, no error, nothing. Microsoft's
+// own Outlook-Add-in-SSO-events sample states this explicitly ("It's not possible to open a
+// dialog from an event in Outlook") and their Dialog API guidance says dialogs are only
+// supported "from a task pane, content add-in, or add-in command" -- OnMessageSend is none of
+// those. The 2026-10-07 AppDomains fix and the 2026-10-11 watchdog widening were both real,
+// correct fixes for real problems, but neither could have made this actually work, because
+// the dialog this code tries to open can never open from here on any client that enforces
+// this rule. DO NOT re-enable this flag again until file-on-send-dialog.html's whole approach
+// is redesigned to not require displayDialogAsync from this handler -- see CLAUDE.md for
+// options under consideration. While this is false, every send is allowed through
+// immediately, untagged, without ever trying to open the dialog.
+const FILE_ON_SEND_ENABLED = false;
 
 function onMessageSendHandler(event) {
   if (!FILE_ON_SEND_ENABLED) {
@@ -105,16 +87,13 @@ function onMessageSendHandler(event) {
   // time as they want, same as always.
   const watchdogId = setTimeout(() => {
     console.error("onMessageSendHandler: hard timeout before the dialog confirmed it loaded -- failing open.");
-    mark(item, "TIMED OUT before dialog confirmed loaded -- sent without filing");
     finish(true);
   }, 20000);
 
   const item = Office.context.mailbox.item;
-  mark(item, "1/4 handler started, calling getComposeTypeAsync");
 
   item.getComposeTypeAsync((composeTypeResult) => {
     if (settled) return; // watchdog already fired before this callback got a chance to run
-    mark(item, "2/4 getComposeTypeAsync returned, calling displayDialogAsync");
 
     const composeType = (composeTypeResult.status === Office.AsyncResultStatus.Succeeded && composeTypeResult.value)
       ? composeTypeResult.value.composeType // "newMail" | "reply" | "replyAll" | "forward"
@@ -143,12 +122,10 @@ function onMessageSendHandler(event) {
       if (asyncResult.status === Office.AsyncResultStatus.Failed) {
         // Couldn't open the dialog at all -- fail open, never trap a send over this.
         console.error("Could not open File on Send dialog:", asyncResult.error);
-        mark(item, "displayDialogAsync FAILED (" + (asyncResult.error && asyncResult.error.message) + ") -- sent without filing");
         finish(true);
         return;
       }
 
-      mark(item, "3/4 displayDialogAsync returned, dialog object obtained, waiting for ready ping");
       dialog = asyncResult.value;
 
       dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
@@ -161,7 +138,6 @@ function onMessageSendHandler(event) {
         }
 
         if (message.action === "ready") {
-          mark(item, "4/4 dialog confirmed ready -- watchdog cleared, normal flow from here");
           clearTimeout(watchdogId);
           return;
         }
