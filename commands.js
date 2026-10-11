@@ -44,6 +44,25 @@
 // untagged, without ever trying to open the dialog.
 const FILE_ON_SEND_ENABLED = true;
 
+// TEMPORARY, added 2026-10-11 to diagnose the live hang: classic Windows Outlook's function-
+// command runtime has no DOM and no fetch (see this file's header comment), so there's no
+// normal way to get console/network output out of it during a real send. notificationMessages
+// is the one visible, zero-tooling channel this runtime does have -- it shows as a banner in
+// the compose window itself. Marks each checkpoint up to the point the dialog is confirmed
+// alive, since that pre-dialog stretch is the one with no other visibility at all and is where
+// both the 2026-10-07 and 2026-10-11 hangs are suspected to actually occur. Remove once the
+// hang is diagnosed; never let this break the real flow if the API itself misbehaves.
+function mark(item, step) {
+  try {
+    item.notificationMessages.replaceAsync("fileOnSendDebug", {
+      type: Office.MailboxEnums.ItemNotificationMessageType.InformationalMessage,
+      message: "File on Send debug: " + step,
+      icon: "Icon.16x16",
+      persistent: false
+    });
+  } catch (err) { /* best-effort only */ }
+}
+
 function onMessageSendHandler(event) {
   if (!FILE_ON_SEND_ENABLED) {
     event.completed({ allowEvent: true });
@@ -86,13 +105,16 @@ function onMessageSendHandler(event) {
   // time as they want, same as always.
   const watchdogId = setTimeout(() => {
     console.error("onMessageSendHandler: hard timeout before the dialog confirmed it loaded -- failing open.");
+    mark(item, "TIMED OUT before dialog confirmed loaded -- sent without filing");
     finish(true);
   }, 20000);
 
   const item = Office.context.mailbox.item;
+  mark(item, "1/4 handler started, calling getComposeTypeAsync");
 
   item.getComposeTypeAsync((composeTypeResult) => {
     if (settled) return; // watchdog already fired before this callback got a chance to run
+    mark(item, "2/4 getComposeTypeAsync returned, calling displayDialogAsync");
 
     const composeType = (composeTypeResult.status === Office.AsyncResultStatus.Succeeded && composeTypeResult.value)
       ? composeTypeResult.value.composeType // "newMail" | "reply" | "replyAll" | "forward"
@@ -121,10 +143,12 @@ function onMessageSendHandler(event) {
       if (asyncResult.status === Office.AsyncResultStatus.Failed) {
         // Couldn't open the dialog at all -- fail open, never trap a send over this.
         console.error("Could not open File on Send dialog:", asyncResult.error);
+        mark(item, "displayDialogAsync FAILED (" + (asyncResult.error && asyncResult.error.message) + ") -- sent without filing");
         finish(true);
         return;
       }
 
+      mark(item, "3/4 displayDialogAsync returned, dialog object obtained, waiting for ready ping");
       dialog = asyncResult.value;
 
       dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
@@ -137,6 +161,7 @@ function onMessageSendHandler(event) {
         }
 
         if (message.action === "ready") {
+          mark(item, "4/4 dialog confirmed ready -- watchdog cleared, normal flow from here");
           clearTimeout(watchdogId);
           return;
         }
