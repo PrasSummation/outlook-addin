@@ -687,6 +687,61 @@ against "don't react to one quiet run", not something watched fire for real yet 
 revisiting if it either fires on a genuinely quiet period (too sensitive) or still takes too
 long to catch a real stuck cursor (not sensitive enough).
 
+## File on Send is architecturally broken, disabled pending a redesign (2026-10-11)
+
+`FILE_ON_SEND_ENABLED` is `false` and **must stay that way** until the design below changes.
+Don't re-enable it expecting the existing dialog-based flow to start working — it structurally
+can't, on any Outlook client that enforces the platform rule described here.
+
+**What's wrong**: `onMessageSendHandler` (`commands.js`) calls
+`Office.context.ui.displayDialogAsync` to open `file-on-send-dialog.html`'s project picker.
+That call's callback **never fires at all** — confirmed deterministic (every single send, not
+intermittent) via temporary `notificationMessages`-banner checkpoint markers added specifically
+to diagnose this (removed again once confirmed, commit `b8fd119`). This isn't a timing bug or
+an environment quirk: Microsoft's own `Outlook-Add-in-SSO-events` sample states it directly —
+*"It's not possible to open a dialog from an event in Outlook"* — and the Dialog API docs scope
+dialogs to "a task pane, content add-in, or add-in command," which excludes `OnMessageSend`
+event-based activation entirely. `File Email`'s dialog works fine with the exact same
+`displayDialogAsync` call because it's launched from a ribbon button (a normal function
+command), not from an event handler — that's the structural difference, not anything about the
+dialog itself.
+
+**Incident trail for context** (all genuine fixes for genuine problems, none of which could
+have fixed the actual blocker): the 2026-10-07 hang was traced to a missing `AppDomains` entry
+(`d740991`) and fixed; a 2026-10-11 retest hit the identical symptom, which led to widening the
+handler's safety-timeout into a single watchdog covering the whole handler instead of just the
+dialog-already-open phase (`13a73e2`) — a real improvement (converts "hangs forever" into "fails
+open after 20s"), but still can't make the dialog open. Only once the checkpoint markers showed
+the stall was 100%-reproducible, always at the identical `getComposeTypeAsync` →
+`displayDialogAsync` boundary, did the real, non-fixable-by-retry cause become clear.
+
+**Options for an actual redesign** (none implemented yet — needs a product decision, not just a
+code change):
+1. **Drop the in-flow picker, keep a lightweight send-time nudge.** Smart Alerts (the
+   `OnMessageSend`/`OnAppointmentSend` framework this handler already uses) can show Outlook's
+   own simple alert via `event.completed`'s own parameters (a short message, optionally
+   blocking the send) without any custom dialog — not a searchable project picker, just a
+   plain prompt. Project selection would have to happen some other way (e.g., a required
+   category convention, or a follow-up step).
+2. **Move selection to a `notificationMessages` custom action** (requirement set 1.10,
+   `ItemNotificationMessageType.InsightMessage` + `NotificationMessageDetails.actions`) —
+   lets the user click a button in the notification banner itself, but still can't render a
+   searchable list of hundreds of projects; at best a small fixed set of quick choices.
+3. **Don't intercept the send at all — act after it, on the Sent Items copy.** This is what
+   `email-filing-sync`'s existing Sent Items pass already does (see its own `README.md`'s
+   section on this) for the *categorized* case. Extending that to prompt for a project
+   *without* needing a send-time dialog would mean leaning entirely on that backstop plus
+   `Batch File Folder`/`File Email` after the fact, dropping the "catch it at send time" UX
+   goal rather than working around the platform limit.
+4. **A task-pane-based nudge instead of event-based activation.** A task pane isn't an event
+   handler, so it CAN host a real dialog — but a task pane also doesn't fire automatically
+   when a user clicks Send; it would need a different trigger (e.g., prompting proactively
+   while composing, not strictly "on send"), which changes the feature's premise.
+
+None of these preserve the original "send → full project-picker dialog appears → pick →
+tagged" flow exactly as designed; that flow is the part that's impossible from this context.
+Whoever picks this back up should treat it as a redesign, not a bugfix.
+
 ## Recurring code patterns
 
 - **`guardAgainstClose(fn)` / `actionInProgress` / `beforeunload`**: used
