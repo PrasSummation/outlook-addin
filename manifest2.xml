@@ -260,10 +260,15 @@
                       <bt:Image size="32" resid="Icon.32x32" />
                       <bt:Image size="80" resid="Icon.80x80" />
                     </Icon>
+                    <!-- FunctionName is the only valid child of an ExecuteFunction action.
+                         SupportsNoItemContext and SupportsMultiSelect (both ShowTaskpane-only
+                         per the Action element schema) sat here invalidly since the 2026-10-06
+                         ShowTaskpane-to-ExecuteFunction change above, caught by schema
+                         validation on 2026-10-13. No behavior lost: fileEmailDialogHandler
+                         (commands.js) already detects no-selection/multi-select itself via
+                         detectFileEmailSelectionCmd(), not via these manifest declarations. -->
                     <Action xsi:type="ExecuteFunction">
                       <FunctionName>fileEmailDialogHandler</FunctionName>
-                      <SupportsNoItemContext>true</SupportsNoItemContext>
-                      <SupportsMultiSelect>true</SupportsMultiSelect>
                     </Action>
                   </Control>
                 </Group>
