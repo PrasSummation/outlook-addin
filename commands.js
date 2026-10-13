@@ -201,20 +201,29 @@ Office.actions.associate("onMessageSendHandler", onMessageSendHandler);
 const ON_NEW_MESSAGE_COMPOSE_ENABLED = true;
 
 function onNewMessageComposeHandler(event) {
+  // SPIKE DIAGNOSTIC, added 2026-10-13: runtime logging (office-addin-dev-settings) can't see
+  // this add-in's own console output reliably by name, and showAsTaskpane()'s success path
+  // logged nothing at all, which made a silent no-op indistinguishable from "never fired".
+  // This one line proves invocation regardless of what happens next; grep the runtime log for
+  // "SUMMATION_SPIKE" after a test. Remove alongside the rest of this spike if it's abandoned.
+  console.log("SUMMATION_SPIKE: onNewMessageComposeHandler fired, enabled =", ON_NEW_MESSAGE_COMPOSE_ENABLED);
   if (!ON_NEW_MESSAGE_COMPOSE_ENABLED) {
     event.completed();
     return;
   }
   try {
     Office.addin.showAsTaskpane()
-      .then(() => event.completed())
+      .then(() => {
+        console.log("SUMMATION_SPIKE: showAsTaskpane() resolved");
+        event.completed();
+      })
       .catch((err) => {
-        console.error("onNewMessageComposeHandler: showAsTaskpane() failed:", err);
+        console.error("SUMMATION_SPIKE: showAsTaskpane() failed:", err);
         event.completed();
       });
   } catch (err) {
     // e.g. Office.addin doesn't exist on this client/build at all.
-    console.error("onNewMessageComposeHandler: threw synchronously:", err);
+    console.error("SUMMATION_SPIKE: threw synchronously:", err);
     event.completed();
   }
 }
