@@ -120,7 +120,7 @@
           <tbody id="bfTableBody"></tbody>
         </table>
       </div>
-      <button id="bfConfirmButton" disabled>Categorize Assigned Emails</button>
+      <button id="bfConfirmButton" disabled>File Assigned Emails</button>
     </div>
 
     <div id="bfStepResult" style="display:none;">
@@ -712,13 +712,13 @@
             const resolved = resolveProjectName(document.getElementById("bfBulkProjectInput").value);
             const selectedCount = bfMessages.filter(m => m.selected).length;
             el.innerHTML = resolved
-                ? `All ${selectedCount} selected email(s) will be categorized as <b>${escapeHtml(resolved)}</b>.`
+                ? `All ${selectedCount} selected email(s) will be filed to <b>${escapeHtml(resolved)}</b>.`
                 : `<span class="warn">Type a valid project above to apply it to all ${selectedCount} selected email(s).</span>`;
             return;
         }
         const unresolvedNote = bfCounts.unresolved > 0
             ? `, <span class="warn">${bfCounts.unresolved} not a recognised project</span>` : "";
-        el.innerHTML = `${bfCounts.resolved} to categorize, ${bfCounts.skip} skipped${unresolvedNote}`;
+        el.innerHTML = `${bfCounts.resolved} to file, ${bfCounts.skip} skipped${unresolvedNote}`;
     }
 
     function updateConfirmEnabled() {
@@ -856,9 +856,37 @@
         }
     }
 
+    let bfEmailsToFileFolderId = null;
+
+    async function getOrCreateEmailsToFileFolderId() {
+        if (bfEmailsToFileFolderId) return bfEmailsToFileFolderId;
+        const token = await signInAndGetToken(mailWriteRequest, true);
+        if (!token) throw new Error("Could not get permission to access your mailbox.");
+        const existing = await graphGet(
+            `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/childFolders?$filter=${encodeURIComponent("displayName eq 'Emails to File'")}`,
+            token
+        );
+        if (existing.value && existing.value.length > 0) {
+            bfEmailsToFileFolderId = existing.value[0].id;
+            return bfEmailsToFileFolderId;
+        }
+        const response = await fetch("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/childFolders", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ displayName: "Emails to File" })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Could not create "Emails to File": ${response.status} ${errorText}`);
+        }
+        const created = await response.json();
+        bfEmailsToFileFolderId = created.id;
+        return bfEmailsToFileFolderId;
+    }
+
     async function postFeBatch(entry) {
         const graphToken = await withTimeout(signInAndGetToken(mailWriteRequest, true), 8000, "signInAndGetToken(mailWriteRequest)");
-        if (!graphToken) throw new Error("Could not get permission to categorize emails.");
+        if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
         const bridgeToken = await withTimeout(signInAndGetToken(bridgeRequest, true), 8000, "signInAndGetToken(bridgeRequest)");
         if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
 
@@ -974,12 +1002,19 @@
         showBfStep("result");
         document.getElementById("bfResultSummary").innerHTML = `<div class="summary-box"><div class="row">Starting...</div></div>`;
 
-        // destinationFolderId is deliberately omitted (null) -- 2026-10-12: categorize only,
-        // leave every email in place. The bridge already supports this (it just skips the
-        // move step when no destination is given, same as File on Send's Sent Items pass
-        // relies on), so no backend change was needed. Note this means these emails are NOT
-        // picked up by email-filing-sync's "Emails to File" staging pass -- that pass only
-        // scans that one specific folder, not wherever these emails actually sit.
+        // Categorize AND move, same as File Email -- 2026-10-13: briefly categorize-only
+        // (2026-10-12), but that left a gap between the server-side categorize (via Graph)
+        // and a manual drag-and-drop move in Outlook: if Outlook's local cache hadn't yet
+        // synced down the new category before the move, the move could write back its own
+        // stale local copy of the item and silently clobber it. Doing the move here too,
+        // server-side via the same Graph call, removes that gap entirely -- there's no
+        // longer a manual step for Outlook's local cache to race against.
+        let emailsToFileFolderId = null;
+        try {
+            emailsToFileFolderId = await withTimeout(getOrCreateEmailsToFileFolderId(), 8000, "getOrCreateEmailsToFileFolderId");
+        } catch (err) {
+            console.error("Could not resolve the Emails to File folder:", err);
+        }
 
         // Build and record every chunk for every project up front -- addFeBatchToStorage
         // happens here, before any dispatching starts, so even a chunk whose request hasn't
@@ -1000,7 +1035,7 @@
             const entries = chunkArray(group.items, BATCH_CHUNK_SIZE).map(chunk => ({
                 batchId: crypto.randomUUID(), categoryName: group.categoryName, total: chunk.length,
                 startedAt: now, lastAttemptAt: now, retryCount: 0,
-                items: chunk, destinationFolderId: null, categoryPreExisted: preExisted
+                items: chunk, destinationFolderId: emailsToFileFolderId, categoryPreExisted: preExisted
             }));
             entries.forEach(addFeBatchToStorage);
             allEntries.push(...entries);
@@ -1015,16 +1050,16 @@
             const failedSum = [...progress.values()].reduce((n, p) => n + p.failed, 0);
             const rows = [...progress.entries()].map(([name, p]) => {
                 const pending = p.total - p.succeeded - p.failed;
-                return `<div class="row">${escapeHtml(name)}: ${p.succeeded} categorized` +
+                return `<div class="row">${escapeHtml(name)}: ${p.succeeded} filed` +
                     `${p.failed ? `, ${p.failed} failed` : ""}${pending > 0 ? `, ${pending} remaining` : ""} (of ${p.total})</div>`;
             }).join("");
             const failureNotes = [...progress.values()].flatMap(p => p.failureDetails).slice(0, 20)
                 .map(d => `<div class="row" style="color:#B3401F;">${escapeHtml(d)}</div>`).join("");
             document.getElementById("bfResultSummary").innerHTML = `
                 <div class="summary-box">
-                    <div class="row">${finished ? "Done" : "Categorizing in progress — this continues on the server even if this " +
+                    <div class="row">${finished ? "Done" : "Filing in progress — this continues on the server even if this " +
                         "window closes; reopen Batch File Folder or File Email later to check"} — ` +
-                    `${succeededSum} of ${totalEmails} categorized so far${failedSum ? `, ${failedSum} failed` : ""}.</div>
+                    `${succeededSum} of ${totalEmails} filed so far${failedSum ? `, ${failedSum} failed` : ""}.</div>
                     ${rows}
                     ${failureNotes}
                 </div>`;
