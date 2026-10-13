@@ -1651,33 +1651,33 @@
     // via Graph itself and then works through every email in that folder, not just what's
     // selected. See batch-file-dialog.html's own header comment for why Office.js has no
     // direct "what folder is open" API, which is why this indirection exists at all.
-
-    let activeBatchFileDialog = null;
+    //
+    // Opened via openUrlInBrowser() into a real OS browser tab, not an Office.js dialog --
+    // 2026-10-13: a long run that moves emails out of the folder the user is actively viewing
+    // could trigger Outlook's own "tear down the pane on selection change" behavior
+    // (SupportsMultiSelect's default), killing an Office.js dialog mid-batch with no warning,
+    // confirmed live. A separate browser process can't be touched by anything Outlook does to
+    // its own task pane -- same fix, same reasoning as complete-action.html's own handoff
+    // (see its CLAUDE.md writeup). No dialog object exists in this architecture, so there's no
+    // parent-initiated close or live-selection-forwarding to wire up here anymore.
 
     async function openBatchFileDialog() {
         const context = await detectFileEmailSelection();
         const url = `https://prassummation.github.io/outlook-addin/batch-file-dialog.html?context=${encodeURIComponent(JSON.stringify(context))}`;
-        Office.context.ui.displayDialogAsync(url, { height: 90, width: 60 }, (asyncResult) => {
-            if (asyncResult.status === Office.AsyncResultStatus.Failed) {
-                console.error("Could not open Batch File Folder:", asyncResult.error);
-                const status = document.getElementById("statusMessage");
-                if (status) status.textContent = `Could not open Batch File Folder: ${asyncResult.error.message}`;
-                return;
+        const status = document.getElementById("statusMessage");
+        try {
+            openUrlInBrowser(url);
+            if (status) {
+                status.style.color = "#333";
+                status.innerHTML = "Opening Batch File Folder in your browser — it keeps running there even if " +
+                    "you close this pane or switch to a different email. " +
+                    `Didn't see a new tab open? <a href="${url}" target="_blank" rel="noopener">Click here to open it</a> ` +
+                    "(sign in there if asked).";
             }
-            activeBatchFileDialog = asyncResult.value;
-            // Same parent-initiated close pattern as File Email's own dialog -- see that
-            // file's CLAUDE.md writeup for why the dialog's own closeContainer() call isn't
-            // the reliable half of this.
-            activeBatchFileDialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
-                try {
-                    const message = JSON.parse(arg.message);
-                    if (message.action === "close") activeBatchFileDialog.close();
-                } catch (err) { /* ignore malformed messages */ }
-            });
-            activeBatchFileDialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
-                activeBatchFileDialog = null;
-            });
-        });
+        } catch (err) {
+            console.error("Could not open Batch File Folder:", err);
+            if (status) status.textContent = `Could not open Batch File Folder: ${err.message}`;
+        }
     }
 
     function forwardSelectionToDialog(dialog) {

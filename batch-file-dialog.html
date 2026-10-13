@@ -3,7 +3,6 @@
 <head>
   <meta charset="utf-8" />
   <title>Batch File Folder</title>
-  <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
   <script type="text/javascript" src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
   <style>
     :root{
@@ -131,14 +130,24 @@
   </div>
 
   <script>
-    // Batch File Folder: work through every email in a folder (detected from whatever's
-    // currently selected -- Office.js has no API to ask "what folder is open in the
-    // navigation pane", so this dialog looks up the parentFolderId of one selected message
-    // via Graph instead, then lists everything in that folder, not just what was selected).
-    // Same dialog architecture as file-email-dialog.html/file-on-send-dialog.html (no
-    // Office.context.mailbox access here, only Office.context.ui.* messaging) and reuses its
-    // bridge/categorize+move plumbing verbatim -- see those files' own header comments for
-    // the underlying reasoning this all builds on.
+    // Batch File Folder: work through every email in a folder (detected from whatever was
+    // selected in the taskpane at the moment this page was opened -- Office.js has no API to
+    // ask "what folder is open in the navigation pane", so the opener looks up the
+    // parentFolderId of one selected message via Graph instead, then this page lists
+    // everything in that folder, not just what was selected).
+    //
+    // Opened as a genuinely separate browser tab/window (taskpane.html's openUrlInBrowser(),
+    // same pattern as complete-action.html/email-search.html), not an Office.js dialog --
+    // 2026-10-13: a long batch run moving emails out of the folder the user was actively
+    // viewing could trigger Outlook's "tear down the pane on selection change" behavior
+    // (SupportsMultiSelect's default), which killed this dialog mid-run with no warning,
+    // confirmed live. A separate OS browser process can't be touched by anything Outlook does
+    // to its own task pane, so this page has no Office.js context at all (see
+    // complete-action.html's own header comment for the same reasoning) -- it only ever reads
+    // the selection snapshot the opener already captured, via the URL's context param. Reuses
+    // file-email-dialog.html/file-on-send-dialog.html's bridge/categorize+move plumbing
+    // verbatim -- see those files' own header comments for the underlying reasoning this all
+    // builds on.
 
     const BRIDGE_URL = "https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net";
     const ACTIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5wp-OK02_E3RbZkRH_jE_Lr";
@@ -195,10 +204,6 @@
         try { return await fn(); } finally { actionInProgress = false; }
     }
 
-    function messageParent(payload) {
-        try { Office.context.ui.messageParent(JSON.stringify(payload)); } catch (err) { console.error("Could not message the opener:", err); }
-    }
-
     function withTimeout(promise, ms, label) {
         return Promise.race([
             promise,
@@ -232,18 +237,15 @@
         }
     })();
 
-    Office.onReady(() => {
+    window.addEventListener("load", () => {
         document.getElementById("signInButton").addEventListener("click", handleLogin);
         document.getElementById("bfBulkCheckbox").addEventListener("change", handleBulkToggle);
         document.getElementById("bfSelectAllCheckbox").addEventListener("change", handleSelectAllToggle);
         document.getElementById("bfBulkProjectInput").addEventListener("input", () => { renderSummaryLine(); updateConfirmEnabled(); });
         document.getElementById("bfConfirmButton").addEventListener("click", handleConfirm);
-        document.getElementById("bfCloseButton").addEventListener("click", () => {
-            // Parent-initiated close -- see file-email-dialog.html's CLAUDE.md writeup for
-            // why the dialog's own closeContainer() call on itself isn't the reliable half.
-            messageParent({ action: "close" });
-            setTimeout(() => { try { Office.context.ui.closeContainer(); } catch (err) { window.close(); } }, 1500);
-        });
+        // A real browser tab, not an Office.js dialog -- window.close() is the whole story,
+        // no opener to message and no closeContainer() to try first.
+        document.getElementById("bfCloseButton").addEventListener("click", () => window.close());
         document.getElementById("bfAnotherButton").addEventListener("click", resetToDetect);
 
         msalInstance = new msal.PublicClientApplication(msalConfig);

@@ -38,7 +38,7 @@ project mailbox.
 | `file-email-dialog.html` | The File Email picker, as an `Office.context.ui.displayDialogAsync` dialog rather than inline in the taskpane (changed 2026-10-06 — see "File Email is a dialog, not a wizard" below). Self-contained like `complete-action.html` (own MSAL sign-in, own copies of the Graph/bridge helpers), reads its initial selection context from its own URL query string, and receives live selection updates from whichever page opened it via `Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, ...)`. |
 | `commands.js` / `commands.html` | UI-less ribbon/event command functions — see its own header comments for the two different ways Outlook clients load this file. Holds `onMessageSendHandler` (the **File on Send** feature, live as of 2026-10-06 — see its own section below; replaced an earlier phase-1 probe) and `fileEmailDialogHandler` (the ribbon's dedicated File Email button — detects the selection and opens `file-email-dialog.html`, duplicating taskpane.html's own copy of that same detection logic). |
 | `file-on-send-dialog.html` | The File on Send project picker, opened by `commands.js`'s `onMessageSendHandler` via `displayDialogAsync` when a message is sent. Built from the separately-approved mockup at https://claude.ai/artifact/EqTMRsGos3VHXtspmZPXpp. See "File on Send is live" below. |
-| `batch-file-dialog.html` | Batch File Folder (added 2026-10-07): works through every email in a whole folder at once, each row getting its own project (or Skip), or one project applied to all via a bulk checkbox. Opened from the taskpane's own tile, same dialog architecture as the other two. See "Batch File Folder" below. |
+| `batch-file-dialog.html` | Batch File Folder (added 2026-10-07): works through every email in a whole folder at once, each row getting its own project (or Skip), or one project applied to all via a bulk checkbox. Opened from the taskpane's own tile via `openUrlInBrowser()` into a real OS browser tab, **not** an Office.js dialog (changed 2026-10-13) — see "Batch File Folder" below. |
 | `complete-action.html` | Standalone execution page. Does the actual long-running work (SharePoint writes, mailbox creation) for the three taskpane wizards. See "The handoff pattern" below — this file exists specifically so closing the taskpane mid-action doesn't abort the action. |
 | `help-guide.html` | Standalone page, linked from the taskpane footer ("Help Guide"). Staff-facing walkthrough of the four things people actually use day to day: File Email (manual), the automatic background filing pass, sent-email auto-save (not live yet), and Email Search. Update this whenever one of those workflows changes. |
 | `email-search.html` | The hosted email index/search page, linked from the taskpane's **Email Search** button. Generated from the `email-index` repo's own prototype `search.html` by a scratch script there — **edits to one must be mirrored in the other by hand**, this repo doesn't regenerate it. MSAL sign-in against this repo's same app registration, calls the hosted Function App described in the email-index repo's `HANDOFF.md`. |
@@ -459,6 +459,22 @@ A new taskpane tile (`batchFileButton`, alongside the File Email tile — no new
 no manifest change) for working through a whole folder of accumulated, unfiled emails in one
 pass, rather than one-at-a-time via File Email. Opens `batch-file-dialog.html`.
 
+- **Opened as a separate OS browser tab, not an Office.js dialog (changed 2026-10-13).**
+  Originally `displayDialogAsync`, same as the other two pickers -- but a long run that
+  categorizes-and-moves many emails out of the folder the user is actively viewing can
+  disappear items from Outlook's own currently-displayed list in real time, which can trigger
+  Outlook's "tear down the pane on selection change" behavior (the default once
+  `SupportsMultiSelect` is on, unless the pane is pinned). That kills a dialog mid-batch with
+  no warning -- confirmed live, root-caused by having the user select the *last* item in the
+  folder before running it (nothing disrupted the selection early, and the whole folder went
+  through cleanly). Switched to `taskpane.html`'s `openUrlInBrowser()` (the same
+  `complete-action.html`/`email-search.html` pattern) instead: a real, separate OS browser
+  process can't be touched by anything Outlook does to its own task pane. This means
+  `batch-file-dialog.html` has **no Office.js context at all** now (no script tag, no
+  `Office.onReady`, no `messageParent`/`closeContainer`) -- same reasoning as
+  `complete-action.html`'s own header comment. It never had live-selection-forwarding or
+  parent-initiated-close wiring to begin with (unlike `file-email-dialog.html`), so nothing
+  was lost by dropping the dialog channel.
 - **Folder detection has no dedicated API to lean on.** Office.js has no way to ask "what
   folder is currently open in the navigation pane." The workaround: `openBatchFileDialog()`
   (taskpane.html) reuses `detectFileEmailSelection()` — the exact same function File Email
