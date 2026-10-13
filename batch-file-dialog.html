@@ -67,6 +67,7 @@
     #bfTable td{padding:7px 10px;border-bottom:1px solid var(--grey-100);vertical-align:top}
     #bfTable tr.bf-row:last-child td{border-bottom:none}
     tr.bf-row.unresolved td{background:#FFF3F0}
+    #bfTable th.bf-select-col,#bfTable td.bf-select{width:28px;padding-right:0}
     .bf-from .bf-name{color:var(--grey-900)}
     .bf-from .bf-addr{color:var(--grey-400);font-size:10.5px}
     .bf-subject{color:var(--grey-900);max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -112,7 +113,10 @@
       <div id="bfSummaryLine"></div>
       <div id="bfTableWrap">
         <table id="bfTable">
-          <thead><tr><th>From</th><th>Subject</th><th>Project (type to search, leave blank to skip)</th></tr></thead>
+          <thead><tr>
+            <th class="bf-select-col"><input type="checkbox" id="bfSelectAllCheckbox" checked title="Select/deselect all" /></th>
+            <th>From</th><th>Subject</th><th>Project (type to search, leave blank to skip)</th>
+          </tr></thead>
           <tbody id="bfTableBody"></tbody>
         </table>
       </div>
@@ -231,6 +235,7 @@
     Office.onReady(() => {
         document.getElementById("signInButton").addEventListener("click", handleLogin);
         document.getElementById("bfBulkCheckbox").addEventListener("change", handleBulkToggle);
+        document.getElementById("bfSelectAllCheckbox").addEventListener("change", handleSelectAllToggle);
         document.getElementById("bfBulkProjectInput").addEventListener("input", () => { renderSummaryLine(); updateConfirmEnabled(); });
         document.getElementById("bfConfirmButton").addEventListener("click", handleConfirm);
         document.getElementById("bfCloseButton").addEventListener("click", () => {
@@ -384,6 +389,7 @@
         bfSeenIds.clear();
         bfFolderInfo = null;
         document.getElementById("bfTableBody").innerHTML = "";
+        document.getElementById("bfSelectAllCheckbox").checked = true;
         document.getElementById("bfBulkCheckbox").checked = false;
         document.getElementById("bfBulkProjectInput").value = "";
         document.getElementById("bfBulkProjectInput").style.display = "none";
@@ -424,7 +430,15 @@
             loadFolderMessagesPaged(folder.id);
         } catch (err) {
             console.error("Could not detect the target folder:", err);
-            status.textContent = `Error: ${err.message}`;
+            // ErrorItemNotFound here usually isn't a real problem with the email -- it's
+            // Outlook's local cache (what you just saw move) being ahead of what's actually
+            // landed on the server yet (what Graph reads from). Confirmed live, 2026-10-13:
+            // every email in a folder someone had just moved emails into failed this exact
+            // lookup until the next Outlook sync caught up.
+            status.textContent = /ErrorItemNotFound|404/i.test(err.message || "")
+                ? "Couldn't find this email yet — if you just moved it, Outlook may still be syncing " +
+                  "with the server. Try Send/Receive (F9), then try again."
+                : `Error: ${err.message}`;
             status.style.color = "red";
         }
     }
@@ -573,6 +587,7 @@
                     bfMessages = [];
                     bfCounts = { skip: 0, resolved: 0, unresolved: 0 };
                     bfSeenIds.clear();
+                    document.getElementById("bfSelectAllCheckbox").checked = true;
                     showLoadWarning("");
                     loadFolderMessagesPaged(folderId);
                 });
@@ -617,11 +632,25 @@
         const fromEmail = (msg.from && msg.from.emailAddress && msg.from.emailAddress.address) || "";
         const m = {
             id: msg.id, subject: msg.subject || "(no subject)", fromName, fromEmail,
-            conversationId: msg.conversationId || "", status: "skip", inputEl: null, rowEl: null
+            conversationId: msg.conversationId || "", status: "skip", selected: true,
+            inputEl: null, rowEl: null, checkboxEl: null
         };
 
         const tr = document.createElement("tr");
         tr.className = "bf-row";
+
+        const tdSelect = document.createElement("td");
+        tdSelect.className = "bf-select";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = true;
+        checkbox.addEventListener("change", () => {
+            m.selected = checkbox.checked;
+            updateRowStatus(m);
+        });
+        tdSelect.appendChild(checkbox);
+        tr.appendChild(tdSelect);
+        m.checkboxEl = checkbox;
 
         const tdFrom = document.createElement("td");
         tdFrom.className = "bf-from";
@@ -661,7 +690,7 @@
         const prev = m.status;
         const text = m.inputEl.value.trim();
         let next;
-        if (!text) next = "skip";
+        if (!m.selected || !text) next = "skip";
         else next = resolveProjectName(text) ? "resolved" : "unresolved";
         if (next !== prev) {
             bfCounts[prev]--;
@@ -681,9 +710,10 @@
         const el = document.getElementById("bfSummaryLine");
         if (bfBulkModeActive()) {
             const resolved = resolveProjectName(document.getElementById("bfBulkProjectInput").value);
+            const selectedCount = bfMessages.filter(m => m.selected).length;
             el.innerHTML = resolved
-                ? `All ${bfMessages.length} email(s) will be categorized as <b>${escapeHtml(resolved)}</b>.`
-                : `<span class="warn">Type a valid project above to apply it to all ${bfMessages.length} email(s).</span>`;
+                ? `All ${selectedCount} selected email(s) will be categorized as <b>${escapeHtml(resolved)}</b>.`
+                : `<span class="warn">Type a valid project above to apply it to all ${selectedCount} selected email(s).</span>`;
             return;
         }
         const unresolvedNote = bfCounts.unresolved > 0
@@ -694,9 +724,20 @@
     function updateConfirmEnabled() {
         const btn = document.getElementById("bfConfirmButton");
         if (bfBulkModeActive()) {
-            btn.disabled = !resolveProjectName(document.getElementById("bfBulkProjectInput").value) || bfMessages.length === 0;
+            btn.disabled = !resolveProjectName(document.getElementById("bfBulkProjectInput").value) ||
+                !bfMessages.some(m => m.selected);
         } else {
             btn.disabled = bfCounts.unresolved > 0 || bfCounts.resolved === 0;
+        }
+    }
+
+    function handleSelectAllToggle(e) {
+        const checked = e.target.checked;
+        for (const m of bfMessages) {
+            if (m.selected === checked) continue;
+            m.selected = checked;
+            m.checkboxEl.checked = checked;
+            updateRowStatus(m);
         }
     }
 
@@ -845,9 +886,10 @@
         if (bfBulkModeActive()) {
             const bulkName = resolveProjectName(document.getElementById("bfBulkProjectInput").value);
             if (!bulkName) return [];
-            groups.set(bulkName, bfMessages.map(m => ({ restId: m.id, subject: m.subject })));
+            groups.set(bulkName, bfMessages.filter(m => m.selected).map(m => ({ restId: m.id, subject: m.subject })));
         } else {
             for (const m of bfMessages) {
+                if (!m.selected) continue; // deselected via its own or the "select all" checkbox
                 const name = resolveProjectName(m.inputEl.value);
                 if (!name) continue; // blank (skip) or unresolved -- Confirm is disabled while any row is unresolved
                 if (!groups.has(name)) groups.set(name, []);
