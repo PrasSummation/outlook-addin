@@ -5,7 +5,7 @@
            xsi:type="MailApp">
   
   <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id>
-  <Version>1.0.0.15</Version>
+  <Version>1.0.0.16</Version>
   <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
@@ -167,14 +167,6 @@
       <Requirements>
         <bt:Sets DefaultMinVersion="1.15">
           <bt:Set Name="Mailbox" />
-          <!-- SPIKE, added 2026-10-11 (see the OnNewMessageCompose LaunchEvent and the
-               Taskpane.Url Runtime below): Office.addin.showAsTaskpane(), the only way to
-               force the task pane open from an event handler since event handlers can't open
-               a dialog at all (see CLAUDE.md's File on Send section), requires the add-in to
-               declare the shared runtime. Remove this (and the two other SPIKE-tagged
-               additions below) together if showAsTaskpane() doesn't pan out; they're a
-               matched set. -->
-          <bt:Set Name="SharedRuntime" MinVersion="1.1" />
         </bt:Sets>
       </Requirements>
       <Hosts>
@@ -202,30 +194,22 @@
             <Runtime resid="Commands.Url">
               <Override type="javascript" resid="CommandsJs.Url" />
             </Runtime>
-            <!-- SPIKE, added 2026-10-11: marks Taskpane.Url (only) as the add-in's one
-                 shared-runtime surface, lifetime="long", needed for
-                 Office.addin.showAsTaskpane() to work from onNewMessageComposeHandler below.
-                 Commands.Url above is untouched and stays on the default short-lived runtime,
-                 so OnMessageSend and the existing ribbon function commands are unaffected; only
-                 an add-in may have exactly one "long" Runtime, and this is it. This DOES change
-                 how every existing taskpane entry point behaves (Summation.TaskpaneButton,
-                 Summation.ComposeTaskpaneButton, FileEmail.Url's V1.0 fallback): the pane's
-                 JS context now persists across hide/show instead of being torn down each time,
-                 so retest those too after deploying this, not just the new compose flow. -->
-            <Runtime resid="Taskpane.Url" lifetime="long" />
           </Runtimes>
           <DesktopFormFactor>
             <FunctionFile resid="Commands.Url" />
             <ExtensionPoint xsi:type="LaunchEvent">
               <LaunchEvents>
                 <LaunchEvent Type="OnMessageSend" FunctionName="onMessageSendHandler" SendMode="SoftBlock" />
-                <!-- SPIKE, added 2026-10-11: fires on New/Reply/Reply All/Forward (not on
-                     opening an existing draft). onNewMessageComposeHandler (commands.js) just
-                     calls showAsTaskpane(): this event, like OnMessageSend, is still an
-                     event-based handler and so STILL can't open a dialog itself; the point is
-                     only to force the task pane open, since the task pane is not an event
-                     handler and so can open file-on-send-dialog.html normally once shown. -->
-                <LaunchEvent Type="OnNewMessageCompose" FunctionName="onNewMessageComposeHandler" />
+                <!-- Added 2026-10-13, replacing an earlier SPIKE that tried to force the task
+                     pane open via a shared runtime (Outlook doesn't support shared runtimes at
+                     all, confirmed empirically, see git history). onMessageComposeHandler
+                     (commands.js) instead adds an InsightMessage notification with a
+                     ShowTaskPane action; Outlook opens the pane natively when the user clicks
+                     it, same as clicking Summation.ComposeTaskpaneButton manually.
+                     OnMessageCompose (Mailbox 1.12, covered by this block's 1.15 minimum) fires
+                     on new/reply/reply-all/forward AND on reopening an existing draft,
+                     broader than OnNewMessageCompose, which misses drafts. -->
+                <LaunchEvent Type="OnMessageCompose" FunctionName="onMessageComposeHandler" />
               </LaunchEvents>
               <SourceLocation resid="Commands.Url" />
             </ExtensionPoint>

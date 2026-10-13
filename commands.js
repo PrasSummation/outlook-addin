@@ -175,60 +175,49 @@ function onMessageSendHandler(event) {
 
 Office.actions.associate("onMessageSendHandler", onMessageSendHandler);
 
-// SPIKE, added 2026-10-11: validates whether Office.addin.showAsTaskpane() can force the task
-// pane open from an event handler now that the manifest declares the shared runtime (see
-// manifest2.xml's SharedRuntime/Taskpane.Url comments). OnNewMessageCompose fires on
-// New/Reply/Reply All/Forward -- but it's still an event-based handler, exactly like
-// OnMessageSend, so it STILL can't open a dialog itself (see CLAUDE.md's "File on Send is
-// architecturally broken" section for why). The point here is narrower: force the task pane
-// open, since the task pane isn't an event handler and so CAN open file-on-send-dialog.html
-// normally once it's actually showing. This handler only proves itself fired and the pane
-// opened; taskpane.html has its own matching spike banner that confirms the other half.
-// Throwaway: remove this function, its associate() call, and taskpane.html's banner together
-// if showAsTaskpane() doesn't work reliably; keep all three if it does, as the foundation for
-// the real redesign.
-//
-// KILL SWITCH: flip to false to stop calling showAsTaskpane() -- propagates in ~10 minutes via
-// commands.js's own CDN cache, not a manifest change, so this is the fast lever if the
-// auto-popup itself misbehaves (pops at a bad time, too naggy, showAsTaskpane() itself errors
-// or hangs on some client). IMPORTANT, read before relying on this during a live incident:
-// this switch does NOT undo marking Taskpane.Url as shared-runtime in the manifest -- that's
-// a separate, manifest-level change this handler depends on but doesn't control, and reverting
-// IT is subject to the same slow admin-deploy propagation as the rest of the manifest. If the
-// problem turns out to be the shared runtime itself (not just this handler's behavior -- e.g.
-// the existing ribbon Summation Assistant button or File Email acting wrong), this switch
-// alone won't fix it; only another manifest push will, on manifest timescales.
-const ON_NEW_MESSAGE_COMPOSE_ENABLED = true;
+// SPIKE RETIRED, 2026-10-13: the SharedRuntime + Office.addin.showAsTaskpane() approach tried
+// here (force the task pane open automatically from OnNewMessageCompose) doesn't work on
+// Outlook -- confirmed empirically on both classic Windows Outlook and Outlook on the web
+// (identical failure on both, ruling out a manifest-propagation delay). Root cause: Outlook
+// doesn't support shared runtimes at all (each surface -- task pane, function command, event
+// handler -- runs in its own separate runtime process), unlike Word/Excel/PowerPoint where
+// showAsTaskpane() is designed to work. See CLAUDE.md's "File on Send is architecturally
+// broken" section for the same underlying constraint. Replaced below by an InsightMessage
+// notification + its native ShowTaskPane action, which opens the pane in response to an
+// actual user click instead of trying to force it open programmatically.
 
-function onNewMessageComposeHandler(event) {
-  // SPIKE DIAGNOSTIC, added 2026-10-13: runtime logging (office-addin-dev-settings) can't see
-  // this add-in's own console output reliably by name, and showAsTaskpane()'s success path
-  // logged nothing at all, which made a silent no-op indistinguishable from "never fired".
-  // This one line proves invocation regardless of what happens next; grep the runtime log for
-  // "SUMMATION_SPIKE" after a test. Remove alongside the rest of this spike if it's abandoned.
-  console.log("SUMMATION_SPIKE: onNewMessageComposeHandler fired, enabled =", ON_NEW_MESSAGE_COMPOSE_ENABLED);
-  if (!ON_NEW_MESSAGE_COMPOSE_ENABLED) {
-    event.completed();
-    return;
-  }
+// Fires on composing a new message (including reply/reply all/forward) AND on reopening an
+// existing draft -- OnNewMessageCompose (the retired spike's event) misses drafts entirely,
+// which is why this uses OnMessageCompose instead (Mailbox requirement set 1.12, already
+// covered by this manifest's DefaultMinVersion 1.15).
+function onMessageComposeHandler(event) {
   try {
-    Office.addin.showAsTaskpane()
-      .then(() => {
-        console.log("SUMMATION_SPIKE: showAsTaskpane() resolved");
-        event.completed();
-      })
-      .catch((err) => {
-        console.error("SUMMATION_SPIKE: showAsTaskpane() failed:", err);
-        event.completed();
-      });
+    Office.context.mailbox.item.notificationMessages.addAsync(
+      "summation_file_prompt",
+      {
+        type: Office.MailboxEnums.ItemNotificationMessageType.InsightMessage,
+        message: "File this email to a project",
+        icon: "icon-16",
+        actions: [
+          {
+            actionText: "Choose project",
+            actionType: Office.MailboxEnums.ActionType.ShowTaskPane,
+            // Matches Summation.ComposeTaskpaneButton's id in manifest2.xml's
+            // MessageComposeCommandSurface -- that control is already ActionType="ShowTaskpane"
+            // pointed at Taskpane.Url, which is all this action needs to reuse.
+            commandId: "Summation.ComposeTaskpaneButton"
+          }
+        ]
+      },
+      () => event.completed()
+    );
   } catch (err) {
-    // e.g. Office.addin doesn't exist on this client/build at all.
-    console.error("SUMMATION_SPIKE: threw synchronously:", err);
+    console.error("onMessageComposeHandler: threw synchronously:", err);
     event.completed();
   }
 }
 
-Office.actions.associate("onNewMessageComposeHandler", onNewMessageComposeHandler);
+Office.actions.associate("onMessageComposeHandler", onMessageComposeHandler);
 
 /*
  * File Email, launched directly from the ribbon's dedicated "File Email" button

@@ -707,6 +707,52 @@ against "don't react to one quiet run", not something watched fire for real yet 
 revisiting if it either fires on a genuinely quiet period (too sensitive) or still takes too
 long to catch a real stuck cursor (not sensitive enough).
 
+## Compose-time filing nudge via InsightMessage (2026-10-13), replacing a retired SPIKE
+
+A 2026-10-11 spike tried to force the task pane open automatically on compose by declaring
+`Taskpane.Url` as a shared runtime (`manifest2.xml`) and calling `Office.addin.showAsTaskpane()`
+from an `OnNewMessageCompose` event handler (`commands.js`). **Confirmed not viable**: tested on
+both classic Windows Outlook and Outlook on the web, identical failure on both (the handler
+either never fires or resolves as a silent no-op — ambiguous which, because Outlook's runtime
+logging doesn't capture an add-in's own `console.log` output, only host-level manifest/loading
+diagnostics). Ruling out a manifest-propagation delay (OWA doesn't cache manifests the way
+classic desktop does, yet behaved identically) pointed to the real cause: **Outlook doesn't
+support shared runtimes at all** — unlike Word/Excel/PowerPoint, every surface (task pane,
+function command, event handler) runs in its own separate runtime process, so there's no
+shared JS context for `showAsTaskpane()` to reach into from an event handler. All three
+SPIKE-tagged pieces (the `SharedRuntime` manifest requirement, `Taskpane.Url`'s `lifetime="long"`
+override, `onNewMessageComposeHandler` + its taskpane.html banner) were removed in the same
+commit that added the replacement below.
+
+**The replacement**: `onMessageComposeHandler` (`commands.js`), registered on `OnMessageCompose`
+(Mailbox 1.12 — fires on new/reply/reply-all/forward *and* on reopening an existing draft,
+broader than `OnNewMessageCompose`), calls `item.notificationMessages.addAsync()` with an
+`InsightMessage` — "File this email to a project" with a "Choose project" action. The action's
+`actionType: ActionType.ShowTaskPane` is a different, older, purpose-built mechanism (Mailbox
+1.10) that opens the task pane *in response to the user's click* on the banner, rather than
+programmatically forcing it open — Outlook natively supports this, since it's just Outlook's
+own UI reacting to a real user gesture, not an add-in reaching across runtimes on its own. The
+action's `commandId` ("Summation.ComposeTaskpaneButton") references the *existing*
+`MessageComposeCommandSurface` button — no new manifest button or `SharedRuntime` declaration
+needed, which is a big part of why this is lower-risk than the retired spike.
+
+**Not yet done**: once the pane opens this way, it currently lands on its normal default view
+(the same as manually clicking the ribbon button), not a flow pre-focused on picking a project
+for the *compose* item specifically. `file-email-dialog.html`'s picker (opened via
+`detectFileEmailSelection()` → `getCurrentMailItem()` fallback) may already handle a compose-mode
+item correctly since that fallback doesn't assume read-mode selection, but actually categorizing
+an *unsent* item (as opposed to one already filed via Graph) is a separate code path that hasn't
+been built or tested yet. Treat "the banner appears and opens the pane" as confirmed; treat
+"picking a project from there actually tags the draft" as the next increment, not yet shipped.
+
+**Separately useful, not yet applied here**: Smart Alerts (`OnMessageSend`, already used by File
+on Send above) has, since requirement sets 1.14/1.15, a documented way to open a task pane or
+run a function from a button on Outlook's *own* native Smart Alerts dialog — a different,
+working replacement for the custom `displayDialogAsync` dialog that's structurally impossible
+from an event handler (see the "architecturally broken" section right below). That's the
+officially-supported path for the send-time redesign that section calls for, whenever that gets
+picked up.
+
 ## File on Send is architecturally broken, disabled pending a redesign (2026-10-11)
 
 `FILE_ON_SEND_ENABLED` is `false` and **must stay that way** until the design below changes.

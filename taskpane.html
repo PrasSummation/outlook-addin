@@ -324,7 +324,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.3";
+    const APP_VERSION = "11.4";
 
     let msalInstance;
     let folderEntries = [];
@@ -445,29 +445,6 @@
 
     function appInit() {
         document.getElementById("versionText").innerText = `Version: ${APP_VERSION}`;
-
-        // SPIKE, added 2026-10-11: the other half of commands.js's onNewMessageComposeHandler
-        // test. That handler forces this pane open via Office.addin.showAsTaskpane() the
-        // moment someone clicks New/Reply/Reply All/Forward -- this banner is purely so a real
-        // test send shows an unmistakable, visible confirmation that (a) the pane was actually
-        // forced open and (b) it correctly sees a compose item, without needing DevTools on a
-        // runtime that mostly doesn't support them (see commands.js's own header comment).
-        // Fires the same way whether the pane was opened by showAsTaskpane() or by someone
-        // manually clicking Summation.ComposeTaskpaneButton -- that distinction doesn't matter
-        // for what this is testing. Throwaway: remove alongside commands.js's
-        // onNewMessageComposeHandler and its manifest LaunchEvent once validated either way.
-        const spikeItem = Office.context.mailbox.item;
-        if (spikeItem && typeof spikeItem.getComposeTypeAsync === "function") {
-            spikeItem.getComposeTypeAsync((result) => {
-                const composeType = (result.status === Office.AsyncResultStatus.Succeeded && result.value)
-                    ? result.value.composeType : "unknown";
-                const banner = document.createElement("div");
-                banner.textContent = `SPIKE: pane open on a compose item (${composeType}) at ${new Date().toLocaleTimeString()}`;
-                banner.style.cssText = "background:#fff3cd;color:#664d03;border-bottom:2px solid #ffda6a;" +
-                    "padding:8px 10px;font:600 12px sans-serif;position:sticky;top:0;z-index:9999;";
-                document.body.insertAdjacentElement("afterbegin", banner);
-            });
-        }
 
         document.getElementById("helpGuideLink").addEventListener("click", (e) => {
             e.preventDefault();
