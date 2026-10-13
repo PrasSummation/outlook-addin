@@ -169,7 +169,19 @@ foreach ($user in $staff) {
                 # Merge "Filed" into categories WITHOUT moving -- leave the sent item
                 # exactly where the user put it (unlike the Inbox pass below, which moves
                 # the original into a local "Filed" folder to declutter the inbox).
-                $mergedCategories = @($labelsAsFound) + @("Filed") | Select-Object -Unique
+                #
+                # Re-read categories now rather than reusing $labelsAsFound (captured back
+                # when $messages was first listed, before the duplicate check, the .eml
+                # download/upload and the index notify above -- all of which can take real
+                # time per email). PATCHing that stale snapshot would silently discard any
+                # category change (e.g. a filer tool still finishing its own categorize call)
+                # that landed in between. 2026-10-13: suspected cause of reports of a
+                # just-assigned project category disappearing.
+                $currentCategories = (Invoke-GraphGetOrNull -Token $token -Uri (
+                    "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)?`$select=categories"
+                )).categories
+                if ($null -eq $currentCategories) { $currentCategories = $labelsAsFound }
+                $mergedCategories = @($currentCategories) + @("Filed") | Select-Object -Unique
                 Invoke-RestMethod -Method Patch -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)" `
                     -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" } `
                     -Body (@{ categories = @($mergedCategories) } | ConvertTo-Json) -ErrorAction Stop | Out-Null
@@ -331,7 +343,19 @@ foreach ($user in $staff) {
             # with the bare project code (e.g. "SUPER26007_ProjectName" -> "SUPER26007"),
             # which silently rewrote the label the user picked; same merge as the Sent
             # Items pass above now.
-            $mergedCategories = @($labelsAsFound) + @("Filed") | Select-Object -Unique
+            #
+            # Re-read categories now rather than reusing $labelsAsFound (captured back when
+            # $messages was first listed, before the duplicate check, the .eml download/
+            # upload and the index notify above -- all of which can take real time per
+            # email). PATCHing that stale snapshot would silently discard any category
+            # change (e.g. a filer tool still finishing its own categorize call right as this
+            # run started) that landed in between. 2026-10-13: suspected cause of reports of
+            # a just-assigned project category disappearing after a Batch File Folder run.
+            $currentCategories = (Invoke-GraphGetOrNull -Token $token -Uri (
+                "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)?`$select=categories"
+            )).categories
+            if ($null -eq $currentCategories) { $currentCategories = $labelsAsFound }
+            $mergedCategories = @($currentCategories) + @("Filed") | Select-Object -Unique
             Invoke-RestMethod -Method Patch -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)" `
                 -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" } `
                 -Body (@{ categories = @($mergedCategories) } | ConvertTo-Json) -ErrorAction Stop | Out-Null
