@@ -1,7 +1,11 @@
 # Email filing sync
 
-**Status: code written, infrastructure not yet provisioned (started 2026-10-05).** Not
-deployed. Nothing in this folder has run against a real mailbox yet.
+**Status as of 2026-10-06: live in production** (started 2026-10-05) — see the proof-of-concept
+run and the >4MB upload-session fix documented further down. This header previously said "not
+deployed," which stopped being true the same day it was written and was never corrected,
+causing real confusion in a later debugging session (2026-10-13) that assumed this code
+couldn't be the cause of a live bug. CLAUDE.md in the parent repo is the up-to-date source of
+truth for this app's status.
 
 A second, independent Azure Function App — timer-triggered, no HTTP surface at all —
 that watches every staff member's own **"Emails to File"** Outlook folder (the same

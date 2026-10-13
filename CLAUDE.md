@@ -111,7 +111,11 @@ Removed 2026-10-06, **no longer in the taskpane at all**:
   `.Move()` (date-fidelity). This whole local-Filer path is superseded by
   `email-filing-sync/` (see file inventory above), which does the same job
   automatically server-side every ~5 minutes — there is no longer any manual
-  "sync" step for staff to run.
+  "sync" step for staff to run. **The Summation Email Filer desktop app itself
+  (installed per-machine, triggered by Win+`` ` ``) is legacy and no longer
+  used (confirmed 2026-10-13)** — if it's still installed on someone's PC it
+  does nothing useful anymore and can be uninstalled; don't point anyone at
+  it or its installer for current email filing.
 
 ## File Email is a dialog, not a wizard (changed 2026-10-06)
 
