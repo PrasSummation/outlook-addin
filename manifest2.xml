@@ -5,7 +5,7 @@
            xsi:type="MailApp">
   
   <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id>
-  <Version>1.0.0.16</Version>
+  <Version>1.0.0.17</Version>
   <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
@@ -279,6 +279,13 @@
               <OfficeTab id="TabDefault">
                 <Group id="SummationToolsComposeGroup">
                   <Label resid="GroupLabel" />
+                  <!-- SourceLocation changed 2026-10-16 from Taskpane.Url (the pane's general
+                       menu) to FileOnCompose.Url, a deep link straight to the project-filing
+                       picker. This button's id also doubles as the InsightMessage "Choose
+                       project" action's commandId (commands.js's onMessageComposeHandler), so
+                       both the manual click and the banner now land in the same place. The
+                       general menu's other tools (New Project, shared mailbox management, etc.)
+                       aren't relevant mid-compose anyway. -->
                   <Control xsi:type="Button" id="Summation.ComposeTaskpaneButton">
                     <Label resid="TaskpaneButtonLabel" />
                     <Supertip>
@@ -291,7 +298,7 @@
                       <bt:Image size="80" resid="Icon.80x80" />
                     </Icon>
                     <Action xsi:type="ShowTaskpane">
-                      <SourceLocation resid="Taskpane.Url" />
+                      <SourceLocation resid="FileOnCompose.Url" />
                     </Action>
                   </Control>
                 </Group>
@@ -309,6 +316,7 @@
         <bt:Urls>
           <bt:Url id="Taskpane.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html" />
           <bt:Url id="FileEmail.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html?view=fileEmail" />
+          <bt:Url id="FileOnCompose.Url" DefaultValue="https://prassummation.github.io/outlook-addin/taskpane.html?view=fileOnCompose" />
           <bt:Url id="Commands.Url" DefaultValue="https://prassummation.github.io/outlook-addin/commands.html" />
           <bt:Url id="CommandsJs.Url" DefaultValue="https://prassummation.github.io/outlook-addin/commands.js" />
         </bt:Urls>

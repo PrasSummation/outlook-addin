@@ -736,14 +736,26 @@ action's `commandId` ("Summation.ComposeTaskpaneButton") references the *existin
 `MessageComposeCommandSurface` button — no new manifest button or `SharedRuntime` declaration
 needed, which is a big part of why this is lower-risk than the retired spike.
 
-**Not yet done**: once the pane opens this way, it currently lands on its normal default view
-(the same as manually clicking the ribbon button), not a flow pre-focused on picking a project
-for the *compose* item specifically. `file-email-dialog.html`'s picker (opened via
-`detectFileEmailSelection()` → `getCurrentMailItem()` fallback) may already handle a compose-mode
-item correctly since that fallback doesn't assume read-mode selection, but actually categorizing
-an *unsent* item (as opposed to one already filed via Graph) is a separate code path that hasn't
-been built or tested yet. Treat "the banner appears and opens the pane" as confirmed; treat
-"picking a project from there actually tags the draft" as the next increment, not yet shipped.
+**Wired up to an actual picker (2026-10-16)**: `Summation.ComposeTaskpaneButton`'s
+`SourceLocation` now points at a new deep link, `FileOnCompose.Url`
+(`taskpane.html?view=fileOnCompose`), instead of the plain `Taskpane.Url` — both the manual
+ribbon click and the InsightMessage's "Choose project" action (same `commandId`) land there.
+`taskpane.html`'s new `openComposeFilingDialog()` opens **`file-on-send-dialog.html`** (the
+same picker File on Send already built, searchable project search + optional "also file the
+original" for a reply/forward) via `displayDialogAsync`, using the same
+`{action:"ready"|"cancel"|"skip"|"save",categoryName}` dialog↔parent protocol
+`onMessageSendHandler` already speaks to it. On `"save"`, the task pane calls
+`item.categories.addAsync([categoryName], ...)` directly on the still-unsent draft (merges,
+doesn't replace — no GET-first needed the way the Graph-based sync scripts require) and closes
+the dialog.
+
+Crucially, this is opened **from the task pane, not an event handler** — unlike
+`onMessageSendHandler`'s own `displayDialogAsync` call (see "architecturally broken" below),
+there's no restriction here, since by the time the user clicks through to the task pane, we're
+well outside the event-handler context that blocks dialogs. This is what makes the InsightMessage
+detour (event handler → native banner → user click → task pane → *then* a normal dialog) actually
+work end to end, where directly calling `displayDialogAsync` from the event handler itself never
+could.
 
 **Separately useful, not yet applied here**: Smart Alerts (`OnMessageSend`, already used by File
 on Send above) has, since requirement sets 1.14/1.15, a documented way to open a task pane or

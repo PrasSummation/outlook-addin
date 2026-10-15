@@ -320,11 +320,18 @@
     // animation start playing and then visibly snap to its end state instead of never
     // starting at all.
     const feDeepLinkRequested = new URLSearchParams(window.location.search).get("view") === "fileEmail";
-    if (feDeepLinkRequested) {
+    // Compose-mode deep link (taskpane.html?view=fileOnCompose) -- Summation.ComposeTaskpaneButton's
+    // SourceLocation (manifest2.xml) now points here instead of the plain Taskpane.Url, and it's
+    // also commandId's target for the InsightMessage "Choose project" action (commands.js's
+    // onMessageComposeHandler). Both paths land straight on the project picker instead of this
+    // pane's general menu -- the menu's other tools (New Project, shared mailbox management, etc.)
+    // aren't relevant mid-compose anyway.
+    const focDeepLinkRequested = new URLSearchParams(window.location.search).get("view") === "fileOnCompose";
+    if (feDeepLinkRequested || focDeepLinkRequested) {
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.4";
+    const APP_VERSION = "11.5";
 
     let msalInstance;
     let folderEntries = [];
@@ -524,6 +531,8 @@
             showAppUi(true);
             if (feDeepLinkRequested) {
                 await openFileEmailDialog();
+            } else if (focDeepLinkRequested) {
+                await openComposeFilingDialog();
             } else {
                 setTimeout(() => document.getElementById("filterBox").focus(), 100);
                 await loadFolders();
@@ -542,6 +551,8 @@
                 showAppUi(true);
                 if (feDeepLinkRequested) {
                     await openFileEmailDialog();
+                } else if (focDeepLinkRequested) {
+                    await openComposeFilingDialog();
                 } else {
                     setTimeout(() => document.getElementById("filterBox").focus(), 100);
                     await loadFolders();
@@ -1619,6 +1630,65 @@
             activeFileEmailDialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
                 activeFileEmailDialog = null;
             });
+        });
+    }
+
+    // ---- Compose-mode filing (2026-10-16) ----
+    // Reuses file-on-send-dialog.html's picker and its existing dialog<->parent protocol
+    // ({action:"ready"|"cancel"|"skip"|"save",categoryName}) -- that dialog already does
+    // everything needed (project search, optional filing of the original on a reply/forward,
+    // all independent of whoever opened it). commands.js's onMessageSendHandler is the other
+    // parent of this same dialog, for the OnMessageSend/Smart Alerts context specifically; this
+    // is the compose-time parent, reached via Summation.ComposeTaskpaneButton's SourceLocation
+    // and the InsightMessage "Choose project" action (both taskpane.html?view=fileOnCompose).
+    // Opened from the task pane, not an event handler, so -- unlike onMessageSendHandler's own
+    // dialog call -- there's no "architecturally broken" restriction here (see CLAUDE.md's File
+    // on Send section): the task pane is free to call displayDialogAsync normally.
+    // No event.completed()/send to gate: on "save", just add the category to the still-unsent
+    // draft via categories.addAsync (merges, doesn't replace) and close.
+    async function openComposeFilingDialog() {
+        const item = Office.context.mailbox.item;
+        const composeTypeResult = await officeAsync(item, "getComposeTypeAsync").catch(() => null);
+        const context = {
+            composeType: composeTypeResult?.composeType || "newMail",
+            subject: item.subject || "(no subject)",
+            conversationId: item.conversationId || null
+        };
+        const url = `https://prassummation.github.io/outlook-addin/file-on-send-dialog.html?context=${encodeURIComponent(JSON.stringify(context))}`;
+
+        Office.context.ui.displayDialogAsync(url, { height: 70, width: 40 }, (asyncResult) => {
+            if (asyncResult.status === Office.AsyncResultStatus.Failed) {
+                console.error("Could not open the project picker:", asyncResult.error);
+                updateStatus(`Could not open the project picker: ${asyncResult.error.message}`, true);
+                return;
+            }
+            const dialog = asyncResult.value;
+
+            dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
+                let message;
+                try { message = JSON.parse(arg.message); } catch (err) { dialog.close(); return; }
+
+                if (message.action === "ready") return; // no send to watchdog here, nothing to do
+                if (message.action === "cancel" || message.action === "skip") {
+                    dialog.close();
+                    return;
+                }
+                if (message.action === "save" && message.categoryName) {
+                    item.categories.addAsync([message.categoryName], (result) => {
+                        if (result.status === Office.AsyncResultStatus.Failed) {
+                            console.error("Could not set the category:", result.error);
+                            updateStatus(`Could not file this email: ${result.error.message}`, true);
+                        } else {
+                            updateStatus(`Filed to ${message.categoryName}.`);
+                        }
+                        dialog.close();
+                    });
+                    return;
+                }
+                dialog.close();
+            });
+
+            dialog.addEventHandler(Office.EventType.DialogEventReceived, () => {});
         });
     }
 
