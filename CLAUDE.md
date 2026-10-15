@@ -757,19 +757,54 @@ detour (event handler → native banner → user click → task pane → *then* 
 work end to end, where directly calling `displayDialogAsync` from the event handler itself never
 could.
 
-**Separately useful, not yet applied here**: Smart Alerts (`OnMessageSend`, already used by File
-on Send above) has, since requirement sets 1.14/1.15, a documented way to open a task pane or
-run a function from a button on Outlook's *own* native Smart Alerts dialog — a different,
-working replacement for the custom `displayDialogAsync` dialog that's structurally impossible
-from an event handler (see the "architecturally broken" section right below). That's the
-officially-supported path for the send-time redesign that section calls for, whenever that gets
-picked up.
+**Already-filed check (2026-10-16)**: before showing the prompt, `onMessageComposeHandler` calls
+`item.categories.getAsync()` and skips the notification if a project-shaped category
+(`PROJECT_CATEGORY_PATTERN`, commands.js) is already present — e.g. a reply/forward that
+inherited one from the original, or an email already filed through this same banner earlier.
+If the check itself fails (including the known Outlook-on-the-web/new-Outlook compose-mode
+categories restriction below), it defaults to showing the prompt anyway — there's no send to
+protect here, so erring toward "still visible" beats silently never offering to file it. The
+identical check gates `onMessageSendHandler` below, for the same reason.
+
+## File on Send: fixed via Smart Alerts' native Take Action button (2026-10-16)
+
+Re-enabled (`FILE_ON_SEND_ENABLED = true`) using the redesign option 1 below actually calls for,
+combined with option 2's commandId mechanism: `onMessageSendHandler` no longer calls
+`displayDialogAsync` at all. Instead it calls `item.categories.getAsync()` first (same
+already-filed check as the compose-time banner — already-tagged sends go through with no prompt
+at all), and for everything else calls `event.completed({ allowEvent: false, errorMessage,
+cancelLabel: "Choose project", commandId: "Summation.ComposeTaskpaneButton" })`. Outlook shows
+its own native Smart Alerts dialog automatically (no custom code renders anything) with a **Take
+Action** button (your build/channel naming — see Microsoft's table of **Don't
+Send**-vs-**Take-Action** naming by client/version); clicking it opens the task pane via that
+same `commandId`/`FileOnCompose.Url` deep link the compose-time banner already uses, which opens
+the real picker (`file-on-send-dialog.html`) from the task pane, not an event handler — see the
+"Compose-time filing nudge" section above for why that's the part that actually works. No new
+manifest `Requirements` needed: requirement sets 1.14/1.15 govern whether the **button**
+specifically renders, not whether the manifest parses, and this manifest's existing
+`DefaultMinVersion="1.15"` already covers it.
+
+**Trade-off inherent to this approach, not a bug**: `allowEvent: false` soft-blocks *that send
+attempt*. Tagging the draft via the picker doesn't auto-resume the original send — the user has
+to click **Send** again afterward, same as any other Smart Alerts nag (e.g. a missing-attachment
+check). There's no way to both show a native Smart Alerts button and auto-continue the same send
+once the picker closes.
+
+**Known platform gap, not introduced by this change**: on Outlook on the web and new Outlook on
+Windows, *"you can't use the API to manage categories applied to a message in Compose mode"*
+(Microsoft's own words, `Office.Categories` reference) — this affects `categories.getAsync()`
+*and* `categories.addAsync()` on a still-composing/still-sending item, which means both the
+already-filed check and the actual tagging step are classic-Windows-Outlook-only in practice.
+This was already true of the original 2026-10-06 File on Send build (it used the identical
+`categories.addAsync` call) — not something this redesign introduces. Both handlers fail open
+if the check errors, so web/new-Outlook users just see the normal, pre-existing behavior
+(prompted every time, or the send going through) rather than a broken error.
 
 ## File on Send is architecturally broken, disabled pending a redesign (2026-10-11)
 
-`FILE_ON_SEND_ENABLED` is `false` and **must stay that way** until the design below changes.
-Don't re-enable it expecting the existing dialog-based flow to start working — it structurally
-can't, on any Outlook client that enforces the platform rule described here.
+**Historical — see "fixed via Smart Alerts' native Take Action button" above for current
+status.** Kept for the incident trail; the root-cause analysis below is still accurate, only the
+"disabled" and "none implemented yet" framing is no longer current.
 
 **What's wrong**: `onMessageSendHandler` (`commands.js`) calls
 `Office.context.ui.displayDialogAsync` to open `file-on-send-dialog.html`'s project picker.
