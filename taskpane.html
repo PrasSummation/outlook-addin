@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.9";
+    const APP_VERSION = "11.10";
 
     let msalInstance;
     let folderEntries = [];
@@ -1748,6 +1748,49 @@
             const body = await patchResp.text().catch(() => "");
             throw new Error(`Graph PATCH failed (${patchResp.status}): ${body}`);
         }
+
+        // BUG FOUND LIVE 2026-10-16: the Graph write above didn't survive sending -- confirmed,
+        // category gone from the sent copy. Root cause (corroborated by a related office-js
+        // GitHub issue about Graph writes not being reflected in Outlook's own client-side item
+        // cache): classic Outlook holds its own in-memory copy of the draft, and clicking Send
+        // pushes THAT stale, pre-Graph-write copy back to the server as part of sending --
+        // silently clobbering the category Graph just set, since the client never learned about
+        // it. Fix: also write the category into the client's own object model via
+        // item.categories.addAsync(), so the client's own save-at-send includes it instead of
+        // overwriting it. Graph remains the authoritative write (handles the master-category-list
+        // requirement and the web/new-Outlook compose-mode restriction); this step exists only to
+        // stop the client from undoing it, and is allowed to fail quietly -- e.g. on Outlook on
+        // the web/new Outlook on Windows, where this specific API doesn't work in Compose mode at
+        // all, so there's genuinely nothing more to do there with what Office.js exposes today.
+        await ensureMasterCategory(categoryName).then(() => {
+            return new Promise((resolve) => item.categories.addAsync([categoryName], resolve));
+        }).catch((err) => {
+            console.error("Could not sync category into the client's own cache (non-fatal, Graph write still applied):", err);
+        });
+    }
+
+    // Supports categorizeViaGraph()'s client-cache-sync step above -- item.categories.addAsync()
+    // requires the category to already exist in the mailbox's master category list (confirmed in
+    // Microsoft's own docs/sample code), separately from anything Graph does; masterCategories.
+    // addAsync() itself errors DuplicateCategory if already present, so check via getAsync() first.
+    function ensureMasterCategory(categoryName) {
+        return new Promise((resolve, reject) => {
+            Office.context.mailbox.masterCategories.getAsync((result) => {
+                if (result.status === Office.AsyncResultStatus.Failed) { reject(result.error); return; }
+                if ((result.value || []).some((c) => c.displayName === categoryName)) { resolve(); return; }
+                Office.context.mailbox.masterCategories.addAsync(
+                    [{ displayName: categoryName, color: Office.MailboxEnums.CategoryColor.Preset0 }],
+                    (addResult) => {
+                        if (addResult.status === Office.AsyncResultStatus.Failed
+                            && addResult.error?.name !== "DuplicateCategory") {
+                            reject(addResult.error);
+                        } else {
+                            resolve();
+                        }
+                    }
+                );
+            });
+        });
     }
 
     async function openComposeFilingDialog() {

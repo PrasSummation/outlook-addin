@@ -910,6 +910,23 @@ still-disabled File on Send flow — both share `openComposeFilingDialog()`. Bef
 banner's categorize step was silently failing the same way, just without a blocked send to
 surface it.
 
+**Second bug found live, same day**: even with the Graph write succeeding, the category didn't
+survive actually sending the email — confirmed live (picked a project, picker reported success,
+sent category-less anyway). Corroborated by a related `office-js` GitHub issue describing the
+same general class of problem: a category written via Graph isn't reflected in Outlook's own
+client-side cache of the item. Working theory: classic Outlook holds its own in-memory copy of
+the draft, and clicking **Send** pushes that stale, pre-Graph-write copy back to the server as
+part of sending — silently overwriting the category Graph had just set, since the client never
+learned about the change. Fixed by also writing the category into the client's own object model
+via `item.categories.addAsync()` right after the Graph write succeeds (re-adding
+`ensureMasterCategory()`, since that API's master-category-list requirement is unrelated to and
+unaffected by anything Graph does). Graph stays the authoritative write — this step exists only
+so the client's own save-at-send doesn't undo it, and is allowed to fail quietly if it doesn't
+work (e.g. Outlook on the web/new Outlook on Windows, where this exact API doesn't function on a
+Compose-mode item at all — there is currently nothing more this code can do on those clients with
+what Office.js exposes). **Not yet independently confirmed** whether this fully resolves it
+end-to-end on classic Windows Outlook — reproduce live after deploying before trusting it.
+
 Still outstanding before re-enabling File on Send specifically: confirm live that this fix
 actually resolves it (diagnostic markers already in place via `diagNotify()` throughout
 `onMessageSendHandler`, see "Diagnostic round in progress" below — reproduce and read the
