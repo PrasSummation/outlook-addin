@@ -46,28 +46,42 @@ const FILE_ON_SEND_ENABLED = false;
 // email-filing-sync's sync.ps1) -- 5 letters + 5 digits + "_" or "-", e.g. "SUPER26099_...".
 const PROJECT_CATEGORY_PATTERN = /^[a-zA-Z]{5}\d{5}[_-]/;
 
-// DIAGNOSTIC HELPERS, added 2026-10-16 -- temporary, remove once the three things below are
+// DIAGNOSTIC HELPERS, added 2026-10-16 -- temporary, remove once the two things below are
 // settled one way or the other: (1) whether File Email's ExecuteFunction+multi-select+dialog
 // combo can be made to work at all (fileEmailDialogHandlerDiag, below), (2) whether the Smart
 // Alerts File on Send redesign (onMessageSendHandler, above) actually reaches and shows its
-// Take Action button live, (3) whether the compose-time InsightMessage chain
-// (onMessageComposeHandler below, and taskpane.html's openComposeFilingDialog()) completes
-// end to end. Classic Outlook's event/function-command runtime has no DevTools and runtime
-// logging doesn't capture this add-in's own console output (confirmed earlier this session) --
-// notificationMessages banners on the live item are the one channel proven to actually show up
-// without either of those. Each marker is its own key so they stack rather than overwrite.
-let diagMarkerSeq = 0;
+// Take Action button live. Classic Outlook's event/function-command runtime has no DevTools and
+// runtime logging doesn't capture this add-in's own console output (confirmed earlier this
+// session) -- notificationMessages banners on the live item are the one channel proven to
+// actually show up without either of those.
+//
+// FIXED 2026-10-16: originally gave each marker its own key so they'd stack into a visible
+// history -- but Outlook caps notifications at 5 per message, and that stacking silently ate
+// the InsightMessage prompt's own slot (confirmed live: 5 DIAG banners appeared, the real
+// "Choose project" prompt never did, no error anywhere since nothing checks that addAsync's own
+// result). Now reuses one fixed key via replaceAsync once it exists, so diagnostics always
+// occupy exactly one slot no matter how many steps get logged, leaving four free for real
+// content. If you need the pre-replace behavior back to see the stepped history, read it from
+// console.log on a client that has DevTools (web/new Outlook/Mac) instead of changing this back.
+let diagNotificationExists = false;
 function diagNotify(message) {
   console.log("DIAG:", message); // free on clients that do have a console (web/new Outlook/Mac)
   try {
     const item = Office.context.mailbox.item;
     if (!item || !item.notificationMessages) return;
-    item.notificationMessages.addAsync("summation_diag_" + (diagMarkerSeq++), {
+    const details = {
       type: Office.MailboxEnums.ItemNotificationMessageType.InformationalMessage,
       message: "DIAG: " + message,
       icon: "icon-16",
       persistent: true
-    });
+    };
+    if (diagNotificationExists) {
+      item.notificationMessages.replaceAsync("summation_diag", details);
+    } else {
+      item.notificationMessages.addAsync("summation_diag", details, (result) => {
+        if (result.status === Office.AsyncResultStatus.Succeeded) diagNotificationExists = true;
+      });
+    }
   } catch (err) {
     console.error("diagNotify threw:", err);
   }
@@ -87,6 +101,7 @@ function withTimeout(promise, ms, label) {
 }
 
 function onMessageSendHandler(event) {
+  diagNotificationExists = false; // notifications are per-item -- this invocation is a fresh item
   diagNotify("onMessageSendHandler invoked, FILE_ON_SEND_ENABLED=" + FILE_ON_SEND_ENABLED);
 
   if (!FILE_ON_SEND_ENABLED) {
@@ -150,46 +165,17 @@ Office.actions.associate("onMessageSendHandler", onMessageSendHandler);
 // covered by this manifest's DefaultMinVersion 1.15).
 function onMessageComposeHandler(event) {
   const item = Office.context.mailbox.item;
+  diagNotificationExists = false; // notifications are per-item -- this invocation is a fresh item
   diagNotify("onMessageComposeHandler invoked");
 
-  // DIAGNOSTIC, 2026-10-16: direct re-test of whether displayDialogAsync can be called straight
-  // from an event handler on OnMessageCompose specifically. CLAUDE.md's "architecturally broken"
-  // finding and Microsoft's own "Unsupported APIs" table (event-based-activation docs) cover
-  // OnMessageSend; this calls the exact same API from OnMessageCompose instead, to get hard,
-  // specific confirmation rather than assume the earlier finding generalizes across event types.
-  // Entirely self-contained: never calls event.completed(), runs alongside the real flow below
-  // without gating it either way, and auto-closes itself after 5s if it somehow does open.
-  (function diagTryDirectDialog() {
-    diagNotify("DIRECT-DIALOG TEST: calling displayDialogAsync from onMessageComposeHandler...");
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      diagNotify("DIRECT-DIALOG TEST: callback NEVER FIRED within 6s -- consistent with the documented block");
-    }, 6000);
-
-    try {
-      const url = "https://prassummation.github.io/outlook-addin/file-on-send-dialog.html?context=" +
-        encodeURIComponent(JSON.stringify({ composeType: "newMail", subject: item.subject || "(no subject)", conversationId: null }));
-      Office.context.ui.displayDialogAsync(url, { height: 70, width: 40 }, (asyncResult) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (asyncResult.status === Office.AsyncResultStatus.Failed) {
-          diagNotify("DIRECT-DIALOG TEST: callback FIRED with an error: code=" + asyncResult.error.code + " message=" + asyncResult.error.message);
-        } else {
-          diagNotify("DIRECT-DIALOG TEST: callback FIRED and SUCCEEDED -- the dialog actually opened! Closing it in 5s.");
-          const dialog = asyncResult.value;
-          setTimeout(() => { try { dialog.close(); } catch (err) { /* ignore */ } }, 5000);
-        }
-      });
-    } catch (err) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      diagNotify("DIRECT-DIALOG TEST: threw synchronously: " + err.message);
-    }
-  })();
+  // RESOLVED 2026-10-16, diagnostic removed: direct-called Office.context.ui.displayDialogAsync
+  // from this exact handler to re-test whether it works specifically on OnMessageCompose (the
+  // "architecturally broken" finding and Microsoft's "Unsupported APIs" table originally covered
+  // OnMessageSend only). Result was more decisive than expected: it threw synchronously with
+  // "Office.context.ui.displayDialogAsync is not a function" -- the API isn't merely restricted
+  // at runtime here, it doesn't exist at all in this execution context. Confirms, with direct
+  // evidence rather than inference, that auto-opening a dialog from a compose event handler is
+  // not possible on this client. Not revisiting without new information.
 
   function showPrompt() {
     try {
@@ -259,6 +245,7 @@ Office.actions.associate("onMessageComposeHandler", onMessageComposeHandler);
 // File Email button is not involved. Remove this function, its associate() call, and its
 // manifest button together once the multi-select question is settled either way.
 function fileEmailDialogHandlerDiag(event) {
+  diagNotificationExists = false; // notifications are per-item -- this invocation is a fresh item
   diagNotify("fileEmailDialogHandlerDiag invoked");
 
   const getSelected = new Promise((resolve, reject) => {

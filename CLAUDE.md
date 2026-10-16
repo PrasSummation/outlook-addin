@@ -141,16 +141,25 @@ investigation:
    the already-filed check's result, and `taskpane.html`'s `openComposeFilingDialog()` now
    narrates every step (dialog opening, message received + its action, the `categories.addAsync`
    call and its result) via `updateStatus()`.
-4. **Direct `displayDialogAsync` from `OnMessageCompose`, re-tested specifically** (requested
-   2026-10-16 to get hard confirmation rather than assume the `OnMessageSend` finding below
-   generalizes): `onMessageComposeHandler` now also calls `Office.context.ui.displayDialogAsync`
-   directly, self-contained with its own 6s timeout, never touching `event.completed()` or
-   gating the real InsightMessage flow either way. Watch for a `DIRECT-DIALOG TEST:` marker —
-   either it never fires (consistent with the documented block) or, if it unexpectedly succeeds,
-   the dialog auto-closes itself after 5s so it doesn't linger.
+4. **RESOLVED, diagnostic removed**: direct `displayDialogAsync` from `OnMessageCompose`,
+   re-tested specifically (2026-10-16, to get hard confirmation rather than assume the
+   `OnMessageSend` finding below generalizes). Result was more decisive than expected: it threw
+   synchronously with `"Office.context.ui.displayDialogAsync is not a function"` — the API isn't
+   merely restricted at runtime here, it's structurally absent from this execution context.
+   Confirms with direct evidence, not inference, that auto-opening a dialog from a compose event
+   handler isn't possible on this client.
 
-Once each question is settled, remove its markers/diagnostic button and this section — don't
-let these linger as permanent debug scaffolding.
+**Bug found and fixed in the diagnostics themselves, 2026-10-16**: `diagNotify()` originally gave
+each marker its own notification key so they'd stack into a visible history — but Outlook caps
+notifications at **5 per message**, and that stacking silently consumed the InsightMessage
+prompt's own slot. Confirmed live: 5 `DIAG` banners appeared, the real "Choose project" prompt
+never did, with no error anywhere, since nothing in `showPrompt()` checked `addAsync`'s own
+result. Fixed: `diagNotify()` now reuses one fixed key (`addAsync` once, `replaceAsync`
+thereafter), reset at the top of each handler since notifications are scoped per mailbox item —
+diagnostics now always occupy exactly one slot regardless of how many steps get logged.
+
+Once each remaining question is settled, remove its markers/diagnostic button and this section —
+don't let these linger as permanent debug scaffolding.
 
 ## File Email is a dialog, not a wizard (changed 2026-10-06)
 
