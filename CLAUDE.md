@@ -332,6 +332,18 @@ change takes to propagate — worth remembering for any future
 send-blocking incident, since the manifest's `LaunchEvent` wiring itself
 can't be the fast lever.
 
+**Important correction, confirmed live 2026-10-16**: the ~10-minute GitHub Pages cache is
+necessary but **not sufficient** for an Outlook session that's already running. Classic Outlook
+pulls the event-based bundle fresh at its own startup/add-in-initialization point (confirmed via
+runtime logging: "Pulling the latest bundle.js for Event-based Add-in..."), not on every send —
+so a teammate stuck mid-incident, with Outlook already open, kept seeing the OLD `commands.js`
+behavior for several minutes after the GitHub Pages copy had already updated (verified directly
+via `curl`), until they fully quit and reopened Outlook. **Flipping this kill switch during a
+live incident must be paired with telling the affected user to restart Outlook, not just wait.**
+If a restart doesn't clear it, disabling the add-in entirely from Outlook's own Get
+Add-ins/Manage Add-ins UI is the next-fastest, code-independent escape hatch — it works
+immediately regardless of any caching layer, since OnMessageSend just never runs.
+
 Root cause: `manifest2.xml`'s `AppDomains` only listed
 `prassummation.github.io`, missing `https://login.microsoftonline.com` —
 MSAL's authority host, used by both `acquireTokenSilent` (a hidden
@@ -820,7 +832,23 @@ categories restriction below), it defaults to showing the prompt anyway — ther
 protect here, so erring toward "still visible" beats silently never offering to file it. The
 identical check gates `onMessageSendHandler` below, for the same reason.
 
-## File on Send: fixed via Smart Alerts' native Take Action button (2026-10-16)
+## File on Send: Smart Alerts redesign, re-disabled after a live-blocking incident (2026-10-16)
+
+**Current status: `FILE_ON_SEND_ENABLED = false` again.** The redesign below was enabled, tested
+live, and immediately caused a real incident: the native Smart Alerts dialog showed correctly
+(**Choose project** / **Don't Send**), but `SendMode="SoftBlock"` gives no "Send Anyway" escape,
+and **Choose project** → task pane → `file-on-send-dialog.html` → `categories.addAsync` wasn't
+completing the categorization — leaving the user fully unable to send, stuck in a loop. Flipped
+back off within minutes (same kill switch as the 2026-10-07 incident; see that section's
+"Important correction" note above about also needing an Outlook restart, not just waiting on the
+cache). The architecture described below (Take Action button, `commandId`/`FileOnCompose.Url`
+reuse) is still believed correct; what needs root-causing before re-enabling is specifically why
+the categorize step doesn't complete, and whether `SendMode="PromptUser"` (which does offer
+"Send Anyway") would be a safer default than `SoftBlock` for this particular flow, given it has
+no server-side backstop the way the already-live `email-filing-sync` Sent Items pass does for
+plain categorization. **Diagnostic markers are already in place** (`diagNotify()` calls
+throughout `onMessageSendHandler`, see "Diagnostic round in progress" below) — re-enable,
+reproduce, and read the banners before attempting another fix blind.
 
 Re-enabled (`FILE_ON_SEND_ENABLED = true`) using the redesign option 1 below actually calls for,
 combined with option 2's commandId mechanism: `onMessageSendHandler` no longer calls
