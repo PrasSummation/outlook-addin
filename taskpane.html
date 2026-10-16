@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.7";
+    const APP_VERSION = "11.8";
 
     let msalInstance;
     let folderEntries = [];
@@ -446,6 +446,17 @@
 
     const sitesRequest = {
         scopes: ["Sites.Selected"]
+    };
+
+    // Added 2026-10-16: Mail.ReadWrite is already granted and tenant-wide admin-consented on
+    // this app registration (confirmed via `az ad app permission list-grants` -- consentType
+    // "AllPrincipals"), just never requested by this page before. Lets the compose-time filing
+    // flow set categories via Graph instead of Office.js's item.categories.addAsync(), which
+    // (a) requires the category to already exist in the mailbox's master category list and
+    // (b) doesn't work on a Compose-mode item at all on Outlook on the web/new Outlook on
+    // Windows (both confirmed Microsoft platform restrictions -- neither applies to Graph).
+    const mailWriteRequest = {
+        scopes: ["Mail.ReadWrite"]
     };
 
     Office.onReady(appInit);
@@ -1644,40 +1655,62 @@
     // Opened from the task pane, not an event handler, so -- unlike onMessageSendHandler's own
     // dialog call -- there's no "architecturally broken" restriction here (see CLAUDE.md's File
     // on Send section): the task pane is free to call displayDialogAsync normally.
-    // No event.completed()/send to gate: on "save", just add the category to the still-unsent
-    // draft via categories.addAsync (merges, doesn't replace) and close.
+    // No event.completed()/send to gate: on "save", tags the still-unsent draft via Graph (see
+    // categorizeViaGraph() below) and closes.
 
-    // ROOT CAUSE, found 2026-10-16: item.categories.addAsync() requires the category to already
-    // exist in the mailbox's own master category list (Office.context.mailbox.masterCategories)
-    // -- confirmed in Microsoft's own docs and its own sample code's comment ("In order for you
-    // to successfully add a category, it must be in the mailbox categories master list"),
-    // failing with an InvalidCategory error otherwise. Every OTHER place in this codebase applies
-    // project categories via Microsoft Graph (email-index's sync, Batch File Folder, File
-    // Email's Graph-based filing, exchange-bridge's reclassify), which has no such restriction --
-    // this compose-time flow is the first to use the Office.js API directly, which is why it's
-    // the first to hit this. Call this before every categories.addAsync() on a project category;
-    // masterCategories.addAsync() itself errors with DuplicateCategory if already present, so
-    // check via getAsync() first rather than call it unconditionally.
-    function ensureMasterCategory(categoryName) {
-        return new Promise((resolve, reject) => {
-            Office.context.mailbox.masterCategories.getAsync((result) => {
-                if (result.status === Office.AsyncResultStatus.Failed) { reject(result.error); return; }
-                if ((result.value || []).some((c) => c.displayName === categoryName)) { resolve(); return; }
-                Office.context.mailbox.masterCategories.addAsync(
-                    [{ displayName: categoryName, color: Office.MailboxEnums.CategoryColor.Preset0 }],
-                    (addResult) => {
-                        // A DuplicateCategory race (added elsewhere between the check above and
-                        // here) is still a success from this function's point of view.
-                        if (addResult.status === Office.AsyncResultStatus.Failed
-                            && addResult.error?.name !== "DuplicateCategory") {
-                            reject(addResult.error);
-                        } else {
-                            resolve();
-                        }
-                    }
-                );
+    // Same convention as commands.js: matches the project-category naming this codebase already
+    // uses everywhere else.
+    const PROJECT_CATEGORY_PATTERN = /^[a-zA-Z]{5}\d{5}[_-]/;
+
+    // Applies a project category to a still-composing/still-sending item via Microsoft Graph,
+    // not Office.js's item.categories.addAsync(). Two reasons Office.js doesn't work here,
+    // confirmed via Microsoft's own docs: (1) addAsync() requires the category to already exist
+    // in the mailbox's master category list (every OTHER place in this codebase applies
+    // categories via Graph -- email-index's sync, Batch File Folder, File Email, exchange-
+    // bridge's reclassify -- which has no such restriction; this compose-time flow was the
+    // first to call Office.js directly, so the first to hit this); (2) Office.js categories
+    // APIs (both get and set) don't work on a Compose-mode item at all on Outlook on the
+    // web/new Outlook on Windows, a restriction that doesn't apply to Graph either.
+    //
+    // A brand-new compose item has no Graph-addressable id until it's actually been saved as a
+    // draft -- saveAsync() forces that, then getItemIdAsync() returns the resulting EWS id
+    // (there's no plain itemId property on a Compose item the way there is in Read mode).
+    //
+    // Graph's PATCH to categories REPLACES the whole array rather than merging it (same
+    // lesson already learned the hard way in email-filing-sync's sync.ps1) -- GET the current
+    // categories first and keep anything that isn't a stale project tag, same convention as
+    // that script, rather than overwrite a reply/forward's other inherited categories.
+    async function categorizeViaGraph(item, categoryName) {
+        await new Promise((resolve, reject) => {
+            item.saveAsync((result) => {
+                if (result.status === Office.AsyncResultStatus.Failed) reject(result.error);
+                else resolve();
             });
         });
+        const itemId = await new Promise((resolve, reject) => {
+            item.getItemIdAsync((result) => {
+                if (result.status === Office.AsyncResultStatus.Failed) reject(result.error);
+                else resolve(result.value);
+            });
+        });
+        const restId = Office.context.mailbox.convertToRestId(itemId, Office.MailboxEnums.RestVersion.v2_0);
+        const token = await signInAndGetToken(mailWriteRequest, true);
+        const headers = { Authorization: `Bearer ${token}` };
+
+        const getResp = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${restId}?$select=categories`, { headers });
+        if (!getResp.ok) throw new Error(`Could not read current categories (Graph GET ${getResp.status})`);
+        const current = (await getResp.json()).categories || [];
+        const merged = [...current.filter((c) => !PROJECT_CATEGORY_PATTERN.test(c)), categoryName];
+
+        const patchResp = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${restId}`, {
+            method: "PATCH",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ categories: merged })
+        });
+        if (!patchResp.ok) {
+            const body = await patchResp.text().catch(() => "");
+            throw new Error(`Graph PATCH failed (${patchResp.status}): ${body}`);
+        }
     }
 
     async function openComposeFilingDialog() {
@@ -1722,22 +1755,12 @@
                     return;
                 }
                 if (message.action === "save" && message.categoryName) {
-                    updateStatus(`DIAG: ensuring "${message.categoryName}" is in the mailbox's master category list...`);
-                    ensureMasterCategory(message.categoryName).then(() => {
-                        updateStatus(`DIAG: calling categories.addAsync(["${message.categoryName}"])...`);
-                        return new Promise((resolve) => {
-                            item.categories.addAsync([message.categoryName], resolve);
-                        });
-                    }).then((result) => {
-                        if (result.status === Office.AsyncResultStatus.Failed) {
-                            console.error("Could not set the category:", result.error);
-                            updateStatus(`Could not file this email: ${result.error.message} (code ${result.error.code})`, true);
-                        } else {
-                            updateStatus(`Filed to ${message.categoryName}.`);
-                        }
+                    updateStatus(`DIAG: filing via Graph ("${message.categoryName}")...`);
+                    categorizeViaGraph(item, message.categoryName).then(() => {
+                        updateStatus(`Filed to ${message.categoryName}.`);
                         dialog.close();
                     }).catch((err) => {
-                        console.error("Could not ensure the master category exists:", err);
+                        console.error("Could not file this email via Graph:", err);
                         updateStatus(`Could not file this email: ${err.message || err}`, true);
                         dialog.close();
                     });

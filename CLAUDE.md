@@ -848,8 +848,8 @@ the categorize step doesn't complete, and whether `SendMode="PromptUser"` (which
 no server-side backstop the way the already-live `email-filing-sync` Sent Items pass does for
 plain categorization.
 
-**Root cause of the categorize step found and fixed, 2026-10-16**: `item.categories.addAsync()`
-requires the category to already exist in the mailbox's own master category list
+**Root cause of the categorize step found, 2026-10-16**: `item.categories.addAsync()` requires
+the category to already exist in the mailbox's own master category list
 (`Office.context.mailbox.masterCategories`) — confirmed in Microsoft's own docs and its sample
 code's own comment ("In order for you to successfully add a category, it must be in the mailbox
 categories master list"), failing with `InvalidCategory` otherwise. Every other place in this
@@ -858,16 +858,35 @@ Folder, File Email's Graph-based filing, exchange-bridge's reclassify), which ha
 restriction — this compose-time flow was the first to call the Office.js API directly for an
 arbitrary, just-picked project category, so it was the first to hit this, and did so 100% of the
 time (any project not already in this specific mailbox's local master list, which in practice
-meant most of them). Fixed in `taskpane.html`'s new `ensureMasterCategory()` helper, called
-before every `categories.addAsync()` on a project category: checks
-`masterCategories.getAsync()` first, and only calls `masterCategories.addAsync()` (which needs a
-`color`, and itself errors `DuplicateCategory` if already present) when it's actually missing.
+meant most of them). Office.js categories APIs also don't work on a Compose-mode item at all on
+Outlook on the web/new Outlook on Windows — a second, separate restriction Graph doesn't have
+either.
+
+**Fixed properly via Graph instead, not via Office.js at all** (`categorizeViaGraph()`,
+`taskpane.html`), closing both gaps at once rather than working around just the first:
+`item.saveAsync()` forces the still-composing draft to be saved (a brand-new compose item has no
+Graph-addressable id until it has been), `item.getItemIdAsync()` returns the resulting EWS id
+(there's no plain `itemId` property on a Compose item the way there is in Read mode),
+`convertToRestId()` converts it, then a Graph `GET` + `PATCH` to `/me/messages/{restId}` sets the
+category — `GET` first because Graph's `PATCH` to `categories` **replaces** the whole array
+rather than merging (the same lesson already learned in `email-filing-sync`'s `sync.ps1`), so the
+current categories are fetched and filtered (dropping any stale project tag,
+`PROJECT_CATEGORY_PATTERN`) before appending the new one and writing back, rather than wiping out
+whatever else a reply/forward may have inherited.
+
+**No new Azure AD work needed**: a `Mail.ReadWrite` delegated permission is already present on
+the "Summation Outlook Add-in" app registration *and* already has tenant-wide admin consent
+(confirmed via `az ad app permission list-grants` — `consentType: "AllPrincipals"`) — it was
+simply never requested at runtime before. `taskpane.html` now requests it via a new
+`mailWriteRequest` scope object, same pattern as `sitesRequest`/`bridgeRequest`; no new consent
+prompt should appear for users.
+
 **This fix applies to the already-live compose-time "Choose project" banner too**, not just the
 still-disabled File on Send flow — both share `openComposeFilingDialog()`. Before this fix, the
 banner's categorize step was silently failing the same way, just without a blocked send to
 surface it.
 
-Still outstanding before re-enabling File on Send specifically: confirm live that the fix
+Still outstanding before re-enabling File on Send specifically: confirm live that this fix
 actually resolves it (diagnostic markers already in place via `diagNotify()` throughout
 `onMessageSendHandler`, see "Diagnostic round in progress" below — reproduce and read the
 banners rather than assume), and decide on the `SendMode="PromptUser"` question above as a
