@@ -117,6 +117,34 @@ Removed 2026-10-06, **no longer in the taskpane at all**:
   does nothing useful anymore and can be uninstalled; don't point anyone at
   it or its installer for current email filing.
 
+## Diagnostic round in progress (added 2026-10-16, remove once resolved)
+
+Three things bundled into one manifest push rather than three separate propagation cycles, all
+using `diagNotify()`/`withTimeout()` (`commands.js`) or `updateStatus()` (`taskpane.html`) as
+the visible-without-DevTools channel, same technique proven out during the SharedRuntime spike
+investigation:
+
+1. **File Email multi-select, re-tested in isolation**: `Summation.FileEmailDiagButton`
+   (manifest2.xml, `MessageReadCommandSurface`) → `fileEmailDialogHandlerDiag` (`commands.js`)
+   reruns the retired ExecuteFunction + multi-select + `displayDialogAsync` combo with an 8s
+   timeout at each step, to directly confirm whether it's `getSelectedItemsAsync` or
+   `displayDialogAsync` that hangs, rather than relying on inference from Microsoft's docs
+   alone. The real File Email button is untouched throughout. Test: select multiple messages,
+   click this diagnostic button, read the banners.
+2. **File on Send's Smart Alerts redesign**, not yet live-tested at all: `onMessageSendHandler`
+   now posts a marker at entry, after `categories.getAsync()` resolves (showing the actual
+   category list), and right before calling `event.completed()` with the Take Action options —
+   confirms each step actually ran even if the native Smart Alerts dialog itself doesn't appear
+   or doesn't show the custom button as expected.
+3. **Compose-time filing chain**, confirmed live up to the banner appearing, but the
+   categorize-the-draft step hadn't been exercised yet: `onMessageComposeHandler` markers show
+   the already-filed check's result, and `taskpane.html`'s `openComposeFilingDialog()` now
+   narrates every step (dialog opening, message received + its action, the `categories.addAsync`
+   call and its result) via `updateStatus()`.
+
+Once each question is settled, remove its markers/diagnostic button and this section — don't
+let these linger as permanent debug scaffolding.
+
 ## File Email is a dialog, not a wizard (changed 2026-10-06)
 
 **Partially reverted 2026-10-16**: the ribbon's dedicated File Email button's `ExecuteFunction`

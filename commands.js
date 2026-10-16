@@ -38,7 +38,49 @@ const FILE_ON_SEND_ENABLED = true;
 // email-filing-sync's sync.ps1) -- 5 letters + 5 digits + "_" or "-", e.g. "SUPER26099_...".
 const PROJECT_CATEGORY_PATTERN = /^[a-zA-Z]{5}\d{5}[_-]/;
 
+// DIAGNOSTIC HELPERS, added 2026-10-16 -- temporary, remove once the three things below are
+// settled one way or the other: (1) whether File Email's ExecuteFunction+multi-select+dialog
+// combo can be made to work at all (fileEmailDialogHandlerDiag, below), (2) whether the Smart
+// Alerts File on Send redesign (onMessageSendHandler, above) actually reaches and shows its
+// Take Action button live, (3) whether the compose-time InsightMessage chain
+// (onMessageComposeHandler below, and taskpane.html's openComposeFilingDialog()) completes
+// end to end. Classic Outlook's event/function-command runtime has no DevTools and runtime
+// logging doesn't capture this add-in's own console output (confirmed earlier this session) --
+// notificationMessages banners on the live item are the one channel proven to actually show up
+// without either of those. Each marker is its own key so they stack rather than overwrite.
+let diagMarkerSeq = 0;
+function diagNotify(message) {
+  console.log("DIAG:", message); // free on clients that do have a console (web/new Outlook/Mac)
+  try {
+    const item = Office.context.mailbox.item;
+    if (!item || !item.notificationMessages) return;
+    item.notificationMessages.addAsync("summation_diag_" + (diagMarkerSeq++), {
+      type: Office.MailboxEnums.ItemNotificationMessageType.InformationalMessage,
+      message: "DIAG: " + message,
+      icon: "icon-16",
+      persistent: true
+    });
+  } catch (err) {
+    console.error("diagNotify threw:", err);
+  }
+}
+
+// Races a promise against a timer so a diagnostic run fails fast and visibly instead of
+// hanging until Outlook's own multi-minute platform timeout -- the exact failure mode that
+// made the original File Email multi-select bug look like total silence.
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(label + " did not resolve within " + ms + "ms")), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
 function onMessageSendHandler(event) {
+  diagNotify("onMessageSendHandler invoked, FILE_ON_SEND_ENABLED=" + FILE_ON_SEND_ENABLED);
+
   if (!FILE_ON_SEND_ENABLED) {
     event.completed({ allowEvent: true });
     return;
@@ -56,17 +98,22 @@ function onMessageSendHandler(event) {
       // everywhere else in this handler. Includes the known case of Outlook on the web/new
       // Outlook on Windows, where the categories API isn't available on a Compose-mode item
       // at all (confirmed Microsoft platform limitation, not a bug here).
+      diagNotify("categories.getAsync FAILED: " + (result.error && result.error.message) + " -- allowing send");
       console.error("onMessageSendHandler: couldn't read categories, failing open:", result.error);
       event.completed({ allowEvent: true });
       return;
     }
 
+    const names = (result.value || []).map((c) => c.displayName).join(", ") || "(none)";
     const alreadyFiled = (result.value || []).some((c) => PROJECT_CATEGORY_PATTERN.test(c.displayName || ""));
+    diagNotify("categories.getAsync resolved: [" + names + "] -- alreadyFiled=" + alreadyFiled);
+
     if (alreadyFiled) {
       event.completed({ allowEvent: true });
       return;
     }
 
+    diagNotify("calling event.completed() with Take Action commandId -- watch for Outlook's own Smart Alerts dialog now");
     event.completed({
       allowEvent: false,
       errorMessage: "File this email to a project before sending.",
@@ -95,6 +142,7 @@ Office.actions.associate("onMessageSendHandler", onMessageSendHandler);
 // covered by this manifest's DefaultMinVersion 1.15).
 function onMessageComposeHandler(event) {
   const item = Office.context.mailbox.item;
+  diagNotify("onMessageComposeHandler invoked");
 
   function showPrompt() {
     try {
@@ -129,11 +177,18 @@ function onMessageComposeHandler(event) {
   // to showing the prompt anyway -- unlike the send-time handler there's no send to protect
   // here, so erring toward "still visible" beats silently never offering to file it.
   item.categories.getAsync((result) => {
+    const names = result.status === Office.AsyncResultStatus.Succeeded
+      ? (result.value || []).map((c) => c.displayName).join(", ") || "(none)"
+      : "FAILED: " + (result.error && result.error.message);
     const alreadyFiled = result.status === Office.AsyncResultStatus.Succeeded
       && (result.value || []).some((c) => PROJECT_CATEGORY_PATTERN.test(c.displayName || ""));
+    diagNotify("categories.getAsync: [" + names + "] -- alreadyFiled=" + alreadyFiled);
+
     if (alreadyFiled) {
+      diagNotify("already filed -- skipping the InsightMessage prompt");
       event.completed();
     } else {
+      diagNotify("not filed -- calling notificationMessages.addAsync for the InsightMessage prompt now");
       showPrompt();
     }
   });
@@ -147,3 +202,50 @@ Office.actions.associate("onMessageComposeHandler", onMessageComposeHandler);
 // fileEmailDialogHandler -- see manifest2.xml's comment on that Control for the full history.
 // The button now opens taskpane.html?view=fileEmail directly, the same dormant path the V1.0
 // fallback already used throughout; no JS here needed any more.
+
+// DIAGNOSTIC, 2026-10-16: re-tests the retired ExecuteFunction + multi-select + displayDialogAsync
+// combo in isolation, with bounded timeouts and diagNotify markers at every step, to pin down
+// exactly where it hangs rather than rely on inference from Microsoft's docs alone. Wired to a
+// separate, clearly-labeled diagnostic-only ribbon button (Summation.FileEmailDiagButton,
+// manifest2.xml) so the real File Email button stays on its fixed ShowTaskpane path throughout
+// this test -- selecting multiple messages and clicking THIS button is the test; the regular
+// File Email button is not involved. Remove this function, its associate() call, and its
+// manifest button together once the multi-select question is settled either way.
+function fileEmailDialogHandlerDiag(event) {
+  diagNotify("fileEmailDialogHandlerDiag invoked");
+
+  const getSelected = new Promise((resolve, reject) => {
+    Office.context.mailbox.getSelectedItemsAsync((result) => {
+      if (result.status === Office.AsyncResultStatus.Succeeded) resolve(result.value);
+      else reject(result.error || new Error("getSelectedItemsAsync failed"));
+    });
+  });
+
+  withTimeout(getSelected, 8000, "getSelectedItemsAsync")
+    .then((selected) => {
+      const count = (selected || []).length;
+      diagNotify("getSelectedItemsAsync resolved with " + count + " item(s)");
+
+      const url = "https://prassummation.github.io/outlook-addin/file-email-dialog.html?context=" +
+        encodeURIComponent(JSON.stringify({ mode: count > 1 ? "multi" : "single", items: [] }));
+
+      const openDialog = new Promise((resolve, reject) => {
+        Office.context.ui.displayDialogAsync(url, { height: 70, width: 40 }, (asyncResult) => {
+          if (asyncResult.status === Office.AsyncResultStatus.Failed) reject(asyncResult.error);
+          else resolve(asyncResult.value);
+        });
+      });
+      return withTimeout(openDialog, 8000, "displayDialogAsync");
+    })
+    .then((dialog) => {
+      diagNotify("displayDialogAsync succeeded -- dialog opened, closing it now (diagnostic only)");
+      try { dialog.close(); } catch (err) { /* ignore */ }
+      event.completed();
+    })
+    .catch((err) => {
+      diagNotify("FAILED: " + (err && err.message ? err.message : String(err)));
+      event.completed();
+    });
+}
+
+Office.actions.associate("fileEmailDialogHandlerDiag", fileEmailDialogHandlerDiag);

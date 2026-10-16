@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.5";
+    const APP_VERSION = "11.6";
 
     let msalInstance;
     let folderEntries = [];
@@ -1647,6 +1647,13 @@
     // No event.completed()/send to gate: on "save", just add the category to the still-unsent
     // draft via categories.addAsync (merges, doesn't replace) and close.
     async function openComposeFilingDialog() {
+        // DIAGNOSTIC markers throughout, added 2026-10-16 -- temporary, remove once the
+        // compose-time filing chain (InsightMessage banner -> commandId -> this deep link ->
+        // this dialog -> categories.addAsync) is confirmed working end to end. updateStatus()
+        // is this page's own visible-without-DevTools channel (unlike commands.js's restricted
+        // runtime, this page is a normal webview with real DevTools too, but updateStatus also
+        // means Pras doesn't need them open to see where this got to).
+        updateStatus("DIAG: openComposeFilingDialog() started");
         const item = Office.context.mailbox.item;
         const composeTypeResult = await officeAsync(item, "getComposeTypeAsync").catch(() => null);
         const context = {
@@ -1656,17 +1663,24 @@
         };
         const url = `https://prassummation.github.io/outlook-addin/file-on-send-dialog.html?context=${encodeURIComponent(JSON.stringify(context))}`;
 
+        updateStatus("DIAG: calling displayDialogAsync...");
         Office.context.ui.displayDialogAsync(url, { height: 70, width: 40 }, (asyncResult) => {
             if (asyncResult.status === Office.AsyncResultStatus.Failed) {
                 console.error("Could not open the project picker:", asyncResult.error);
-                updateStatus(`Could not open the project picker: ${asyncResult.error.message}`, true);
+                updateStatus(`DIAG FAILED: displayDialogAsync: ${asyncResult.error.message} (code ${asyncResult.error.code})`, true);
                 return;
             }
+            updateStatus("DIAG: dialog opened -- waiting for a pick, cancel, or skip...");
             const dialog = asyncResult.value;
 
             dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
                 let message;
-                try { message = JSON.parse(arg.message); } catch (err) { dialog.close(); return; }
+                try { message = JSON.parse(arg.message); } catch (err) {
+                    updateStatus("DIAG: received an unparseable dialog message, closing", true);
+                    dialog.close();
+                    return;
+                }
+                updateStatus(`DIAG: dialog message received, action="${message.action}"`);
 
                 if (message.action === "ready") return; // no send to watchdog here, nothing to do
                 if (message.action === "cancel" || message.action === "skip") {
@@ -1674,10 +1688,11 @@
                     return;
                 }
                 if (message.action === "save" && message.categoryName) {
+                    updateStatus(`DIAG: calling categories.addAsync(["${message.categoryName}"])...`);
                     item.categories.addAsync([message.categoryName], (result) => {
                         if (result.status === Office.AsyncResultStatus.Failed) {
                             console.error("Could not set the category:", result.error);
-                            updateStatus(`Could not file this email: ${result.error.message}`, true);
+                            updateStatus(`Could not file this email: ${result.error.message} (code ${result.error.code})`, true);
                         } else {
                             updateStatus(`Filed to ${message.categoryName}.`);
                         }
@@ -1688,7 +1703,9 @@
                 dialog.close();
             });
 
-            dialog.addEventHandler(Office.EventType.DialogEventReceived, () => {});
+            dialog.addEventHandler(Office.EventType.DialogEventReceived, (arg) => {
+                updateStatus(`DIAG: dialog closed/errored unexpectedly, EventReceived code=${arg && arg.error}`, true);
+            });
         });
     }
 

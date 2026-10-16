@@ -5,7 +5,7 @@
            xsi:type="MailApp">
   
   <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id>
-  <Version>1.0.0.18</Version>
+  <Version>1.0.0.19</Version>
   <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
@@ -281,6 +281,31 @@
                       <SupportsMultiSelect>true</SupportsMultiSelect>
                     </Action>
                   </Control>
+                  <!-- DIAGNOSTIC, added 2026-10-16: re-tests the retired ExecuteFunction +
+                       multi-select + displayDialogAsync combo in isolation
+                       (fileEmailDialogHandlerDiag, commands.js), with bounded timeouts and
+                       visible notificationMessages markers at every step, to pin down exactly
+                       where it hangs rather than rely on inference alone. The real File Email
+                       button above is untouched and stays on ShowTaskpane throughout this test.
+                       To test: select multiple messages, click this button, read the DIAG
+                       banners that appear on the item. Remove this Control, its FunctionName's
+                       associate() call, and the FileEmailDiagButtonLabel/ToolTip strings below
+                       together once the multi-select question is settled either way. -->
+                  <Control xsi:type="Button" id="Summation.FileEmailDiagButton">
+                    <Label resid="FileEmailDiagButtonLabel" />
+                    <Supertip>
+                      <Title resid="FileEmailDiagButtonLabel" />
+                      <Description resid="FileEmailDiagButtonToolTip" />
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16" />
+                      <bt:Image size="32" resid="Icon.32x32" />
+                      <bt:Image size="80" resid="Icon.80x80" />
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>fileEmailDialogHandlerDiag</FunctionName>
+                    </Action>
+                  </Control>
                 </Group>
               </OfficeTab>
             </ExtensionPoint>
@@ -334,10 +359,12 @@
           <bt:String id="GroupLabel" DefaultValue="Summation Tools" />
           <bt:String id="TaskpaneButtonLabel" DefaultValue="Summation Assistant" />
           <bt:String id="FileEmailButtonLabel" DefaultValue="File Email" />
+          <bt:String id="FileEmailDiagButtonLabel" DefaultValue="File Email (Diag)" />
         </bt:ShortStrings>
         <bt:LongStrings>
           <bt:String id="TaskpaneButtonToolTip" DefaultValue="Open the Summation AI helper." />
           <bt:String id="FileEmailButtonToolTip" DefaultValue="Tag the selected email(s) with a project and stage them for filing." />
+          <bt:String id="FileEmailDiagButtonToolTip" DefaultValue="Temporary diagnostic: re-tests multi-select with the old dialog approach and shows step-by-step status banners. Not for everyday use." />
         </bt:LongStrings>
       </Resources>
     </VersionOverrides>
