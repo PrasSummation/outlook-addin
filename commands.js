@@ -144,6 +144,45 @@ function onMessageComposeHandler(event) {
   const item = Office.context.mailbox.item;
   diagNotify("onMessageComposeHandler invoked");
 
+  // DIAGNOSTIC, 2026-10-16: direct re-test of whether displayDialogAsync can be called straight
+  // from an event handler on OnMessageCompose specifically. CLAUDE.md's "architecturally broken"
+  // finding and Microsoft's own "Unsupported APIs" table (event-based-activation docs) cover
+  // OnMessageSend; this calls the exact same API from OnMessageCompose instead, to get hard,
+  // specific confirmation rather than assume the earlier finding generalizes across event types.
+  // Entirely self-contained: never calls event.completed(), runs alongside the real flow below
+  // without gating it either way, and auto-closes itself after 5s if it somehow does open.
+  (function diagTryDirectDialog() {
+    diagNotify("DIRECT-DIALOG TEST: calling displayDialogAsync from onMessageComposeHandler...");
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      diagNotify("DIRECT-DIALOG TEST: callback NEVER FIRED within 6s -- consistent with the documented block");
+    }, 6000);
+
+    try {
+      const url = "https://prassummation.github.io/outlook-addin/file-on-send-dialog.html?context=" +
+        encodeURIComponent(JSON.stringify({ composeType: "newMail", subject: item.subject || "(no subject)", conversationId: null }));
+      Office.context.ui.displayDialogAsync(url, { height: 70, width: 40 }, (asyncResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (asyncResult.status === Office.AsyncResultStatus.Failed) {
+          diagNotify("DIRECT-DIALOG TEST: callback FIRED with an error: code=" + asyncResult.error.code + " message=" + asyncResult.error.message);
+        } else {
+          diagNotify("DIRECT-DIALOG TEST: callback FIRED and SUCCEEDED -- the dialog actually opened! Closing it in 5s.");
+          const dialog = asyncResult.value;
+          setTimeout(() => { try { dialog.close(); } catch (err) { /* ignore */ } }, 5000);
+        }
+      });
+    } catch (err) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      diagNotify("DIRECT-DIALOG TEST: threw synchronously: " + err.message);
+    }
+  })();
+
   function showPrompt() {
     try {
       item.notificationMessages.addAsync(

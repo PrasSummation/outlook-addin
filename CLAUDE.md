@@ -141,6 +141,13 @@ investigation:
    the already-filed check's result, and `taskpane.html`'s `openComposeFilingDialog()` now
    narrates every step (dialog opening, message received + its action, the `categories.addAsync`
    call and its result) via `updateStatus()`.
+4. **Direct `displayDialogAsync` from `OnMessageCompose`, re-tested specifically** (requested
+   2026-10-16 to get hard confirmation rather than assume the `OnMessageSend` finding below
+   generalizes): `onMessageComposeHandler` now also calls `Office.context.ui.displayDialogAsync`
+   directly, self-contained with its own 6s timeout, never touching `event.completed()` or
+   gating the real InsightMessage flow either way. Watch for a `DIRECT-DIALOG TEST:` marker —
+   either it never fires (consistent with the documented block) or, if it unexpectedly succeeds,
+   the dialog auto-closes itself after 5s so it doesn't linger.
 
 Once each question is settled, remove its markers/diagnostic button and this section — don't
 let these linger as permanent debug scaffolding.
