@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.6";
+    const APP_VERSION = "11.7";
 
     let msalInstance;
     let folderEntries = [];
@@ -1646,6 +1646,40 @@
     // on Send section): the task pane is free to call displayDialogAsync normally.
     // No event.completed()/send to gate: on "save", just add the category to the still-unsent
     // draft via categories.addAsync (merges, doesn't replace) and close.
+
+    // ROOT CAUSE, found 2026-10-16: item.categories.addAsync() requires the category to already
+    // exist in the mailbox's own master category list (Office.context.mailbox.masterCategories)
+    // -- confirmed in Microsoft's own docs and its own sample code's comment ("In order for you
+    // to successfully add a category, it must be in the mailbox categories master list"),
+    // failing with an InvalidCategory error otherwise. Every OTHER place in this codebase applies
+    // project categories via Microsoft Graph (email-index's sync, Batch File Folder, File
+    // Email's Graph-based filing, exchange-bridge's reclassify), which has no such restriction --
+    // this compose-time flow is the first to use the Office.js API directly, which is why it's
+    // the first to hit this. Call this before every categories.addAsync() on a project category;
+    // masterCategories.addAsync() itself errors with DuplicateCategory if already present, so
+    // check via getAsync() first rather than call it unconditionally.
+    function ensureMasterCategory(categoryName) {
+        return new Promise((resolve, reject) => {
+            Office.context.mailbox.masterCategories.getAsync((result) => {
+                if (result.status === Office.AsyncResultStatus.Failed) { reject(result.error); return; }
+                if ((result.value || []).some((c) => c.displayName === categoryName)) { resolve(); return; }
+                Office.context.mailbox.masterCategories.addAsync(
+                    [{ displayName: categoryName, color: Office.MailboxEnums.CategoryColor.Preset0 }],
+                    (addResult) => {
+                        // A DuplicateCategory race (added elsewhere between the check above and
+                        // here) is still a success from this function's point of view.
+                        if (addResult.status === Office.AsyncResultStatus.Failed
+                            && addResult.error?.name !== "DuplicateCategory") {
+                            reject(addResult.error);
+                        } else {
+                            resolve();
+                        }
+                    }
+                );
+            });
+        });
+    }
+
     async function openComposeFilingDialog() {
         // DIAGNOSTIC markers throughout, added 2026-10-16 -- temporary, remove once the
         // compose-time filing chain (InsightMessage banner -> commandId -> this deep link ->
@@ -1688,14 +1722,23 @@
                     return;
                 }
                 if (message.action === "save" && message.categoryName) {
-                    updateStatus(`DIAG: calling categories.addAsync(["${message.categoryName}"])...`);
-                    item.categories.addAsync([message.categoryName], (result) => {
+                    updateStatus(`DIAG: ensuring "${message.categoryName}" is in the mailbox's master category list...`);
+                    ensureMasterCategory(message.categoryName).then(() => {
+                        updateStatus(`DIAG: calling categories.addAsync(["${message.categoryName}"])...`);
+                        return new Promise((resolve) => {
+                            item.categories.addAsync([message.categoryName], resolve);
+                        });
+                    }).then((result) => {
                         if (result.status === Office.AsyncResultStatus.Failed) {
                             console.error("Could not set the category:", result.error);
                             updateStatus(`Could not file this email: ${result.error.message} (code ${result.error.code})`, true);
                         } else {
                             updateStatus(`Filed to ${message.categoryName}.`);
                         }
+                        dialog.close();
+                    }).catch((err) => {
+                        console.error("Could not ensure the master category exists:", err);
+                        updateStatus(`Could not file this email: ${err.message || err}`, true);
                         dialog.close();
                     });
                     return;

@@ -846,9 +846,32 @@ reuse) is still believed correct; what needs root-causing before re-enabling is 
 the categorize step doesn't complete, and whether `SendMode="PromptUser"` (which does offer
 "Send Anyway") would be a safer default than `SoftBlock` for this particular flow, given it has
 no server-side backstop the way the already-live `email-filing-sync` Sent Items pass does for
-plain categorization. **Diagnostic markers are already in place** (`diagNotify()` calls
-throughout `onMessageSendHandler`, see "Diagnostic round in progress" below) — re-enable,
-reproduce, and read the banners before attempting another fix blind.
+plain categorization.
+
+**Root cause of the categorize step found and fixed, 2026-10-16**: `item.categories.addAsync()`
+requires the category to already exist in the mailbox's own master category list
+(`Office.context.mailbox.masterCategories`) — confirmed in Microsoft's own docs and its sample
+code's own comment ("In order for you to successfully add a category, it must be in the mailbox
+categories master list"), failing with `InvalidCategory` otherwise. Every other place in this
+codebase applies project categories via Microsoft Graph (`email-index`'s sync, Batch File
+Folder, File Email's Graph-based filing, exchange-bridge's reclassify), which has no such
+restriction — this compose-time flow was the first to call the Office.js API directly for an
+arbitrary, just-picked project category, so it was the first to hit this, and did so 100% of the
+time (any project not already in this specific mailbox's local master list, which in practice
+meant most of them). Fixed in `taskpane.html`'s new `ensureMasterCategory()` helper, called
+before every `categories.addAsync()` on a project category: checks
+`masterCategories.getAsync()` first, and only calls `masterCategories.addAsync()` (which needs a
+`color`, and itself errors `DuplicateCategory` if already present) when it's actually missing.
+**This fix applies to the already-live compose-time "Choose project" banner too**, not just the
+still-disabled File on Send flow — both share `openComposeFilingDialog()`. Before this fix, the
+banner's categorize step was silently failing the same way, just without a blocked send to
+surface it.
+
+Still outstanding before re-enabling File on Send specifically: confirm live that the fix
+actually resolves it (diagnostic markers already in place via `diagNotify()` throughout
+`onMessageSendHandler`, see "Diagnostic round in progress" below — reproduce and read the
+banners rather than assume), and decide on the `SendMode="PromptUser"` question above as a
+safety margin for next time.
 
 Re-enabled (`FILE_ON_SEND_ENABLED = true`) using the redesign option 1 below actually calls for,
 combined with option 2's commandId mechanism: `onMessageSendHandler` no longer calls
