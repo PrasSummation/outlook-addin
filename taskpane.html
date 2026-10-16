@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.8";
+    const APP_VERSION = "11.9";
 
     let msalInstance;
     let folderEntries = [];
@@ -461,7 +461,44 @@
 
     Office.onReady(appInit);
 
-    function appInit() {
+    // Bug found live 2026-10-16: clicking the InsightMessage's "Choose project" action when
+    // Summation Assistant's pane was already open just brought it to the front without
+    // re-navigating to FileOnCompose.Url's ?view=fileOnCompose query string -- Outlook doesn't
+    // support a separate TaskpaneId per control in Outlook (explicitly "not supported in
+    // Outlook" per the manifest Action docs), so every ShowTaskpane-type control here shares one
+    // pane instance, and re-showing an already-open one doesn't necessarily re-navigate it.
+    // Outlook's own documented fix: contextData on the notification action (set in commands.js's
+    // onMessageComposeHandler) arrives via Office.EventType.InitializationContextChanged on an
+    // already-open pane, or via getInitializationContextAsync() on a fresh one -- check both,
+    // since which path Outlook takes isn't something this code controls.
+    let focContextRequested = focDeepLinkRequested;
+
+    function checkInitializationContext() {
+        return new Promise((resolve) => {
+            const item = Office.context.mailbox.item;
+            if (!item || !item.getInitializationContextAsync) { resolve(); return; }
+            item.getInitializationContextAsync((result) => {
+                if (result.status === Office.AsyncResultStatus.Succeeded && result.value === "fileOnCompose") {
+                    focContextRequested = true;
+                }
+                resolve();
+            });
+        });
+    }
+
+    async function appInit() {
+        await checkInitializationContext();
+
+        // Covers the already-open-pane case: fires if/when Outlook delivers a *new*
+        // contextData to this still-running pane instead of a fresh navigation.
+        if (Office.context.mailbox.item && Office.context.mailbox.item.addHandlerAsync) {
+            Office.context.mailbox.item.addHandlerAsync(Office.EventType.InitializationContextChanged, (event) => {
+                if (event.initializationContextData === "fileOnCompose") {
+                    openComposeFilingDialog();
+                }
+            });
+        }
+
         document.getElementById("versionText").innerText = `Version: ${APP_VERSION}`;
 
         document.getElementById("helpGuideLink").addEventListener("click", (e) => {
@@ -542,7 +579,7 @@
             showAppUi(true);
             if (feDeepLinkRequested) {
                 await openFileEmailDialog();
-            } else if (focDeepLinkRequested) {
+            } else if (focContextRequested) {
                 await openComposeFilingDialog();
             } else {
                 setTimeout(() => document.getElementById("filterBox").focus(), 100);
@@ -562,7 +599,7 @@
                 showAppUi(true);
                 if (feDeepLinkRequested) {
                     await openFileEmailDialog();
-                } else if (focDeepLinkRequested) {
+                } else if (focContextRequested) {
                     await openComposeFilingDialog();
                 } else {
                     setTimeout(() => document.getElementById("filterBox").focus(), 100);

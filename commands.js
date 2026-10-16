@@ -192,7 +192,18 @@ function onMessageComposeHandler(event) {
               // Matches Summation.ComposeTaskpaneButton's id in manifest2.xml's
               // MessageComposeCommandSurface -- that control's SourceLocation is
               // FileOnCompose.Url, which opens straight into the project picker.
-              commandId: "Summation.ComposeTaskpaneButton"
+              commandId: "Summation.ComposeTaskpaneButton",
+              // Confirmed live 2026-10-16: Outlook doesn't support a separate TaskpaneId per
+              // control in Outlook (that element is explicitly "not supported in Outlook" per
+              // the manifest Action docs), so if Summation Assistant's pane is already open from
+              // earlier in the session, clicking this just brings it to the front WITHOUT
+              // re-navigating to FileOnCompose.Url's query string -- the general menu shows
+              // instead of the picker. contextData is Outlook's own documented fix for exactly
+              // this ("InsightMessage notification... prevents an add-in from relaunching if
+              // its task pane is already open"): the already-open pane gets this value via the
+              // InitializationContextChanged event instead of a URL. taskpane.html checks both
+              // paths -- the query string for a fresh open, this for an already-open one.
+              contextData: "fileOnCompose"
             }
           ]
         },

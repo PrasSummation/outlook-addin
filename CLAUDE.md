@@ -819,10 +819,10 @@ ribbon click and the InsightMessage's "Choose project" action (same `commandId`)
 same picker File on Send already built, searchable project search + optional "also file the
 original" for a reply/forward) via `displayDialogAsync`, using the same
 `{action:"ready"|"cancel"|"skip"|"save",categoryName}` dialog↔parent protocol
-`onMessageSendHandler` already speaks to it. On `"save"`, the task pane calls
-`item.categories.addAsync([categoryName], ...)` directly on the still-unsent draft (merges,
-doesn't replace — no GET-first needed the way the Graph-based sync scripts require) and closes
-the dialog.
+`onMessageSendHandler` already speaks to it. On `"save"`, the task pane tags the draft via
+`categorizeViaGraph()` and closes the dialog — see "File on Send: Smart Alerts redesign..."
+below (the "Root cause of the categorize step" paragraph) for why this isn't a direct
+`item.categories.addAsync()` call.
 
 Crucially, this is opened **from the task pane, not an event handler** — unlike
 `onMessageSendHandler`'s own `displayDialogAsync` call (see "architecturally broken" below),
@@ -840,6 +840,21 @@ If the check itself fails (including the known Outlook-on-the-web/new-Outlook co
 categories restriction below), it defaults to showing the prompt anyway — there's no send to
 protect here, so erring toward "still visible" beats silently never offering to file it. The
 identical check gates `onMessageSendHandler` below, for the same reason.
+
+**Already-open-pane bug found and fixed, 2026-10-16**: clicking "Choose project" opened the task
+pane, but landed on its general menu instead of the picker — confirmed live. Root cause: Outlook
+doesn't support a separate `TaskpaneId` per control *in Outlook* (explicitly "not supported in
+Outlook" per the manifest `Action` element docs), so every `ShowTaskpane`-type control in this
+add-in shares one pane instance. If Summation Assistant's pane was already open from earlier in
+the session, the InsightMessage's `commandId` action just brought it to the front — it didn't
+re-navigate to `FileOnCompose.Url`'s `?view=fileOnCompose` query string, so
+`openComposeFilingDialog()` never ran. Fixed using Outlook's own documented mechanism for exactly
+this case: the InsightMessage action now also sets `contextData: "fileOnCompose"`
+(`commands.js`), and `taskpane.html` checks for it two ways — `getInitializationContextAsync()`
+on a fresh load, and an `Office.EventType.InitializationContextChanged` handler (Mailbox 1.15,
+already covered by this manifest) for the already-open-pane case, since which path Outlook
+actually takes isn't something this code controls. Both paths converge on the same
+`focContextRequested` flag that gates calling `openComposeFilingDialog()`.
 
 ## File on Send: Smart Alerts redesign, re-disabled after a live-blocking incident (2026-10-16)
 
