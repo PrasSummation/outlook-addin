@@ -5,7 +5,7 @@
            xsi:type="MailApp">
   
   <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id>
-  <Version>1.0.0.17</Version>
+  <Version>1.0.0.18</Version>
   <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
@@ -236,19 +236,33 @@
                       <SupportsMultiSelect>true</SupportsMultiSelect>
                     </Action>
                   </Control>
-                  <!-- ActionType changed from ShowTaskpane to ExecuteFunction 2026-10-06: a
-                       task pane Outlook opens *fresh* (as this button did, as opposed to
-                       clicking the File Email tile inside an already-open, already-focused
-                       pane) wasn't reliably getting real OS keyboard focus for the picker's
-                       search box. ExecuteFunction here runs fileEmailDialogHandler in
-                       commands.js, which opens the same picker as file-email-dialog.html, a
-                       dialog window; hosts are expected to give dialogs real focus on
-                       creation, unlike a freshly-opened task pane. FileEmail.Url /
-                       taskpane.html?view=fileEmail is no longer reachable from this button,
-                       only from the V1.0 fallback below (for any client too old to
-                       understand this V1.1 block at all); kept there untouched since that
-                       fallback still works, just with the old, less-reliable focus
-                       behavior. -->
+                  <!-- Reverted to ShowTaskpane 2026-10-16, undoing the 2026-10-06
+                       ExecuteFunction change. That change traded away multi-select to fix a
+                       keyboard-focus bug: ExecuteFunction/ShowTaskpane is purely about what
+                       Outlook does before any of our JS runs, not what the user ultimately
+                       sees, both routes end at the exact same file-email-dialog.html dialog.
+                       SupportsMultiSelect/SupportsNoItemContext can ONLY be declared on
+                       ShowTaskpane per the Action element schema (confirmed via Microsoft's own
+                       spam-reporting add-in docs, which describe identical behavior: an
+                       ExecuteFunction button becomes unavailable whenever multiple messages are
+                       selected). The 2026-10-13 schema fix that removed those two elements from
+                       this button's ExecuteFunction action (they were already invalid there)
+                       didn't cause the multi-select bug; it only removed dead markup that
+                       was never doing anything; the bug traces back to 2026-10-06 itself, just
+                       unnoticed until now. Confirmed live: multi-select showed the button
+                       visibly running (Outlook's "still working on your request" message) but
+                       never completing, consistent with getSelectedItemsAsync() inside
+                       detectFileEmailSelectionCmd() (commands.js) never resolving when called
+                       from a command Outlook hasn't been told supports multi-select, rather
+                       than a hard refusal to invoke the command at all.
+                       Reverting restores the dormant pre-2026-10-06 path unchanged:
+                       FileEmail.Url (taskpane.html?view=fileEmail) -> feDeepLinkRequested ->
+                       openFileEmailDialog(), already proven live via the V1.0 fallback below
+                       this whole time. Trade-off reaccepted: the freshly-opened task pane this
+                       introduces as a stepping stone to the dialog doesn't always reliably hand
+                       off real OS keyboard focus to the dialog's search box, see
+                       file-email-dialog.html's own header comment and its focusWhenReady()
+                       retry helper, which was kept specifically in case this day came. -->
                   <Control xsi:type="Button" id="Summation.FileEmailButton">
                     <Label resid="FileEmailButtonLabel" />
                     <Supertip>
@@ -260,15 +274,11 @@
                       <bt:Image size="32" resid="Icon.32x32" />
                       <bt:Image size="80" resid="Icon.80x80" />
                     </Icon>
-                    <!-- FunctionName is the only valid child of an ExecuteFunction action.
-                         SupportsNoItemContext and SupportsMultiSelect (both ShowTaskpane-only
-                         per the Action element schema) sat here invalidly since the 2026-10-06
-                         ShowTaskpane-to-ExecuteFunction change above, caught by schema
-                         validation on 2026-10-13. No behavior lost: fileEmailDialogHandler
-                         (commands.js) already detects no-selection/multi-select itself via
-                         detectFileEmailSelectionCmd(), not via these manifest declarations. -->
-                    <Action xsi:type="ExecuteFunction">
-                      <FunctionName>fileEmailDialogHandler</FunctionName>
+                    <Action xsi:type="ShowTaskpane">
+                      <SourceLocation resid="FileEmail.Url" />
+                      <SupportsPinning>true</SupportsPinning>
+                      <SupportsNoItemContext>true</SupportsNoItemContext>
+                      <SupportsMultiSelect>true</SupportsMultiSelect>
                     </Action>
                   </Control>
                 </Group>

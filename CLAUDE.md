@@ -33,8 +33,8 @@ project mailbox.
 
 | File | Role |
 |---|---|
-| `manifest2.xml` | Office Add-in manifest. Registers the main ribbon/compose-mode buttons (pointing at `taskpane.html`), the OnMessageSend LaunchEvent (`commands.js`), and, as of 2026-10-06, the ribbon's dedicated **File Email** button as an `ExecuteFunction` (also `commands.js`) rather than a `ShowTaskpane` — see "File Email is a dialog, not a wizard" below for why. |
-| `taskpane.html` | The task pane sidebar. Main menu + three "wizard" flows (see below) that collect inputs, then hand off execution, plus the standalone Email Search action. File Email used to be a fourth inline flow here too; as of 2026-10-06 clicking its tile just opens `file-email-dialog.html` (see below) — the tile is the only File Email surface left in this file. Also has the live `APP_VERSION` string shown in its footer — bump it on every change so you can confirm a deployed version in the field. |
+| `manifest2.xml` | Office Add-in manifest. Registers the main ribbon/compose-mode buttons (pointing at `taskpane.html`), the `OnMessageSend`/`OnMessageCompose` LaunchEvents (`commands.js`), and the ribbon's dedicated **File Email** button — `ShowTaskpane` → `FileEmail.Url` since the 2026-10-16 revert (briefly `ExecuteFunction` from 2026-10-06, which broke multi-select) — see "File Email is a dialog, not a wizard" below for the full history. |
+| `taskpane.html` | The task pane sidebar. Main menu + three "wizard" flows (see below) that collect inputs, then hand off execution, plus the standalone Email Search action. File Email used to be a fourth inline flow here too; as of 2026-10-06 clicking its tile just opens `file-email-dialog.html` (see below). Since the 2026-10-16 revert, the ribbon's dedicated File Email button reaches this same code too, via the `?view=fileEmail` deep link (`feDeepLinkRequested` → `openFileEmailDialog()`) — `commands.js` no longer has its own separate copy of this logic. Also has the live `APP_VERSION` string shown in its footer — bump it on every change so you can confirm a deployed version in the field. |
 | `file-email-dialog.html` | The File Email picker, as an `Office.context.ui.displayDialogAsync` dialog rather than inline in the taskpane (changed 2026-10-06 — see "File Email is a dialog, not a wizard" below). Self-contained like `complete-action.html` (own MSAL sign-in, own copies of the Graph/bridge helpers), reads its initial selection context from its own URL query string, and receives live selection updates from whichever page opened it via `Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, ...)`. |
 | `commands.js` / `commands.html` | UI-less ribbon/event command functions — see its own header comments for the two different ways Outlook clients load this file. Holds `onMessageSendHandler` (the **File on Send** feature, live as of 2026-10-06 — see its own section below; replaced an earlier phase-1 probe) and `fileEmailDialogHandler` (the ribbon's dedicated File Email button — detects the selection and opens `file-email-dialog.html`, duplicating taskpane.html's own copy of that same detection logic). |
 | `file-on-send-dialog.html` | The File on Send project picker, opened by `commands.js`'s `onMessageSendHandler` via `displayDialogAsync` when a message is sent. Built from the separately-approved mockup at https://claude.ai/artifact/EqTMRsGos3VHXtspmZPXpp. See "File on Send is live" below. |
@@ -118,6 +118,25 @@ Removed 2026-10-06, **no longer in the taskpane at all**:
   it or its installer for current email filing.
 
 ## File Email is a dialog, not a wizard (changed 2026-10-06)
+
+**Partially reverted 2026-10-16**: the ribbon's dedicated File Email button's `ExecuteFunction`
+change (described below) broke multi-select — confirmed live, the button would show Outlook's
+generic "still working on your request" message and never complete when multiple messages were
+selected. Root cause: `SupportsMultiSelect`/`SupportsNoItemContext` can only be declared on a
+`ShowTaskpane` action per the Action element schema, never `ExecuteFunction` — confirmed via
+Microsoft's own spam-reporting add-in docs, which describe the identical default behavior (an
+`ExecuteFunction` button becomes unavailable whenever multiple messages are selected). This was
+a latent bug from 2026-10-06 itself, not something introduced later — the 2026-10-13 schema fix
+that removed those two (already-invalid-there) elements from the button's `ExecuteFunction`
+action only exposed it, it didn't cause it.
+`Summation.FileEmailButton` is back to `ShowTaskpane` → `FileEmail.Url`, the same dormant path
+the V1.0 fallback used the whole time — `commands.js`'s `fileEmailDialogHandler` and its
+detect-selection helpers were removed as dead code (nothing in the manifest points to them any
+more). The **File Email tile** inside the taskpane (`Summation.TaskpaneButton`, always
+`ShowTaskpane`) was never affected by any of this. Trade-off knowingly reaccepted: the original
+keyboard-focus bug described below is back for the ribbon button's single-item case, since that
+bug and multi-select support are opposite sides of the same `ExecuteFunction`-vs-`ShowTaskpane`
+choice — Outlook doesn't offer a way to have both from one button.
 
 File Email used to be the taskpane's fourth inline "wizard" (project search
 list, Confirm, Result — all rendered inside `taskpane.html` itself), with a
