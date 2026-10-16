@@ -31,7 +31,15 @@
  * handler throws, hangs, or never calls event.completed() within its own platform timeout --
  * a deliberate safety net this code leans on rather than duplicates.
  */
-const FILE_ON_SEND_ENABLED = true;
+// EMERGENCY KILL SWITCH, re-tripped 2026-10-16: live-blocking incident confirmed -- the Smart
+// Alerts dialog shows correctly (Choose project / Don't Send), but there's no way to send
+// through untagged (SendMode="SoftBlock" gives no "Send Anyway"), and "Choose project" ->
+// task pane -> file-on-send-dialog.html -> categories.addAsync isn't completing the
+// categorization, leaving the user stuck unable to send at all. Flipping this back to false
+// restores "every send allowed through immediately, untagged" while the categorize-then-send
+// path gets fixed -- deploys in ~10 minutes via commands.js's own CDN cache, no manifest
+// re-upload needed, since OnMessageSend's LaunchEvent registration itself hasn't changed.
+const FILE_ON_SEND_ENABLED = false;
 
 // Shared by onMessageSendHandler and onMessageComposeHandler: matches the project-category
 // naming convention this codebase already uses everywhere else (email-index's keywords.py,
