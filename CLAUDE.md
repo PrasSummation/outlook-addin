@@ -941,16 +941,20 @@ what Office.js exposes). **Confirmed fixed live 2026-10-19** — category presen
 sent copy, verified directly (not just the picker's own success message, which an earlier bug
 briefly made unreliable — see "Add visibility to the client-cache-sync step" below).
 
-**Master category list cleanup, added 2026-10-19 per live feedback**: `ensureMasterCategory()`
+**Master category list cleanup — tried and reverted same day, 2026-10-19**: `ensureMasterCategory()`
 only needs the category in the master list long enough for `item.categories.addAsync()` to
-accept it — it was never meant to permanently litter the mailbox's category picker with every
-one-off project code the user happens to file. `categorizeViaGraph()` now removes it again via
-`masterCategories.removeAsync()` right after the item itself is tagged, but **only** if
-`ensureMasterCategory()` is the one that added it (tracked via its return value) — never a
-category that already existed in the master list for some other reason. Safe to do: removing a
-category from the master list doesn't untag items that already carry it, since an item's
-`categories` are just string names, not a reference to a master-list entry. Best-effort — a
-cleanup failure is logged but doesn't change whether the item got filed.
+accept it, and per live feedback it was never meant to permanently litter the mailbox's category
+picker with every one-off project code the user happens to file. A fix was added
+(`categorizeViaGraph()` removing the entry again via `masterCategories.removeAsync()` right after
+tagging the item, only when `ensureMasterCategory()` itself had added it) — **and confirmed live
+to break the actual fix above**: the category stopped surviving to the sent copy at all. Despite
+the documented model (an item's `categories` are plain string names, not a reference to a
+master-list entry), live behavior says otherwise here — removing the master entry while the
+item-level add is still settling appears to invalidate it. **Reverted the same day**: the master
+list now permanently accumulates one entry per distinct project code ever filed this way — an
+accepted cosmetic trade-off for now, correctness over tidiness. If revisited, do it as a
+**deferred sweep** (clean up entries from a *previous* run, tracked separately, never the one
+just added in the current run) rather than retrying immediate removal with different timing.
 
 Still outstanding before re-enabling File on Send specifically: confirm live that this fix
 actually resolves it (diagnostic markers already in place via `diagNotify()` throughout
