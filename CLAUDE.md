@@ -937,8 +937,20 @@ unaffected by anything Graph does). Graph stays the authoritative write — this
 so the client's own save-at-send doesn't undo it, and is allowed to fail quietly if it doesn't
 work (e.g. Outlook on the web/new Outlook on Windows, where this exact API doesn't function on a
 Compose-mode item at all — there is currently nothing more this code can do on those clients with
-what Office.js exposes). **Not yet independently confirmed** whether this fully resolves it
-end-to-end on classic Windows Outlook — reproduce live after deploying before trusting it.
+what Office.js exposes). **Confirmed fixed live 2026-10-19** — category present on the actually-
+sent copy, verified directly (not just the picker's own success message, which an earlier bug
+briefly made unreliable — see "Add visibility to the client-cache-sync step" below).
+
+**Master category list cleanup, added 2026-10-19 per live feedback**: `ensureMasterCategory()`
+only needs the category in the master list long enough for `item.categories.addAsync()` to
+accept it — it was never meant to permanently litter the mailbox's category picker with every
+one-off project code the user happens to file. `categorizeViaGraph()` now removes it again via
+`masterCategories.removeAsync()` right after the item itself is tagged, but **only** if
+`ensureMasterCategory()` is the one that added it (tracked via its return value) — never a
+category that already existed in the master list for some other reason. Safe to do: removing a
+category from the master list doesn't untag items that already carry it, since an item's
+`categories` are just string names, not a reference to a master-list entry. Best-effort — a
+cleanup failure is logged but doesn't change whether the item got filed.
 
 Still outstanding before re-enabling File on Send specifically: confirm live that this fix
 actually resolves it (diagnostic markers already in place via `diagNotify()` throughout

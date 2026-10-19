@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.12";
+    const APP_VERSION = "11.13";
 
     let msalInstance;
     let folderEntries = [];
@@ -1756,33 +1756,44 @@
             throw new Error(`Graph PATCH failed (${patchResp.status}): ${body}`);
         }
 
-        // BUG FOUND LIVE 2026-10-16: the Graph write above didn't survive sending -- confirmed,
-        // category gone from the sent copy. Root cause (corroborated by a related office-js
-        // GitHub issue about Graph writes not being reflected in Outlook's own client-side item
-        // cache): classic Outlook holds its own in-memory copy of the draft, and clicking Send
-        // pushes THAT stale, pre-Graph-write copy back to the server as part of sending --
-        // silently clobbering the category Graph just set, since the client never learned about
-        // it. Fix: also write the category into the client's own object model via
+        // BUG FOUND LIVE 2026-10-16, FIX CONFIRMED 2026-10-19: the Graph write above didn't
+        // survive sending -- category gone from the sent copy. Root cause (corroborated by a
+        // related office-js GitHub issue about Graph writes not being reflected in Outlook's own
+        // client-side item cache): classic Outlook holds its own in-memory copy of the draft,
+        // and clicking Send pushes THAT stale, pre-Graph-write copy back to the server as part
+        // of sending -- silently clobbering the category Graph just set, since the client never
+        // learned about it. Fix: also write the category into the client's own object model via
         // item.categories.addAsync(), so the client's own save-at-send includes it instead of
-        // overwriting it. Graph remains the authoritative write (handles the master-category-list
-        // requirement and the web/new-Outlook compose-mode restriction); this step exists only to
-        // stop the client from undoing it, and is allowed to fail quietly -- e.g. on Outlook on
-        // the web/new Outlook on Windows, where this specific API doesn't work in Compose mode at
+        // overwriting it -- confirmed live, category now present on the actually-sent copy.
+        // Graph remains the authoritative write (handles the master-category-list requirement
+        // and the web/new-Outlook compose-mode restriction); this step exists only to stop the
+        // client from undoing it, and is allowed to fail quietly -- e.g. on Outlook on the
+        // web/new Outlook on Windows, where this specific API doesn't work in Compose mode at
         // all, so there's genuinely nothing more to do there with what Office.js exposes today.
-        // DIAGNOSTIC, added 2026-10-19: this step had zero visibility until now -- if it was
-        // silently failing, there was no way to tell from a live test (updateStatus() isn't used
-        // here since the caller sets one final combined message right after this resolves, and
-        // an intermediate call here would just get overwritten by that -- return the outcome
-        // instead). Remove once confirmed working end-to-end (category still present after
-        // actually sending).
         try {
-            await ensureMasterCategory(categoryName);
+            const addedToMasterList = await ensureMasterCategory(categoryName);
             await new Promise((resolve, reject) => {
                 item.categories.addAsync([categoryName], (result) => {
                     if (result.status === Office.AsyncResultStatus.Failed) reject(result.error);
                     else resolve();
                 });
             });
+            // Cleanup, added 2026-10-19 per live feedback: ensureMasterCategory() only needs to
+            // add the category to the master list long enough for the addAsync() call above to
+            // accept it -- it was never meant to permanently litter the mailbox's category
+            // picker with every one-off project code. Only remove it if WE just added it (never
+            // one that already existed for some other reason), and only after the item itself is
+            // already tagged -- removing a category from the master list does not untag items
+            // that already carry it, since an item's categories are just string names, not a
+            // reference to a master-list entry. Best-effort: failing to clean up doesn't affect
+            // whether the item got filed, so it only logs rather than changing the outcome.
+            if (addedToMasterList) {
+                Office.context.mailbox.masterCategories.removeAsync([categoryName], (result) => {
+                    if (result.status === Office.AsyncResultStatus.Failed) {
+                        console.error("Could not remove the temporary master category entry (non-fatal):", result.error);
+                    }
+                });
+            }
             return { cacheSynced: true };
         } catch (err) {
             console.error("Could not sync category into the client's own cache (non-fatal, Graph write still applied):", err);
@@ -1794,11 +1805,15 @@
     // requires the category to already exist in the mailbox's master category list (confirmed in
     // Microsoft's own docs/sample code), separately from anything Graph does; masterCategories.
     // addAsync() itself errors DuplicateCategory if already present, so check via getAsync() first.
+    // Resolves with whether THIS call added the category (true) vs. it already existing
+    // (false) -- categorizeViaGraph uses this to know whether to clean the master list back up
+    // afterward. Only ever removing an entry WE just added, never one that was already there for
+    // some other reason, avoids undoing a real, intentionally-kept master category.
     function ensureMasterCategory(categoryName) {
         return new Promise((resolve, reject) => {
             Office.context.mailbox.masterCategories.getAsync((result) => {
                 if (result.status === Office.AsyncResultStatus.Failed) { reject(result.error); return; }
-                if ((result.value || []).some((c) => c.displayName === categoryName)) { resolve(); return; }
+                if ((result.value || []).some((c) => c.displayName === categoryName)) { resolve(false); return; }
                 Office.context.mailbox.masterCategories.addAsync(
                     [{ displayName: categoryName, color: Office.MailboxEnums.CategoryColor.Preset0 }],
                     (addResult) => {
@@ -1806,7 +1821,7 @@
                             && addResult.error?.name !== "DuplicateCategory") {
                             reject(addResult.error);
                         } else {
-                            resolve();
+                            resolve(true);
                         }
                     }
                 );
