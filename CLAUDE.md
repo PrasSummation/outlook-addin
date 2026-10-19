@@ -158,6 +158,31 @@ result. Fixed: `diagNotify()` now reuses one fixed key (`addAsync` once, `replac
 thereafter), reset at the top of each handler since notifications are scoped per mailbox item —
 diagnostics now always occupy exactly one slot regardless of how many steps get logged.
 
+**Status-message overwrite race found and fixed, 2026-10-19**: `openComposeFilingDialog()`'s
+`"save"` handler called `updateStatus("Filed to X.")` unconditionally after
+`categorizeViaGraph()` resolved, silently erasing any cache-sync-failure message the function had
+just set moments before. Fixed: `categorizeViaGraph()` now returns `{cacheSynced,
+cacheSyncError}` and the caller builds one combined final message from it instead of layering two
+independent `updateStatus()` calls.
+
+**`categorizeViaGraph()` given step-by-step `updateStatus()` markers, 2026-10-19**: previously
+only the client-cache-sync tail end had any visibility; added one before/after each link in the
+chain (`saveAsync`, `getItemIdAsync`, token acquisition, Graph `GET`, Graph `PATCH`) so a failure
+anywhere in it is pinpointable from the status text alone, without needing DevTools.
+
+**Dispatch theory ruled out live, 2026-10-19**: a screenshot showing the pane settled on its
+general ACTIONS menu (not the picker) was initially read as evidence that
+`openComposeFilingDialog()` never ran — i.e. the already-open-pane `contextData` fix regressing.
+Directly contradicted by live confirmation: **the picker dialog did open.** Revised
+understanding: the pane naturally rests on its general menu once the dialog closes (there's no
+dedicated "just finished filing" view), and `#statusMessage`'s single quiet line is easy to miss
+or scroll past once attention has been on the dialog — it was never a dispatch failure, just a
+visibility gap in reporting whatever `categorizeViaGraph()` actually did. **Fixed**: an
+always-visible top banner (`#diagTopBanner`, `taskpane.html`) now shows the dispatch decision
+(`search`/`initContext`/`focContextRequested`) on load, and `updateStatus()` mirrors every
+subsequent call into the same banner — so the whole chain, including the Graph-chain steps above,
+is visible in one fixed place regardless of which view is on screen when the user looks.
+
 Once each remaining question is settled, remove its markers/diagnostic button and this section —
 don't let these linger as permanent debug scaffolding.
 

@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.15";
+    const APP_VERSION = "11.16";
 
     let msalInstance;
     let folderEntries = [];
@@ -472,12 +472,21 @@
     // already-open pane, or via getInitializationContextAsync() on a fresh one -- check both,
     // since which path Outlook takes isn't something this code controls.
     let focContextRequested = focDeepLinkRequested;
+    // DIAGNOSTIC, added 2026-10-19: raw values behind the dispatch decision, shown in an
+    // always-visible top banner so they can't be missed/scrolled past the way #statusMessage's
+    // single quiet line can be (easy to miss when attention is on the "Choose project" dialog,
+    // or after the pane settles back on the general menu once the dialog closes). Remove once
+    // this dispatch and the categorize-via-Graph chain are both confirmed reliable.
+    let diagInitContextRaw = "(not called / no item)";
 
     function checkInitializationContext() {
         return new Promise((resolve) => {
             const item = Office.context.mailbox.item;
             if (!item || !item.getInitializationContextAsync) { resolve(); return; }
             item.getInitializationContextAsync((result) => {
+                diagInitContextRaw = result.status === Office.AsyncResultStatus.Succeeded
+                    ? `status=Succeeded value=${JSON.stringify(result.value)}`
+                    : `status=Failed error=${result.error && result.error.message}`;
                 // contextData arrives JSON-encoded (commands.js JSON.stringify()'s it, matching
                 // Microsoft's own documented round trip) -- parse before comparing, and ignore
                 // (not throw) if it's empty or isn't valid JSON.
@@ -493,6 +502,20 @@
 
     async function appInit() {
         await checkInitializationContext();
+
+        // DIAGNOSTIC banner, added 2026-10-19: always visible regardless of which view ends up
+        // rendering (unlike updateStatus(), whose #statusMessage element may be scrolled off or
+        // out of view, e.g. behind the "Choose project" dialog, or not looked at by the time the
+        // dialog closes). Starts with the dispatch decision; updateStatus() below mirrors every
+        // later status update (including the categorizeViaGraph() step-by-step chain) into it too,
+        // so the whole flow is visible in one place no matter what's on screen. Remove once the
+        // underlying flow is confirmed reliable.
+        const diagBanner = document.createElement("div");
+        diagBanner.id = "diagTopBanner";
+        diagBanner.textContent = `DIAG: search="${window.location.search}" initContext=[${diagInitContextRaw}] focContextRequested=${focContextRequested}`;
+        diagBanner.style.cssText = "background:#fff3cd;color:#664d03;border-bottom:2px solid #ffda6a;" +
+            "padding:8px 10px;font:600 11px sans-serif;position:sticky;top:0;z-index:9999;word-break:break-all;";
+        document.body.insertAdjacentElement("afterbegin", diagBanner);
 
         // Covers the already-open-pane case: fires if/when Outlook delivers a *new*
         // contextData to this still-running pane instead of a fresh navigation.
@@ -624,6 +647,15 @@
     function updateStatus(message, isError = false) {
         document.getElementById("statusMessage").innerText = message;
         document.getElementById("statusMessage").style.color = isError ? "red" : "#333";
+        // Mirror into the always-visible DIAG banner (see appInit()) -- #statusMessage can be
+        // off-screen or behind the compose-filing dialog when this fires.
+        const diagBanner = document.getElementById("diagTopBanner");
+        if (diagBanner) {
+            diagBanner.textContent = `DIAG STATUS: ${message}`;
+            diagBanner.style.background = isError ? "#f8d7da" : "#fff3cd";
+            diagBanner.style.color = isError ? "#842029" : "#664d03";
+            diagBanner.style.borderBottomColor = isError ? "#f1aeb5" : "#ffda6a";
+        }
     }
 
     async function signInAndGetToken(request, isUserAction = false) {
