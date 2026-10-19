@@ -201,6 +201,26 @@ rather than assume; if it still 404s after all retries, the next thing to check 
 compose window is actually in a shared/delegate mailbox context, where `/me/messages/{id}` would
 legitimately never find the draft (it would live under `/users/{mailbox}/messages/{id}` instead).
 
+**Graph GET 404 retry fix confirmed live, 2026-10-19/20**: the banner showed the retry path firing
+(404, retrying...) and then succeeding — category applied and visible on the sent email. The
+404-right-after-`saveAsync()` race theory holds.
+
+**Master-category-list cleanup, done properly as a deferred sweep, 2026-10-20**: the category
+still works, but every project code ever filed this way permanently accumulates in the master
+category picker — the 2026-10-19 attempt to remove it immediately after tagging broke the fix
+(see above), so this redoes it the way that section said it had to be done: queue, don't remove
+immediately. `ensureMasterCategory()` now queues each category it actually adds (localStorage key
+`summation_pendingCategorySweep`, same convention as `FE_BATCHES_STORAGE_KEY` elsewhere in this
+codebase) instead of removing it; `sweepPendingMasterCategories()` (called at the end of
+`categorizeViaGraph()`, after this run's own category has been tagged onto the item) actually
+removes everything *previously* queued via `masterCategories.removeAsync()` — never the entry
+this run just added, which only gets queued for the run after it. By the time a previous run's
+entry is swept, it's always a different, already-settled item, sidestepping the same-item timing
+issue that broke the immediate-removal attempt. **Not yet live-tested** — reproduce by filing two
+different projects in separate sessions and confirming the first project's category survives on
+its own sent copy (sweeping should never affect an already-sent item's own category string, only
+the master list's remembered entry) while the master list itself stops accumulating.
+
 Once each remaining question is settled, remove its markers/diagnostic button and this section —
 don't let these linger as permanent debug scaffolding.
 

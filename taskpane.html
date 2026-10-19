@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.17";
+    const APP_VERSION = "11.18";
 
     let msalInstance;
     let folderEntries = [];
@@ -1845,16 +1845,21 @@
                     else resolve();
                 });
             });
-            // REVERTED 2026-10-19: tried removing the master-list entry again immediately after
-            // tagging the item (added, then reverted, same day) -- confirmed live this broke the
-            // fix above: the category stopped surviving to the sent copy at all. Despite the
-            // documented model (an item's categories are plain string names, not a reference to
-            // a master-list entry), live behavior says otherwise here: removing the master entry
-            // while the item-level add is still settling appears to invalidate it. Reverting to
-            // the confirmed-working state over the cosmetic master-list clutter -- correctness
-            // over tidiness. If this needs revisiting, do it as a DEFERRED sweep (clean up
-            // entries from a PREVIOUS run, tracked separately, never the one just added this
-            // run) rather than retrying immediate removal with different timing.
+            // Deferred sweep of entries queued by PREVIOUS filing runs, added 2026-10-20 -- never
+            // the entry this run just added above (that one gets queued for next time instead).
+            // An earlier same-day attempt (2026-10-19) to remove the master-list entry again
+            // immediately after tagging THIS item broke the fix above: the category stopped
+            // surviving to the sent copy at all. Despite the documented model (an item's
+            // categories are plain string names, not a reference to a master-list entry), live
+            // behavior said otherwise: removing the master entry while the item-level add on the
+            // SAME item was still settling invalidated it -- the same general class of race as
+            // the Graph-index-lag 404 fixed the same day. Sweeping a DIFFERENT, already-settled
+            // item from a prior run sidesteps that entirely.
+            try {
+                await sweepPendingMasterCategories();
+            } catch (err) {
+                console.error("Could not run deferred category sweep (non-fatal):", err);
+            }
             return { cacheSynced: true };
         } catch (err) {
             console.error("Could not sync category into the client's own cache (non-fatal, Graph write still applied):", err);
@@ -1862,12 +1867,70 @@
         }
     }
 
+    // Deferred master-category-list sweep, added 2026-10-20. ensureMasterCategory() still has to
+    // leave a freshly-added entry in place through the filing run that needed it -- removing it
+    // immediately broke the category on THAT SAME item, confirmed live 2026-10-19 (see
+    // categorizeViaGraph()'s comment). But never cleaning up at all permanently litters the
+    // master category picker with every one-off project code ever filed. This resolves the
+    // tension by queueing each newly-added category (localStorage, same convention as
+    // FE_BATCHES_STORAGE_KEY elsewhere in this codebase) and only actually removing it the NEXT
+    // time a filing run happens -- by then it's always a different, already-settled item, so the
+    // same-item timing issue that broke the earlier same-run attempt doesn't apply. The category
+    // just added THIS run is deliberately never swept until the run after it.
+    const PENDING_CATEGORY_SWEEP_KEY = "summation_pendingCategorySweep";
+
+    function getPendingCategorySweepList() {
+        try {
+            const raw = JSON.parse(localStorage.getItem(PENDING_CATEGORY_SWEEP_KEY) || "[]");
+            return Array.isArray(raw) ? raw : [];
+        } catch (err) {
+            return [];
+        }
+    }
+
+    function setPendingCategorySweepList(list) {
+        try {
+            localStorage.setItem(PENDING_CATEGORY_SWEEP_KEY, JSON.stringify(list));
+        } catch (err) {
+            console.error("Could not persist pending category sweep list (non-fatal):", err);
+        }
+    }
+
+    function queueCategoryForDeferredSweep(categoryName) {
+        const pending = getPendingCategorySweepList();
+        if (!pending.includes(categoryName)) {
+            pending.push(categoryName);
+            setPendingCategorySweepList(pending);
+        }
+    }
+
+    async function sweepPendingMasterCategories() {
+        const pending = getPendingCategorySweepList();
+        if (pending.length === 0) return;
+        const stillPending = [];
+        for (const categoryName of pending) {
+            try {
+                await new Promise((resolve, reject) => {
+                    Office.context.mailbox.masterCategories.removeAsync([categoryName], (result) => {
+                        if (result.status === Office.AsyncResultStatus.Failed) reject(result.error);
+                        else resolve();
+                    });
+                });
+                updateStatus(`DIAG: swept previously-filed category "${categoryName}" from the master list`);
+            } catch (err) {
+                console.error(`Could not sweep master category "${categoryName}" (will retry next run):`, err);
+                stillPending.push(categoryName);
+            }
+        }
+        setPendingCategorySweepList(stillPending);
+    }
+
     // Supports categorizeViaGraph()'s client-cache-sync step above -- item.categories.addAsync()
     // requires the category to already exist in the mailbox's master category list (confirmed in
     // Microsoft's own docs/sample code), separately from anything Graph does; masterCategories.
     // addAsync() itself errors DuplicateCategory if already present, so check via getAsync() first.
-    // Deliberately leaves the entry in the master list afterward (a 2026-10-19 same-day attempt
-    // at cleaning it back up broke the fix above -- see categorizeViaGraph()'s own comment).
+    // On an actual add (not a duplicate), queues the entry for the deferred sweep above instead
+    // of removing it now.
     function ensureMasterCategory(categoryName) {
         return new Promise((resolve, reject) => {
             Office.context.mailbox.masterCategories.getAsync((result) => {
@@ -1880,6 +1943,9 @@
                             && addResult.error?.name !== "DuplicateCategory") {
                             reject(addResult.error);
                         } else {
+                            if (addResult.status !== Office.AsyncResultStatus.Failed) {
+                                queueCategoryForDeferredSweep(categoryName);
+                            }
                             resolve();
                         }
                     }
