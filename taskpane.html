@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.11";
+    const APP_VERSION = "11.12";
 
     let msalInstance;
     let folderEntries = [];
@@ -1769,11 +1769,25 @@
         // stop the client from undoing it, and is allowed to fail quietly -- e.g. on Outlook on
         // the web/new Outlook on Windows, where this specific API doesn't work in Compose mode at
         // all, so there's genuinely nothing more to do there with what Office.js exposes today.
-        await ensureMasterCategory(categoryName).then(() => {
-            return new Promise((resolve) => item.categories.addAsync([categoryName], resolve));
-        }).catch((err) => {
+        // DIAGNOSTIC, added 2026-10-19: this step had zero visibility until now -- if it was
+        // silently failing, there was no way to tell from a live test (updateStatus() isn't used
+        // here since the caller sets one final combined message right after this resolves, and
+        // an intermediate call here would just get overwritten by that -- return the outcome
+        // instead). Remove once confirmed working end-to-end (category still present after
+        // actually sending).
+        try {
+            await ensureMasterCategory(categoryName);
+            await new Promise((resolve, reject) => {
+                item.categories.addAsync([categoryName], (result) => {
+                    if (result.status === Office.AsyncResultStatus.Failed) reject(result.error);
+                    else resolve();
+                });
+            });
+            return { cacheSynced: true };
+        } catch (err) {
             console.error("Could not sync category into the client's own cache (non-fatal, Graph write still applied):", err);
-        });
+            return { cacheSynced: false, cacheSyncError: err };
+        }
     }
 
     // Supports categorizeViaGraph()'s client-cache-sync step above -- item.categories.addAsync()
@@ -1843,8 +1857,16 @@
                 }
                 if (message.action === "save" && message.categoryName) {
                     updateStatus(`DIAG: filing via Graph ("${message.categoryName}")...`);
-                    categorizeViaGraph(item, message.categoryName).then(() => {
-                        updateStatus(`Filed to ${message.categoryName}.`);
+                    categorizeViaGraph(item, message.categoryName).then((outcome) => {
+                        // DIAGNOSTIC wording, added 2026-10-19: spells out the client-cache-sync
+                        // outcome explicitly rather than a blind "Filed to X.", since that
+                        // blind message is exactly what made the previous cache-sync failure
+                        // invisible in testing -- the Graph write succeeding was never in
+                        // doubt, only whether it survives the user's next Send.
+                        updateStatus(outcome.cacheSynced
+                            ? `Filed to ${message.categoryName}. (DIAG: client cache synced OK)`
+                            : `Filed to ${message.categoryName} via Graph, but DIAG: client cache sync FAILED (${outcome.cacheSyncError?.message || outcome.cacheSyncError}) -- may not survive Send.`,
+                            !outcome.cacheSynced);
                         dialog.close();
                     }).catch((err) => {
                         console.error("Could not file this email via Graph:", err);
