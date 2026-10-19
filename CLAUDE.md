@@ -183,6 +183,24 @@ always-visible top banner (`#diagTopBanner`, `taskpane.html`) now shows the disp
 subsequent call into the same banner — so the whole chain, including the Graph-chain steps above,
 is visible in one fixed place regardless of which view is on screen when the user looks.
 
+**Root cause of "category still not appearing" found live, 2026-10-19**: the top-banner mirror
+above (not a dispatch failure after all — the picker genuinely was opening) surfaced a concrete
+error for the first time: `Could not read current categories (Graph GET 404)`, straight out of
+`categorizeViaGraph()`'s first Graph call, right after `saveAsync()`/`getItemIdAsync()`/
+`convertToRestId()`. This is a known class of race, not a logic bug: `saveAsync()` returns once
+the EWS write lands, but Graph's own index of the mailbox can lag a short moment behind that
+write, so an immediate `GET` on the just-created draft can 404 even though the save genuinely
+succeeded. Explains the "worked once, then stopped" pattern (timing-dependent) and why the
+master-category-cleanup revert — byte-identical to the last confirmed-working commit — didn't fix
+it: that was never the actual cause. **Fixed**: `fetchWithRetryOn404()` (`taskpane.html`) wraps
+both the Graph `GET` and `PATCH` with a short backoff (300ms/600ms/1200ms/2400ms, up to 4 retries)
+scoped specifically to a 404 on this just-saved item; any other HTTP status still fails
+immediately, same as before. **Not yet independently confirmed this resolves it** — reproduce
+live (ideally on one of the "other projects" that reliably failed before) and read the banner
+rather than assume; if it still 404s after all retries, the next thing to check is whether the
+compose window is actually in a shared/delegate mailbox context, where `/me/messages/{id}` would
+legitimately never find the draft (it would live under `/users/{mailbox}/messages/{id}` instead).
+
 Once each remaining question is settled, remove its markers/diagnostic button and this section —
 don't let these linger as permanent debug scaffolding.
 

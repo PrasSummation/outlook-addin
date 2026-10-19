@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.16";
+    const APP_VERSION = "11.17";
 
     let msalInstance;
     let folderEntries = [];
@@ -1756,15 +1756,28 @@
     // lesson already learned the hard way in email-filing-sync's sync.ps1) -- GET the current
     // categories first and keep anything that isn't a stale project tag, same convention as
     // that script, rather than overwrite a reply/forward's other inherited categories.
+    // ROOT CAUSE FOUND LIVE 2026-10-19: the Graph GET right after saveAsync() was 404ing --
+    // confirmed via the step-by-step DIAG markers below ("Could not read current categories
+    // (Graph GET 404)"). This is a known class of race: item.saveAsync() returns once the EWS
+    // write lands, but Graph's own index of the mailbox can lag a short moment behind it, so an
+    // immediate GET on the just-created draft can 404 even though the save genuinely succeeded --
+    // explains "worked once, then stopped" (timing-dependent) rather than a logic bug (the
+    // master-category-cleanup revert was byte-identical and didn't fix it, because it was never
+    // the cause). Fixed with a short retry-with-backoff scoped to exactly a 404 on this freshly-
+    // saved item; any other status still fails immediately, same as before.
+    async function fetchWithRetryOn404(url, options, label) {
+        const delaysMs = [300, 600, 1200, 2400];
+        for (let attempt = 0; ; attempt++) {
+            const resp = await fetch(url, options);
+            if (resp.status !== 404 || attempt >= delaysMs.length) return resp;
+            updateStatus(`DIAG: ${label} got 404 (Graph index lag), retrying in ${delaysMs[attempt]}ms (attempt ${attempt + 1}/${delaysMs.length})...`);
+            await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+        }
+    }
+
     async function categorizeViaGraph(item, categoryName) {
-        // DIAGNOSTIC markers at every step, added 2026-10-19 -- category still not appearing on
-        // fresh project codes after the master-category-cleanup revert, despite that revert
-        // restoring byte-identical logic to the last confirmed-working commit. Something earlier
-        // in this chain (saveAsync, getItemIdAsync, Mail.ReadWrite token acquisition -- the first
-        // time this scope is ever requested for a given MSAL session, it may need an interactive
-        // popup the user might not notice -- or the Graph GET/PATCH itself) may be the actual
-        // failure point, not the client-cache-sync step this function already had visibility
-        // into. Remove once the real failure point is confirmed and fixed.
+        // DIAGNOSTIC markers at every step, added 2026-10-19 -- kept after the 404 root-cause fix
+        // above so the retry path (and any *other* failure point) stays visible without DevTools.
         updateStatus("DIAG: saveAsync()...");
         await new Promise((resolve, reject) => {
             item.saveAsync((result) => {
@@ -1785,17 +1798,25 @@
         updateStatus("DIAG: token acquired, reading current categories via Graph...");
         const headers = { Authorization: `Bearer ${token}` };
 
-        const getResp = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${restId}?$select=categories`, { headers });
+        const getResp = await fetchWithRetryOn404(
+            `https://graph.microsoft.com/v1.0/me/messages/${restId}?$select=categories`,
+            { headers },
+            "Graph GET"
+        );
         if (!getResp.ok) throw new Error(`Could not read current categories (Graph GET ${getResp.status})`);
         const current = (await getResp.json()).categories || [];
         const merged = [...current.filter((c) => !PROJECT_CATEGORY_PATTERN.test(c)), categoryName];
 
         updateStatus(`DIAG: writing categories via Graph PATCH: [${merged.join(", ")}]...`);
-        const patchResp = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${restId}`, {
-            method: "PATCH",
-            headers: { ...headers, "Content-Type": "application/json" },
-            body: JSON.stringify({ categories: merged })
-        });
+        const patchResp = await fetchWithRetryOn404(
+            `https://graph.microsoft.com/v1.0/me/messages/${restId}`,
+            {
+                method: "PATCH",
+                headers: { ...headers, "Content-Type": "application/json" },
+                body: JSON.stringify({ categories: merged })
+            },
+            "Graph PATCH"
+        );
         if (!patchResp.ok) {
             const body = await patchResp.text().catch(() => "");
             throw new Error(`Graph PATCH failed (${patchResp.status}): ${body}`);
