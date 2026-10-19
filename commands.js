@@ -207,9 +207,21 @@ function onMessageComposeHandler(event) {
             }
           ]
         },
-        () => event.completed()
+        (result) => {
+          // The missing piece until now: this callback never checked result.status, so a
+          // failed addAsync for the REAL InsightMessage was indistinguishable from a successful
+          // one -- confirmed live 2026-10-19 as the likely explanation for a forward where the
+          // prompt never appeared at all (only the "about to call it" diag marker did).
+          if (result.status === Office.AsyncResultStatus.Failed) {
+            diagNotify("InsightMessage addAsync FAILED: code=" + result.error.code + " message=" + result.error.message);
+          } else {
+            diagNotify("InsightMessage addAsync SUCCEEDED -- banner should be visible now");
+          }
+          event.completed();
+        }
       );
     } catch (err) {
+      diagNotify("showPrompt threw synchronously: " + err.message);
       console.error("onMessageComposeHandler: threw synchronously:", err);
       event.completed();
     }
