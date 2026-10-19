@@ -203,7 +203,17 @@ function onMessageComposeHandler(event) {
               // its task pane is already open"): the already-open pane gets this value via the
               // InitializationContextChanged event instead of a URL. taskpane.html checks both
               // paths -- the query string for a fresh open, this for an already-open one.
-              contextData: "fileOnCompose"
+              //
+              // REGRESSION FOUND 2026-10-19: this worked (banner visible, clickable) before
+              // contextData was added here, and failed every test since -- clean before/after
+              // split. Microsoft's own docs for this property explicitly describe a
+              // JSON.stringify()/JSON.parse() round trip even though the type is just `string`;
+              // a bare, non-JSON-encoded string was passed here instead. Theory: addAsync's own
+              // validation is shallow (hence it still reported Succeeded), but the later
+              // rendering pipeline silently chokes on a contextData value that isn't valid JSON.
+              // JSON.stringify()'d here; taskpane.html must JSON.parse() it back on both the
+              // getInitializationContextAsync() and InitializationContextChanged paths.
+              contextData: JSON.stringify("fileOnCompose")
             }
           ]
         },

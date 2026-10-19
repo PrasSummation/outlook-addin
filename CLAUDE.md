@@ -856,6 +856,19 @@ already covered by this manifest) for the already-open-pane case, since which pa
 actually takes isn't something this code controls. Both paths converge on the same
 `focContextRequested` flag that gates calling `openComposeFilingDialog()`.
 
+**That fix itself regressed the banner's visibility, found and fixed 2026-10-19**: a clean
+before/after split — the InsightMessage banner rendered reliably *before* `contextData` was
+added above, and silently stopped rendering on every test since (`addAsync` kept reporting
+`Succeeded`, but nothing ever appeared — confirmed on a forward, a deliberately blank new email,
+and again after a full Outlook restart, ruling out both "forward/content-specific" and
+"session-accumulated state" as the explanation). Root cause: `contextData` is typed as a plain
+`string`, but Microsoft's own docs for it describe a `JSON.stringify()`/`JSON.parse()` round
+trip regardless — a bare, non-JSON-encoded string was passed instead. Theory: `addAsync`'s own
+validation is shallow (hence it kept reporting success), but the later rendering pipeline
+silently chokes on a `contextData` value that isn't valid JSON. Fixed by JSON-encoding it
+(`commands.js`) and parsing it back out on both paths (`taskpane.html`). **Not yet
+independently confirmed this resolves it** — reproduce live before trusting it.
+
 ## File on Send: Smart Alerts redesign, re-disabled after a live-blocking incident (2026-10-16)
 
 **Current status: `FILE_ON_SEND_ENABLED = false` again.** The redesign below was enabled, tested

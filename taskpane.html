@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.10";
+    const APP_VERSION = "11.11";
 
     let msalInstance;
     let folderEntries = [];
@@ -478,8 +478,13 @@
             const item = Office.context.mailbox.item;
             if (!item || !item.getInitializationContextAsync) { resolve(); return; }
             item.getInitializationContextAsync((result) => {
-                if (result.status === Office.AsyncResultStatus.Succeeded && result.value === "fileOnCompose") {
-                    focContextRequested = true;
+                // contextData arrives JSON-encoded (commands.js JSON.stringify()'s it, matching
+                // Microsoft's own documented round trip) -- parse before comparing, and ignore
+                // (not throw) if it's empty or isn't valid JSON.
+                if (result.status === Office.AsyncResultStatus.Succeeded && result.value) {
+                    try {
+                        if (JSON.parse(result.value) === "fileOnCompose") focContextRequested = true;
+                    } catch (err) { /* not our contextData, ignore */ }
                 }
                 resolve();
             });
@@ -493,9 +498,11 @@
         // contextData to this still-running pane instead of a fresh navigation.
         if (Office.context.mailbox.item && Office.context.mailbox.item.addHandlerAsync) {
             Office.context.mailbox.item.addHandlerAsync(Office.EventType.InitializationContextChanged, (event) => {
-                if (event.initializationContextData === "fileOnCompose") {
-                    openComposeFilingDialog();
-                }
+                try {
+                    if (JSON.parse(event.initializationContextData) === "fileOnCompose") {
+                        openComposeFilingDialog();
+                    }
+                } catch (err) { /* not our contextData, ignore */ }
             });
         }
 
