@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.14";
+    const APP_VERSION = "11.15";
 
     let msalInstance;
     let folderEntries = [];
@@ -1725,12 +1725,22 @@
     // categories first and keep anything that isn't a stale project tag, same convention as
     // that script, rather than overwrite a reply/forward's other inherited categories.
     async function categorizeViaGraph(item, categoryName) {
+        // DIAGNOSTIC markers at every step, added 2026-10-19 -- category still not appearing on
+        // fresh project codes after the master-category-cleanup revert, despite that revert
+        // restoring byte-identical logic to the last confirmed-working commit. Something earlier
+        // in this chain (saveAsync, getItemIdAsync, Mail.ReadWrite token acquisition -- the first
+        // time this scope is ever requested for a given MSAL session, it may need an interactive
+        // popup the user might not notice -- or the Graph GET/PATCH itself) may be the actual
+        // failure point, not the client-cache-sync step this function already had visibility
+        // into. Remove once the real failure point is confirmed and fixed.
+        updateStatus("DIAG: saveAsync()...");
         await new Promise((resolve, reject) => {
             item.saveAsync((result) => {
                 if (result.status === Office.AsyncResultStatus.Failed) reject(result.error);
                 else resolve();
             });
         });
+        updateStatus("DIAG: getItemIdAsync()...");
         const itemId = await new Promise((resolve, reject) => {
             item.getItemIdAsync((result) => {
                 if (result.status === Office.AsyncResultStatus.Failed) reject(result.error);
@@ -1738,7 +1748,9 @@
             });
         });
         const restId = Office.context.mailbox.convertToRestId(itemId, Office.MailboxEnums.RestVersion.v2_0);
+        updateStatus("DIAG: acquiring Mail.ReadWrite token...");
         const token = await signInAndGetToken(mailWriteRequest, true);
+        updateStatus("DIAG: token acquired, reading current categories via Graph...");
         const headers = { Authorization: `Bearer ${token}` };
 
         const getResp = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${restId}?$select=categories`, { headers });
@@ -1746,6 +1758,7 @@
         const current = (await getResp.json()).categories || [];
         const merged = [...current.filter((c) => !PROJECT_CATEGORY_PATTERN.test(c)), categoryName];
 
+        updateStatus(`DIAG: writing categories via Graph PATCH: [${merged.join(", ")}]...`);
         const patchResp = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${restId}`, {
             method: "PATCH",
             headers: { ...headers, "Content-Type": "application/json" },
@@ -1755,6 +1768,7 @@
             const body = await patchResp.text().catch(() => "");
             throw new Error(`Graph PATCH failed (${patchResp.status}): ${body}`);
         }
+        updateStatus("DIAG: Graph PATCH succeeded, syncing to local cache...");
 
         // BUG FOUND LIVE 2026-10-16, FIX CONFIRMED 2026-10-19: the Graph write above didn't
         // survive sending -- category gone from the sent copy. Root cause (corroborated by a
