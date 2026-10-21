@@ -218,10 +218,20 @@ function Get-SanitizedNamePart {
 function New-EmailFileName {
     # "YYYY-MM-DD HHMM - {From name} - {Subject}.eml", RE:/FW: stripped, capped at 100
     # characters at a word boundary, with a 6-hex-char hash suffix appended on collision.
+    #
+    # BUG FOUND LIVE 2026-10-21: a genuinely blank-subject email (real, not rare) made $Subject
+    # an empty string, and PowerShell rejects an empty string for a [Parameter(Mandatory)][string]
+    # by default -- "Cannot bind argument to parameter 'Subject' because it is an empty string."
+    # That exception was thrown before this function's body ever ran, so the email was never
+    # filed and never moved out of staging, meaning it retried on every single 5-minute run
+    # forever -- confirmed live via Application Insights: 16,000+ occurrences accumulating since
+    # 2026-10-07, growing every day. [AllowEmptyString()] on both string parameters fixes it (an
+    # empty FromName is less likely given Graph always supplies either a display name or the bare
+    # address, but cheap insurance against the same class of failure).
     param(
         [Parameter(Mandatory)][DateTime]$SentLocal,
-        [Parameter(Mandatory)][string]$FromName,
-        [Parameter(Mandatory)][string]$Subject,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$FromName,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Subject,
         [string]$CollisionHashSuffix
     )
     $cleanSubject = $Subject -replace '(?i)^(re|fw|fwd):\s*', ''
