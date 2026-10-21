@@ -635,7 +635,18 @@ object with its own `getAsync()`/`setAsync()`. `openComposeFilingDialog()` (`tas
 `fetchSuggestions()` entirely: `sendContext.subject` was an object, `.slice()` on it threw, caught
 by that function's own `try/catch` — so suggestions never ran at all (not a weak-signal problem, a
 never-even-called one). **Fixed**: `openComposeFilingDialog()` now awaits `item.subject.getAsync()`
-properly before building the context. **Not yet live-tested.**
+properly before building the context. **Confirmed live 2026-10-21**: suggestions now appear.
+
+**Save Both still greyed out, confirmed genuinely finding nothing — not the self-reply false
+alarm**: ruled out live — the original sender was a real external address, not the signed-in
+user's own. The "not sent by me" heuristic itself (or the conversationId match it depends on) is
+failing for a real case. **Added, not yet a fix**: `findOriginalMessage()` now records *why* it
+came back empty (`lastOriginalLookupResult`) — no conversationId at all, no token, Graph returned
+zero messages for that conversationId (points at a conversationId mismatch between Office.js and
+Graph), or Graph returned messages but every one was attributed to the signed-in user's own
+address (points at the matching logic or a shared/delegate-mailbox from-address mismatch instead)
+— and `selectProject()`'s "Original message not found" text now appends that reason. Next live
+test should say which of these it actually is.
 - Both dialogs share the same `matchesProjectCode(folderName, code)` helper (leading
   `CODE` matched against the folder name, same regex family as `extractProjectNumber`) to
   resolve a suggestion's bare project code back to one of the currently-loaded folder

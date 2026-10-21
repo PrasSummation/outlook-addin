@@ -677,7 +677,11 @@
                         document.getElementById("saveBothButton").focus();
                     }
                 } else {
-                    document.getElementById("confirmOriginalLine").textContent = "Original message not found -- only the reply can be filed.";
+                    const why = lastOriginalLookupResult && lastOriginalLookupResult.reason
+                        ? ` (${lastOriginalLookupResult.reason})`
+                        : "";
+                    document.getElementById("confirmOriginalLine").textContent =
+                        `Original message not found -- only the reply can be filed.${why}`;
                     document.getElementById("saveBothButton").disabled = true;
                 }
             };
@@ -723,11 +727,27 @@
     // the early, suggestions-driven call must stay silent (startOriginalMessageLookup() below),
     // while selectProject()'s own fallback call may prompt interactively, since by then the user
     // has taken a deliberate action.
+    // lastOriginalLookupResult records *why* the most recent call came back empty (no
+    // conversationId at all, no token, zero Graph matches, or matches that were all sent by the
+    // signed-in user) -- added 2026-10-21 so selectProject()'s "not found" message can say which
+    // of those actually happened, confirmed live to matter: a reply to a genuine external sender
+    // still came back "not found", which this alone can't explain without knowing whether Graph
+    // returned zero messages for the conversationId (points at a conversationId mismatch) or
+    // returned messages that were all attributed to the signed-in user (points at the "not sent
+    // by me" matching logic itself, or a shared/delegate-mailbox from-address mismatch).
+    let lastOriginalLookupResult = null;
+
     async function findOriginalMessage(isUserAction) {
-        if (!sendContext.conversationId) return null;
+        if (!sendContext.conversationId) {
+            lastOriginalLookupResult = { reason: "no conversationId was available to search with" };
+            return null;
+        }
         try {
             const token = await signInAndGetToken(mailWriteRequest, isUserAction);
-            if (!token) return null;
+            if (!token) {
+                lastOriginalLookupResult = { reason: "could not get permission to check (no token)" };
+                return null;
+            }
             const account = msalInstance.getActiveAccount();
             const myAddress = (account && account.username || "").toLowerCase();
             const url = "https://graph.microsoft.com/v1.0/me/messages?$filter=" +
@@ -735,12 +755,19 @@
                 "&$orderby=receivedDateTime desc&$top=10&$select=id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime";
             const data = await graphGet(url, token);
             const messages = data.value || [];
-            return messages.find(m => {
+            const found = messages.find(m => {
                 const addr = (m.from && m.from.emailAddress && m.from.emailAddress.address || "").toLowerCase();
                 return addr && addr !== myAddress;
             }) || null;
+            if (!found) {
+                lastOriginalLookupResult = messages.length === 0
+                    ? { reason: `Graph found 0 messages for this conversationId (self=${myAddress || "?"})` }
+                    : { reason: `Graph found ${messages.length} message(s) in this thread, but every one was attributed to ${myAddress || "you"}` };
+            }
+            return found;
         } catch (err) {
             console.error("Could not look up the original message:", err);
+            lastOriginalLookupResult = { reason: `lookup failed: ${err.message || err}` };
             return null;
         }
     }
