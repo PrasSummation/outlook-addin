@@ -216,13 +216,51 @@ codebase) instead of removing it; `sweepPendingMasterCategories()` (called at th
 removes everything *previously* queued via `masterCategories.removeAsync()` — never the entry
 this run just added, which only gets queued for the run after it. By the time a previous run's
 entry is swept, it's always a different, already-settled item, sidestepping the same-item timing
-issue that broke the immediate-removal attempt. **Not yet live-tested** — reproduce by filing two
-different projects in separate sessions and confirming the first project's category survives on
-its own sent copy (sweeping should never affect an already-sent item's own category string, only
-the master list's remembered entry) while the master list itself stops accumulating.
+issue that broke the immediate-removal attempt. **Confirmed live 2026-10-20**: category survived
+on the sent copy, and the master list cleaned up (the previous run's entry removed) once a
+second filing run completed.
 
-Once each remaining question is settled, remove its markers/diagnostic button and this section —
-don't let these linger as permanent debug scaffolding.
+**End-to-end status as of 2026-10-20: the whole compose-time filing chain is confirmed working**
+— InsightMessage banner → `commandId`/`contextData` dispatch → picker dialog → Graph write (with
+404 retry) → client-cache-sync → deferred master-list sweep. Every individual bug this chain hit
+is now fixed and live-verified.
+
+**Item 3 (compose-time filing chain) diagnostics removed, 2026-10-21**: every `DIAG:`-prefixed
+`updateStatus()`/`diagNotify()` call and the always-visible top banner (`#diagTopBanner`) are
+gone from `taskpane.html`/`commands.js` — `updateStatus()` now shows plain, final-outcome
+messages only (`"Filing to X..."`, `"Filed to X."`, or a plain error), and the retry/sweep
+mechanisms this debugging round built stay in place, just silent unless they fail. Four more
+changes landed in the same pass:
+- `fetchWithRetryOn404()`'s retry count bumped from 4 to 6 attempts (now
+  300/600/1200/2400/4800/9600ms backoff) for extra headroom on a slower Graph sync.
+- A filing failure now also pops a `window.alert()` (`alertFilingFailure()`), in addition to the
+  `updateStatus(..., true)` red line — the whole point of the extra retries is to make this a rare
+  event, so when it does happen it needs to be impossible to miss rather than just a quiet status
+  line the user might not be looking at.
+- **"Save Both" casing bug found and fixed**: `file-on-send-dialog.html`'s `isReplyLike` check
+  (and its `findOriginalMessage()`-driven Save Both/Reply Only UI, which was already fully built)
+  compares `sendContext.composeType` against lowercase `"reply"`/`"forward"`, but
+  `openComposeFilingDialog()` (`taskpane.html`) was passing `getComposeTypeAsync()`'s raw
+  PascalCase value (`"Reply"`/`"Forward"`/`"NewMail"`) straight through unlowercased — so
+  `isReplyLike` was always false, every real reply/forward got the single plain "Save" button, and
+  Save Both never had a chance to run. Fixed by lowercasing `composeType` before it goes into the
+  dialog's URL `context`. Save Both's own logic (`findOriginalMessage()`, `fileOriginalMessage()`
+  via the exchange-bridge, same as a one-item File Email batch) was already correct and didn't
+  need to change — it just never used to get the chance to run in this flow.
+- **New: auto-apply the original's project code on a reply/forward**
+  (`findOriginalMessageCategory()`, `taskpane.html`). Before opening the picker at all,
+  `openComposeFilingDialog()` now checks (silent-token-only, never an interactive popup) whether
+  "the original" — same best-effort conversationId lookup as Save Both's own `findOriginalMessage()`
+  — already carries a project category, and if so calls `categorizeViaGraph()` with that same code
+  directly, skipping the manual search-and-pick step entirely. Falls through to the normal picker
+  if no original is found, the lookup fails, or the original isn't categorized. **Not yet
+  live-tested** — reproduce on a reply to an already-filed thread and confirm it files without the
+  picker appearing at all.
+
+Items 1 (File Email multi-select diag button) and 2 (File on Send Smart Alerts, still
+`FILE_ON_SEND_ENABLED = false`) remain open — don't remove `fileEmailDialogHandlerDiag` or its
+manifest button, or `diagNotify()`/`withTimeout()` (still used by that handler), until those are
+separately resolved.
 
 ## File Email is a dialog, not a wizard (changed 2026-10-06)
 

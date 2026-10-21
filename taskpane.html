@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.18";
+    const APP_VERSION = "11.19";
 
     let msalInstance;
     let folderEntries = [];
@@ -472,21 +472,12 @@
     // already-open pane, or via getInitializationContextAsync() on a fresh one -- check both,
     // since which path Outlook takes isn't something this code controls.
     let focContextRequested = focDeepLinkRequested;
-    // DIAGNOSTIC, added 2026-10-19: raw values behind the dispatch decision, shown in an
-    // always-visible top banner so they can't be missed/scrolled past the way #statusMessage's
-    // single quiet line can be (easy to miss when attention is on the "Choose project" dialog,
-    // or after the pane settles back on the general menu once the dialog closes). Remove once
-    // this dispatch and the categorize-via-Graph chain are both confirmed reliable.
-    let diagInitContextRaw = "(not called / no item)";
 
     function checkInitializationContext() {
         return new Promise((resolve) => {
             const item = Office.context.mailbox.item;
             if (!item || !item.getInitializationContextAsync) { resolve(); return; }
             item.getInitializationContextAsync((result) => {
-                diagInitContextRaw = result.status === Office.AsyncResultStatus.Succeeded
-                    ? `status=Succeeded value=${JSON.stringify(result.value)}`
-                    : `status=Failed error=${result.error && result.error.message}`;
                 // contextData arrives JSON-encoded (commands.js JSON.stringify()'s it, matching
                 // Microsoft's own documented round trip) -- parse before comparing, and ignore
                 // (not throw) if it's empty or isn't valid JSON.
@@ -502,20 +493,6 @@
 
     async function appInit() {
         await checkInitializationContext();
-
-        // DIAGNOSTIC banner, added 2026-10-19: always visible regardless of which view ends up
-        // rendering (unlike updateStatus(), whose #statusMessage element may be scrolled off or
-        // out of view, e.g. behind the "Choose project" dialog, or not looked at by the time the
-        // dialog closes). Starts with the dispatch decision; updateStatus() below mirrors every
-        // later status update (including the categorizeViaGraph() step-by-step chain) into it too,
-        // so the whole flow is visible in one place no matter what's on screen. Remove once the
-        // underlying flow is confirmed reliable.
-        const diagBanner = document.createElement("div");
-        diagBanner.id = "diagTopBanner";
-        diagBanner.textContent = `DIAG: search="${window.location.search}" initContext=[${diagInitContextRaw}] focContextRequested=${focContextRequested}`;
-        diagBanner.style.cssText = "background:#fff3cd;color:#664d03;border-bottom:2px solid #ffda6a;" +
-            "padding:8px 10px;font:600 11px sans-serif;position:sticky;top:0;z-index:9999;word-break:break-all;";
-        document.body.insertAdjacentElement("afterbegin", diagBanner);
 
         // Covers the already-open-pane case: fires if/when Outlook delivers a *new*
         // contextData to this still-running pane instead of a fresh navigation.
@@ -647,15 +624,6 @@
     function updateStatus(message, isError = false) {
         document.getElementById("statusMessage").innerText = message;
         document.getElementById("statusMessage").style.color = isError ? "red" : "#333";
-        // Mirror into the always-visible DIAG banner (see appInit()) -- #statusMessage can be
-        // off-screen or behind the compose-filing dialog when this fires.
-        const diagBanner = document.getElementById("diagTopBanner");
-        if (diagBanner) {
-            diagBanner.textContent = `DIAG STATUS: ${message}`;
-            diagBanner.style.background = isError ? "#f8d7da" : "#fff3cd";
-            diagBanner.style.color = isError ? "#842029" : "#664d03";
-            diagBanner.style.borderBottomColor = isError ? "#f1aeb5" : "#ffda6a";
-        }
     }
 
     async function signInAndGetToken(request, isUserAction = false) {
@@ -1756,36 +1724,30 @@
     // lesson already learned the hard way in email-filing-sync's sync.ps1) -- GET the current
     // categories first and keep anything that isn't a stale project tag, same convention as
     // that script, rather than overwrite a reply/forward's other inherited categories.
-    // ROOT CAUSE FOUND LIVE 2026-10-19: the Graph GET right after saveAsync() was 404ing --
-    // confirmed via the step-by-step DIAG markers below ("Could not read current categories
-    // (Graph GET 404)"). This is a known class of race: item.saveAsync() returns once the EWS
-    // write lands, but Graph's own index of the mailbox can lag a short moment behind it, so an
-    // immediate GET on the just-created draft can 404 even though the save genuinely succeeded --
-    // explains "worked once, then stopped" (timing-dependent) rather than a logic bug (the
-    // master-category-cleanup revert was byte-identical and didn't fix it, because it was never
-    // the cause). Fixed with a short retry-with-backoff scoped to exactly a 404 on this freshly-
-    // saved item; any other status still fails immediately, same as before.
+    // Fix confirmed live 2026-10-19/20: the Graph GET right after saveAsync() can 404 even
+    // though the save genuinely succeeded -- item.saveAsync() returns once the EWS write lands,
+    // but Graph's own index of the mailbox can lag a short moment behind it. A short
+    // retry-with-backoff scoped to exactly a 404 on this freshly-saved item fixes it; any other
+    // status still fails immediately. Bumped to 6 attempts (2026-10-21) for extra headroom on a
+    // slower sync.
     async function fetchWithRetryOn404(url, options, label) {
-        const delaysMs = [300, 600, 1200, 2400];
+        const delaysMs = [300, 600, 1200, 2400, 4800, 9600];
         for (let attempt = 0; ; attempt++) {
             const resp = await fetch(url, options);
             if (resp.status !== 404 || attempt >= delaysMs.length) return resp;
-            updateStatus(`DIAG: ${label} got 404 (Graph index lag), retrying in ${delaysMs[attempt]}ms (attempt ${attempt + 1}/${delaysMs.length})...`);
+            updateStatus(`${label} not ready yet, retrying (${attempt + 1}/${delaysMs.length})...`);
             await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
         }
     }
 
     async function categorizeViaGraph(item, categoryName) {
-        // DIAGNOSTIC markers at every step, added 2026-10-19 -- kept after the 404 root-cause fix
-        // above so the retry path (and any *other* failure point) stays visible without DevTools.
-        updateStatus("DIAG: saveAsync()...");
+        updateStatus(`Filing to ${categoryName}...`);
         await new Promise((resolve, reject) => {
             item.saveAsync((result) => {
                 if (result.status === Office.AsyncResultStatus.Failed) reject(result.error);
                 else resolve();
             });
         });
-        updateStatus("DIAG: getItemIdAsync()...");
         const itemId = await new Promise((resolve, reject) => {
             item.getItemIdAsync((result) => {
                 if (result.status === Office.AsyncResultStatus.Failed) reject(result.error);
@@ -1793,21 +1755,18 @@
             });
         });
         const restId = Office.context.mailbox.convertToRestId(itemId, Office.MailboxEnums.RestVersion.v2_0);
-        updateStatus("DIAG: acquiring Mail.ReadWrite token...");
         const token = await signInAndGetToken(mailWriteRequest, true);
-        updateStatus("DIAG: token acquired, reading current categories via Graph...");
         const headers = { Authorization: `Bearer ${token}` };
 
         const getResp = await fetchWithRetryOn404(
             `https://graph.microsoft.com/v1.0/me/messages/${restId}?$select=categories`,
             { headers },
-            "Graph GET"
+            "Reading current categories"
         );
         if (!getResp.ok) throw new Error(`Could not read current categories (Graph GET ${getResp.status})`);
         const current = (await getResp.json()).categories || [];
         const merged = [...current.filter((c) => !PROJECT_CATEGORY_PATTERN.test(c)), categoryName];
 
-        updateStatus(`DIAG: writing categories via Graph PATCH: [${merged.join(", ")}]...`);
         const patchResp = await fetchWithRetryOn404(
             `https://graph.microsoft.com/v1.0/me/messages/${restId}`,
             {
@@ -1815,13 +1774,12 @@
                 headers: { ...headers, "Content-Type": "application/json" },
                 body: JSON.stringify({ categories: merged })
             },
-            "Graph PATCH"
+            "Writing categories"
         );
         if (!patchResp.ok) {
             const body = await patchResp.text().catch(() => "");
             throw new Error(`Graph PATCH failed (${patchResp.status}): ${body}`);
         }
-        updateStatus("DIAG: Graph PATCH succeeded, syncing to local cache...");
 
         // BUG FOUND LIVE 2026-10-16, FIX CONFIRMED 2026-10-19: the Graph write above didn't
         // survive sending -- category gone from the sent copy. Root cause (corroborated by a
@@ -1916,7 +1874,7 @@
                         else resolve();
                     });
                 });
-                updateStatus(`DIAG: swept previously-filed category "${categoryName}" from the master list`);
+                console.log(`Swept previously-filed category "${categoryName}" from the master list`);
             } catch (err) {
                 console.error(`Could not sweep master category "${categoryName}" (will retry next run):`, err);
                 stillPending.push(categoryName);
@@ -1954,41 +1912,100 @@
         });
     }
 
+    // Surfaces a filing failure as a hard-to-miss modal, in addition to the status line --
+    // added 2026-10-21 so an exhausted Graph GET/PATCH retry (or any other filing failure)
+    // can't go unnoticed just because the task pane isn't being looked at.
+    function alertFilingFailure(categoryName, err) {
+        try {
+            window.alert(`Could not file this email to ${categoryName}:\n\n${err.message || err}\n\nThe email itself is unaffected -- you'll need to file it manually.`);
+        } catch (alertErr) {
+            console.error("Could not show the filing-failure alert:", alertErr);
+        }
+    }
+
+    // Checks whether "the original" (the most recent message in this conversation not sent by
+    // the signed-in user -- same best-effort definition file-on-send-dialog.html's
+    // findOriginalMessage() uses for Save Both) already carries a project category. Added
+    // 2026-10-21 so a reply/forward in an already-filed thread gets the same code automatically
+    // instead of making the user search for it again. Silent-token-only (isUserAction=false):
+    // this runs proactively before the user has asked to file anything, so it must never pop an
+    // interactive sign-in prompt -- if silent auth isn't available yet, it just skips the check.
+    async function findOriginalMessageCategory(conversationId) {
+        if (!conversationId) return null;
+        try {
+            const token = await signInAndGetToken(mailWriteRequest, false);
+            if (!token) return null;
+            const account = msalInstance.getActiveAccount();
+            const myAddress = ((account && account.username) || "").toLowerCase();
+            const url = "https://graph.microsoft.com/v1.0/me/messages?$filter=" +
+                encodeURIComponent(`conversationId eq '${conversationId}'`) +
+                "&$orderby=receivedDateTime desc&$top=10&$select=from,categories";
+            const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+            if (!resp.ok) return null;
+            const messages = (await resp.json()).value || [];
+            const original = messages.find((m) => {
+                const addr = ((m.from && m.from.emailAddress && m.from.emailAddress.address) || "").toLowerCase();
+                return addr && addr !== myAddress;
+            });
+            if (!original) return null;
+            return (original.categories || []).find((c) => PROJECT_CATEGORY_PATTERN.test(c)) || null;
+        } catch (err) {
+            console.error("Could not check the original message's category (non-fatal):", err);
+            return null;
+        }
+    }
+
     async function openComposeFilingDialog() {
-        // DIAGNOSTIC markers throughout, added 2026-10-16 -- temporary, remove once the
-        // compose-time filing chain (InsightMessage banner -> commandId -> this deep link ->
-        // this dialog -> categories.addAsync) is confirmed working end to end. updateStatus()
-        // is this page's own visible-without-DevTools channel (unlike commands.js's restricted
-        // runtime, this page is a normal webview with real DevTools too, but updateStatus also
-        // means Pras doesn't need them open to see where this got to).
-        updateStatus("DIAG: openComposeFilingDialog() started");
         const item = Office.context.mailbox.item;
         const composeTypeResult = await officeAsync(item, "getComposeTypeAsync").catch(() => null);
+        // Office.js's ComposeType enum values are "NewMail"/"Reply"/"Forward" (PascalCase) --
+        // lowercased here to match file-on-send-dialog.html's isReplyLike check, which expects
+        // "reply"/"forward". Fixed 2026-10-21: the mismatched casing meant isReplyLike was
+        // always false for every real reply/forward, so "Save Both" never showed at all.
+        const composeType = ((composeTypeResult && composeTypeResult.composeType) || "newMail").toLowerCase();
+        const isReplyLike = composeType === "reply" || composeType === "forward";
+
+        // Auto-apply the original's project code on a reply/forward, added 2026-10-21, instead
+        // of always making the user search for a project that's already known from the thread.
+        if (isReplyLike) {
+            const inheritedCategory = await findOriginalMessageCategory(item.conversationId);
+            if (inheritedCategory) {
+                try {
+                    const outcome = await categorizeViaGraph(item, inheritedCategory);
+                    updateStatus(outcome.cacheSynced
+                        ? `Filed to ${inheritedCategory} (matched the original email).`
+                        : `Filed to ${inheritedCategory} via Graph, but the client-side cache sync failed -- it may not survive Send.`,
+                        !outcome.cacheSynced);
+                } catch (err) {
+                    console.error("Could not auto-file to match the original email's category:", err);
+                    updateStatus(`Could not file this email: ${err.message || err}`, true);
+                    alertFilingFailure(inheritedCategory, err);
+                }
+                return;
+            }
+        }
+
         const context = {
-            composeType: composeTypeResult?.composeType || "newMail",
+            composeType,
             subject: item.subject || "(no subject)",
             conversationId: item.conversationId || null
         };
         const url = `https://prassummation.github.io/outlook-addin/file-on-send-dialog.html?context=${encodeURIComponent(JSON.stringify(context))}`;
 
-        updateStatus("DIAG: calling displayDialogAsync...");
         Office.context.ui.displayDialogAsync(url, { height: 70, width: 40 }, (asyncResult) => {
             if (asyncResult.status === Office.AsyncResultStatus.Failed) {
                 console.error("Could not open the project picker:", asyncResult.error);
-                updateStatus(`DIAG FAILED: displayDialogAsync: ${asyncResult.error.message} (code ${asyncResult.error.code})`, true);
+                updateStatus(`Could not open the project picker: ${asyncResult.error.message}`, true);
                 return;
             }
-            updateStatus("DIAG: dialog opened -- waiting for a pick, cancel, or skip...");
             const dialog = asyncResult.value;
 
             dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
                 let message;
                 try { message = JSON.parse(arg.message); } catch (err) {
-                    updateStatus("DIAG: received an unparseable dialog message, closing", true);
                     dialog.close();
                     return;
                 }
-                updateStatus(`DIAG: dialog message received, action="${message.action}"`);
 
                 if (message.action === "ready") return; // no send to watchdog here, nothing to do
                 if (message.action === "cancel" || message.action === "skip") {
@@ -1996,21 +2013,16 @@
                     return;
                 }
                 if (message.action === "save" && message.categoryName) {
-                    updateStatus(`DIAG: filing via Graph ("${message.categoryName}")...`);
                     categorizeViaGraph(item, message.categoryName).then((outcome) => {
-                        // DIAGNOSTIC wording, added 2026-10-19: spells out the client-cache-sync
-                        // outcome explicitly rather than a blind "Filed to X.", since that
-                        // blind message is exactly what made the previous cache-sync failure
-                        // invisible in testing -- the Graph write succeeding was never in
-                        // doubt, only whether it survives the user's next Send.
                         updateStatus(outcome.cacheSynced
-                            ? `Filed to ${message.categoryName}. (DIAG: client cache synced OK)`
-                            : `Filed to ${message.categoryName} via Graph, but DIAG: client cache sync FAILED (${outcome.cacheSyncError?.message || outcome.cacheSyncError}) -- may not survive Send.`,
+                            ? `Filed to ${message.categoryName}.`
+                            : `Filed to ${message.categoryName} via Graph, but the client-side cache sync failed -- it may not survive Send.`,
                             !outcome.cacheSynced);
                         dialog.close();
                     }).catch((err) => {
                         console.error("Could not file this email via Graph:", err);
                         updateStatus(`Could not file this email: ${err.message || err}`, true);
+                        alertFilingFailure(message.categoryName, err);
                         dialog.close();
                     });
                     return;
@@ -2019,7 +2031,7 @@
             });
 
             dialog.addEventHandler(Office.EventType.DialogEventReceived, (arg) => {
-                updateStatus(`DIAG: dialog closed/errored unexpectedly, EventReceived code=${arg && arg.error}`, true);
+                console.error("Project picker dialog closed/errored unexpectedly:", arg && arg.error);
             });
         });
     }

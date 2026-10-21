@@ -46,23 +46,11 @@ const FILE_ON_SEND_ENABLED = false;
 // email-filing-sync's sync.ps1) -- 5 letters + 5 digits + "_" or "-", e.g. "SUPER26099_...".
 const PROJECT_CATEGORY_PATTERN = /^[a-zA-Z]{5}\d{5}[_-]/;
 
-// DIAGNOSTIC HELPERS, added 2026-10-16 -- temporary, remove once the two things below are
-// settled one way or the other: (1) whether File Email's ExecuteFunction+multi-select+dialog
-// combo can be made to work at all (fileEmailDialogHandlerDiag, below), (2) whether the Smart
-// Alerts File on Send redesign (onMessageSendHandler, above) actually reaches and shows its
-// Take Action button live. Classic Outlook's event/function-command runtime has no DevTools and
-// runtime logging doesn't capture this add-in's own console output (confirmed earlier this
-// session) -- notificationMessages banners on the live item are the one channel proven to
-// actually show up without either of those.
-//
-// FIXED 2026-10-16: originally gave each marker its own key so they'd stack into a visible
-// history -- but Outlook caps notifications at 5 per message, and that stacking silently ate
-// the InsightMessage prompt's own slot (confirmed live: 5 DIAG banners appeared, the real
-// "Choose project" prompt never did, no error anywhere since nothing checks that addAsync's own
-// result). Now reuses one fixed key via replaceAsync once it exists, so diagnostics always
-// occupy exactly one slot no matter how many steps get logged, leaving four free for real
-// content. If you need the pre-replace behavior back to see the stepped history, read it from
-// console.log on a client that has DevTools (web/new Outlook/Mac) instead of changing this back.
+// DIAGNOSTIC HELPERS, added 2026-10-16. The compose/send handlers below no longer call these --
+// the compose-time filing chain they were added to debug is confirmed working end to end as of
+// 2026-10-20 (see CLAUDE.md). Still used by fileEmailDialogHandlerDiag further down, which
+// remains a live, separate diagnostic (File Email's multi-select question) -- remove this block
+// too once that one is resolved and that diagnostic button comes out of the manifest.
 let diagNotificationExists = false;
 function diagNotify(message) {
   console.log("DIAG:", message); // free on clients that do have a console (web/new Outlook/Mac)
@@ -101,9 +89,6 @@ function withTimeout(promise, ms, label) {
 }
 
 function onMessageSendHandler(event) {
-  diagNotificationExists = false; // notifications are per-item -- this invocation is a fresh item
-  diagNotify("onMessageSendHandler invoked, FILE_ON_SEND_ENABLED=" + FILE_ON_SEND_ENABLED);
-
   if (!FILE_ON_SEND_ENABLED) {
     event.completed({ allowEvent: true });
     return;
@@ -121,22 +106,17 @@ function onMessageSendHandler(event) {
       // everywhere else in this handler. Includes the known case of Outlook on the web/new
       // Outlook on Windows, where the categories API isn't available on a Compose-mode item
       // at all (confirmed Microsoft platform limitation, not a bug here).
-      diagNotify("categories.getAsync FAILED: " + (result.error && result.error.message) + " -- allowing send");
       console.error("onMessageSendHandler: couldn't read categories, failing open:", result.error);
       event.completed({ allowEvent: true });
       return;
     }
 
-    const names = (result.value || []).map((c) => c.displayName).join(", ") || "(none)";
     const alreadyFiled = (result.value || []).some((c) => PROJECT_CATEGORY_PATTERN.test(c.displayName || ""));
-    diagNotify("categories.getAsync resolved: [" + names + "] -- alreadyFiled=" + alreadyFiled);
-
     if (alreadyFiled) {
       event.completed({ allowEvent: true });
       return;
     }
 
-    diagNotify("calling event.completed() with Take Action commandId -- watch for Outlook's own Smart Alerts dialog now");
     event.completed({
       allowEvent: false,
       errorMessage: "File this email to a project before sending.",
@@ -165,8 +145,6 @@ Office.actions.associate("onMessageSendHandler", onMessageSendHandler);
 // covered by this manifest's DefaultMinVersion 1.15).
 function onMessageComposeHandler(event) {
   const item = Office.context.mailbox.item;
-  diagNotificationExists = false; // notifications are per-item -- this invocation is a fresh item
-  diagNotify("onMessageComposeHandler invoked");
 
   // RESOLVED 2026-10-16, diagnostic removed: direct-called Office.context.ui.displayDialogAsync
   // from this exact handler to re-test whether it works specifically on OnMessageCompose (the
@@ -218,20 +196,15 @@ function onMessageComposeHandler(event) {
           ]
         },
         (result) => {
-          // The missing piece until now: this callback never checked result.status, so a
-          // failed addAsync for the REAL InsightMessage was indistinguishable from a successful
-          // one -- confirmed live 2026-10-19 as the likely explanation for a forward where the
-          // prompt never appeared at all (only the "about to call it" diag marker did).
+          // The missing piece until 2026-10-19: this callback never checked result.status, so a
+          // failed addAsync for the InsightMessage was indistinguishable from a successful one.
           if (result.status === Office.AsyncResultStatus.Failed) {
-            diagNotify("InsightMessage addAsync FAILED: code=" + result.error.code + " message=" + result.error.message);
-          } else {
-            diagNotify("InsightMessage addAsync SUCCEEDED -- banner should be visible now");
+            console.error("onMessageComposeHandler: InsightMessage addAsync failed:", result.error);
           }
           event.completed();
         }
       );
     } catch (err) {
-      diagNotify("showPrompt threw synchronously: " + err.message);
       console.error("onMessageComposeHandler: threw synchronously:", err);
       event.completed();
     }
@@ -243,18 +216,12 @@ function onMessageComposeHandler(event) {
   // to showing the prompt anyway -- unlike the send-time handler there's no send to protect
   // here, so erring toward "still visible" beats silently never offering to file it.
   item.categories.getAsync((result) => {
-    const names = result.status === Office.AsyncResultStatus.Succeeded
-      ? (result.value || []).map((c) => c.displayName).join(", ") || "(none)"
-      : "FAILED: " + (result.error && result.error.message);
     const alreadyFiled = result.status === Office.AsyncResultStatus.Succeeded
       && (result.value || []).some((c) => PROJECT_CATEGORY_PATTERN.test(c.displayName || ""));
-    diagNotify("categories.getAsync: [" + names + "] -- alreadyFiled=" + alreadyFiled);
 
     if (alreadyFiled) {
-      diagNotify("already filed -- skipping the InsightMessage prompt");
       event.completed();
     } else {
-      diagNotify("not filed -- calling notificationMessages.addAsync for the InsightMessage prompt now");
       showPrompt();
     }
   });
