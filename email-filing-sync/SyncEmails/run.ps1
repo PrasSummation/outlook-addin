@@ -16,21 +16,21 @@ param($Timer)
 
 Import-Module "$PSScriptRoot/../Modules/EmailFilingSync/EmailFilingSync.psm1" -Force
 
-# Added 2026-10-21 after a live incident: this Function App runs on the Consumption plan,
-# hard-capped at 1.5GB per instance (not configurable short of a plan change). The fetch/stamp/
-# upload pipeline below now avoids the worst of the redundant in-memory copies it used to make
-# (see run.ps1's own comment at the $emlRaw fetch), but a single message's raw .eml can still
-# need roughly 2-3x its own size in simultaneous memory. 107 distinct real emails were found
-# stuck in an infinite OutOfMemoryException retry loop (confirmed via Application Insights,
-# accumulating since 2026-10-07) because nothing ever gave up on an oversized message -- it just
-# failed and retried forever, every 5 minutes. This threshold is a circuit breaker, not a tuned
-# limit: picked conservatively high (most real emails, even with large attachments, should fall
-# well under it) so it only catches genuinely pathological cases outright, while the actual
-# memory fix above should let most of those 107 stuck emails succeed normally now. If
-# skippedTooLarge/sentSkippedTooLarge stays non-trivial after this ships, that's a sign either
-# this threshold needs lowering (safer ceiling) or the Function App genuinely needs a plan
-# upgrade (more memory headroom) rather than further micro-optimizing this pipeline.
-$MaxSafeEmailSizeBytes = 100MB
+# A proactive size-based circuit breaker for the OutOfMemoryException incident (107 distinct real
+# emails stuck retrying forever, confirmed via Application Insights, accumulating since
+# 2026-10-07) was attempted here 2026-10-21 and reverted the same day: it depended on Graph's
+# message `size` property, which this tenant's Graph resolver doesn't expose at all -- confirmed
+# live, `$select=...,size` fails with "Could not find a property named 'size' on type
+# 'Microsoft.OutlookServices.Message'" on EVERY message query in this tenant, not just the
+# folder-scoped ones tried first. A HEAD request against /messages/{id}/$value (hoping for a
+# Content-Length without downloading the body) also isn't supported (405). Switching to
+# Invoke-WebRequest below avoids Invoke-RestMethod's own JSON/XML-oriented content-type sniffing
+# (the direct cause of the 2026-10-08 corruption incident), but still needs the same explicit
+# byte[]-vs-string branch the original code had -- confirmed live the same day that
+# Invoke-WebRequest's .Content isn't reliably byte[] either on this runtime. A proper circuit
+# breaker that doesn't depend on a property this tenant doesn't have (e.g. a retry-count tracked
+# via categories, or summing attachment sizes some other way) is a deliberate follow-up, not yet
+# built.
 
 Write-Host "EmailFilingSync: run started $(Get-Date -Format o)"
 
@@ -52,13 +52,11 @@ $totals = [ordered]@{
     alreadyFiled           = 0
     skippedNoCategory      = 0
     skippedNoProjectFolder = 0
-    skippedTooLarge        = 0
     failed                 = 0
     notifyFailed           = 0
     sentFiled                  = 0
     sentAlreadyFiled           = 0
     sentSkippedNoProjectFolder = 0
-    sentSkippedTooLarge        = 0
     sentFailed                 = 0
     sentNotifyFailed            = 0
 }
@@ -82,12 +80,11 @@ foreach ($user in $staff) {
         $sentMessages = Get-GraphAllPages -Token $token -Uri (
             "https://graph.microsoft.com/v1.0/users/$upn/mailFolders/sentitems/messages" +
             "?`$filter=$([uri]::EscapeDataString("sentDateTime ge $sentCutoff"))" +
-            "&`$select=id,subject,categories,internetMessageId,from,toRecipients,ccRecipients,sentDateTime,conversationId,hasAttachments,size" +
+            "&`$select=id,subject,categories,internetMessageId,from,toRecipients,ccRecipients,sentDateTime,conversationId,hasAttachments" +
             "&`$top=50"
         )
         $sentMessages = @($sentMessages | Where-Object {
-            (Resolve-FilingCategory -Categories @($_.categories)) -and (@($_.categories) -notcontains "Filed") `
-                -and (@($_.categories) -notcontains "FileTooLarge")
+            (Resolve-FilingCategory -Categories @($_.categories)) -and (@($_.categories) -notcontains "Filed")
         })
 
         if ($sentMessages.Count -gt 0) {
@@ -131,31 +128,14 @@ foreach ($user in $staff) {
 
                 $labelsAsFound = @($msg.categories)
 
-                # Circuit breaker for the OutOfMemoryException incident (see $MaxSafeEmailSizeBytes
-                # above): tags the message instead of leaving it to retry forever, since sent items
-                # are never moved. Checked before the duplicate lookups above would otherwise be
-                # wasted on a message we're not going to process either way -- actually cheap
-                # enough that ordering doesn't matter much, but this is also just more readable
-                # next to the fetch it's protecting.
-                if ($msg.size -and $msg.size -gt $MaxSafeEmailSizeBytes) {
-                    Write-Warning "EmailFilingSync: SKIP (too large: $([math]::Round($msg.size/1MB,1))MB exceeds the $([math]::Round($MaxSafeEmailSizeBytes/1MB))MB safety threshold) $label"
-                    $tooLargeCategories = @($msg.categories) + @("FileTooLarge") | Select-Object -Unique
-                    Invoke-RestMethod -Method Patch -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)" `
-                        -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" } `
-                        -Body (@{ categories = @($tooLargeCategories) } | ConvertTo-Json) -ErrorAction Stop | Out-Null
-                    $totals.sentSkippedTooLarge++
-                    continue
-                }
-
                 if (-not $isDuplicate) {
-                    # Invoke-WebRequest instead of Invoke-RestMethod, added 2026-10-21: .Content
-                    # is always byte[] in PowerShell 7's Invoke-WebRequest, never auto-detected
-                    # text -- see the main pass below for the full story (the Invoke-RestMethod
-                    # version of this exact call is what caused the 2026-10-08 corruption
-                    # incident, and was also the heavier of the two memory-wise).
-                    $originalBytes = (Invoke-WebRequest -Method Get `
+                    # Invoke-WebRequest instead of Invoke-RestMethod, added 2026-10-21 -- see the
+                    # main pass below for the full story and the correction to this comment's
+                    # original (wrong) claim that .Content is always byte[] here.
+                    $rawContent = (Invoke-WebRequest -Method Get `
                         -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)/`$value" `
                         -Headers @{ Authorization = "Bearer $token" } -ErrorAction Stop).Content
+                    $originalBytes = if ($rawContent -is [byte[]]) { $rawContent } else { [System.Text.Encoding]::GetEncoding(28591).GetBytes([string]$rawContent) }
                     $stampedBytes = Add-SummationLabelsHeader -MimeBytes $originalBytes -Labels $labelsAsFound
 
                     if ($stampedBytes.Length -gt 4MB) {
@@ -254,7 +234,7 @@ foreach ($user in $staff) {
 
     $messages = Get-GraphAllPages -Token $token -Uri (
         "https://graph.microsoft.com/v1.0/users/$upn/mailFolders/$stagingFolderId/messages" +
-        "?`$select=id,subject,categories,internetMessageId,from,toRecipients,ccRecipients,sentDateTime,conversationId,conversationIndex,hasAttachments,size" +
+        "?`$select=id,subject,categories,internetMessageId,from,toRecipients,ccRecipients,sentDateTime,conversationId,conversationIndex,hasAttachments" +
         "&`$top=25"
     )
     if ($messages.Count -eq 0) { continue }
@@ -311,40 +291,27 @@ foreach ($user in $staff) {
 
             $labelsAsFound = @($msg.categories)
 
-            # Circuit breaker for the OutOfMemoryException incident (see $MaxSafeEmailSizeBytes
-            # above). Unlike the Sent Items pass, this pass already moves successfully-filed
-            # messages out of staging -- so an oversized message gets moved to its own dedicated
-            # folder instead (never "Filed", since it genuinely isn't), which both stops the
-            # infinite retry (it's no longer in "Emails to File" for the next run to pick up) and
-            # leaves a clear, visible, separate list for manual follow-up rather than silently
-            # disappearing or erroring forever.
-            if ($msg.size -and $msg.size -gt $MaxSafeEmailSizeBytes) {
-                Write-Warning "EmailFilingSync: SKIP (too large: $([math]::Round($msg.size/1MB,1))MB exceeds the $([math]::Round($MaxSafeEmailSizeBytes/1MB))MB safety threshold) $label"
-                $tooLargeFolderId = Get-OrCreateMailFolder -Upn $upn -DisplayName "Too Large To File" -Token $token
-                Invoke-RestMethod -Method Post -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)/move" `
-                    -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" } `
-                    -Body (@{ destinationId = $tooLargeFolderId } | ConvertTo-Json) -ErrorAction Stop | Out-Null
-                $totals.skippedTooLarge++
-                continue
-            }
-
             if (-not $isDuplicate) {
-                # Invoke-WebRequest instead of Invoke-RestMethod, added 2026-10-21: .Content is
-                # always byte[] in PowerShell 7's Invoke-WebRequest, never auto-detected text the
-                # way Invoke-RestMethod's content-type sniffing was -- the actual root cause of
-                # the 2026-10-08 corruption incident (one message, an Aconex auto-reply, came
-                # back from Invoke-RestMethod as a real byte[] instead of text; re-encoding that
-                # through GetBytes() -- which has no byte[] overload -- silently coerced it to a
-                # string via PowerShell's default array-to-string join, uploading that garbage as
-                # the "email"). The original fix (branch on $emlRaw's actual type) patched that
-                # one symptom; this removes the ambiguity structurally, and also means there's no
-                # longer a ~2x-oversized intermediate .NET string copy of the raw bytes sitting in
-                # memory alongside everything else -- the other half of the 2026-10-21
-                # OutOfMemoryException incident (107 real emails stuck retrying forever on this
-                # exact line, confirmed via Application Insights).
-                $originalBytes = (Invoke-WebRequest -Method Get `
+                # Invoke-WebRequest instead of Invoke-RestMethod, added 2026-10-21: avoids
+                # Invoke-RestMethod's own JSON/XML-oriented content-type sniffing, which caused
+                # the 2026-10-08 corruption incident (one message, an Aconex auto-reply, came back
+                # as a real byte[] instead of text; re-encoding that through GetBytes() -- which
+                # has no byte[] overload -- silently coerced it to a string via PowerShell's
+                # default array-to-string join, uploading that garbage as the "email"). CORRECTION
+                # the same day: Invoke-WebRequest's own .Content is *not* reliably byte[] either on
+                # this runtime -- confirmed live, a text-ish response came back as a plain string
+                # and PowerShell's own [byte[]]-typed parameter binder on Add-SummationLabelsHeader
+                # then tried (and failed loudly) to auto-coerce that string itself. Still explicitly
+                # branching on the actual return type, same as the original fix, just applied here
+                # instead -- there is no cmdlet in this runtime that reliably returns raw bytes
+                # unconditionally, so the explicit check stays required regardless of which one is
+                # used. (The avoided redundant string-copy this comment used to claim as a clean
+                # memory win no longer applies when the string branch is taken, but Invoke-WebRequest
+                # is still kept over Invoke-RestMethod for not attempting JSON/XML parsing at all.)
+                $rawContent = (Invoke-WebRequest -Method Get `
                     -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)/`$value" `
                     -Headers @{ Authorization = "Bearer $token" } -ErrorAction Stop).Content
+                $originalBytes = if ($rawContent -is [byte[]]) { $rawContent } else { [System.Text.Encoding]::GetEncoding(28591).GetBytes([string]$rawContent) }
                 $stampedBytes = Add-SummationLabelsHeader -MimeBytes $originalBytes -Labels $labelsAsFound
 
                 if ($stampedBytes.Length -gt 4MB) {
