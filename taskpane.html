@@ -331,7 +331,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.19";
+    const APP_VERSION = "11.20";
 
     let msalInstance;
     let folderEntries = [];
@@ -1965,6 +1965,16 @@
         const composeType = ((composeTypeResult && composeTypeResult.composeType) || "newMail").toLowerCase();
         const isReplyLike = composeType === "reply" || composeType === "forward";
 
+        // Bug found live 2026-10-21: unlike Read mode, item.subject on a Compose item is NOT a
+        // plain string -- it's an Office.Subject object with its own getAsync()/setAsync(). The
+        // old `item.subject || "(no subject)"` always took the (truthy) object, which then
+        // JSON.stringify()'d into the dialog's URL context as "{}" -- confirmed live by the
+        // dialog's own context box literally rendering "[object Object]" as the subject. Beyond
+        // the cosmetic break, this silently broke fetchSuggestions() too: `sendContext.subject`
+        // came through as an object, and `.slice()` on it threw, caught by that function's own
+        // try/catch -- so suggestions never ran at all, not just with a weak signal.
+        const subjectText = await officeAsync(item.subject, "getAsync").catch(() => null);
+
         // Auto-apply the original's project code on a reply/forward, added 2026-10-21, instead
         // of always making the user search for a project that's already known from the thread.
         if (isReplyLike) {
@@ -1987,7 +1997,7 @@
 
         const context = {
             composeType,
-            subject: item.subject || "(no subject)",
+            subject: (typeof subjectText === "string" && subjectText) || "(no subject)",
             conversationId: item.conversationId || null
         };
         const url = `https://prassummation.github.io/outlook-addin/file-on-send-dialog.html?context=${encodeURIComponent(JSON.stringify(context))}`;

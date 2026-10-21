@@ -623,7 +623,19 @@ deduplicated so a suggested project doesn't also appear again further down the l
   (`isUserAction: false`, so the "no surprise popup" guarantee holds), sharing one result between
   both features instead of running the lookup twice. `selectProject()` now reuses that same
   promise for Save Both's own "Original" line, falling back to one interactive-capable retry only
-  if the silent attempt came back empty. **Not yet live-tested.**
+  if the silent attempt came back empty.
+
+**Real root cause found live 2026-10-21**: the richer from/to/cc/body fix above didn't fix it —
+the dialog's own context box was rendering the subject as literally `[object Object]`. Unlike
+Read mode, `item.subject` on a **Compose** item is not a plain string — it's an `Office.Subject`
+object with its own `getAsync()`/`setAsync()`. `openComposeFilingDialog()` (`taskpane.html`) had
+`subject: item.subject || "(no subject)"`, and since the object itself is truthy, that object
+(not the fallback string) went straight into `JSON.stringify()`'d URL context, arriving at
+`file-on-send-dialog.html` as `{}`. Beyond the cosmetic break, this silently broke
+`fetchSuggestions()` entirely: `sendContext.subject` was an object, `.slice()` on it threw, caught
+by that function's own `try/catch` — so suggestions never ran at all (not a weak-signal problem, a
+never-even-called one). **Fixed**: `openComposeFilingDialog()` now awaits `item.subject.getAsync()`
+properly before building the context. **Not yet live-tested.**
 - Both dialogs share the same `matchesProjectCode(folderName, code)` helper (leading
   `CODE` matched against the folder name, same regex family as `extractProjectNumber`) to
   resolve a suggestion's bare project code back to one of the currently-loaded folder
