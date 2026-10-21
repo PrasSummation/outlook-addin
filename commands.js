@@ -34,17 +34,17 @@
  * never calls event.completed() within Outlook's own platform timeout -- a different, narrower
  * safety net this code still leans on rather than duplicates).
  */
-// STILL DISABLED, 2026-10-21: deliberately NOT flipped to true in the same push that changed the
-// manifest's SendMode to "PromptUser" above. That manifest change needs a slower admin-center
-// re-upload and propagation before it's actually live, while this file deploys in ~10 minutes via
-// its own CDN cache -- flipping both together would create a window where File on Send is active
-// under the OLD SendMode="SoftBlock" still running on users' clients, exactly the risky
-// combination that caused the incident below. Flip this to true only after confirming the
-// PromptUser manifest has actually propagated (see CLAUDE.md's "File on Send" section). All the
-// root causes found and fixed since the incident (Graph GET 404 right after saveAsync(), the
-// master-category cleanup race, the compose-mode item.subject object bug, and Save Both's dialog
-// killing its own bridge request before it landed) are believed to make this safe to re-enable
-// once that sequencing is respected.
+// RE-ENABLED 2026-10-21, step 2 of 2: manifest2.xml (1.0.0.20, SendMode="PromptUser") was
+// uploaded to the Microsoft 365 admin center's Integrated Apps first (scoped to "Just me",
+// Pras@summation.au) and the user restarted Outlook to pick it up, deliberately sequenced before
+// this flip -- flipping both together would have risked a window where File on Send was active
+// under the OLD SendMode="SoftBlock" still cached on the client, the same risky combination that
+// caused the incident below. All the root causes found and fixed since the incident (a Graph GET
+// 404 right after saveAsync(), the master-category cleanup race, the compose-mode item.subject
+// object bug, and Save Both's dialog killing its own bridge request before it landed) are
+// believed fixed. First live send-triggered test of this redesign is still outstanding -- watch
+// for whether the native Smart Alert actually offers "Send Anyway" (confirms PromptUser is live,
+// not a stale cached SoftBlock manifest) the next time a send is intercepted.
 //
 // EMERGENCY KILL SWITCH -- history: first tripped 2026-10-16 after a live-blocking incident --
 // the Smart Alerts dialog showed correctly (Choose project / Don't Send), but there was no way
@@ -54,7 +54,7 @@
 // "every send allowed through immediately, untagged" while a fix is worked out -- deploys in
 // ~10 minutes via commands.js's own CDN cache, no manifest re-upload needed, since OnMessageSend's
 // LaunchEvent registration itself doesn't need to change for this switch alone.
-const FILE_ON_SEND_ENABLED = false;
+const FILE_ON_SEND_ENABLED = true;
 
 // Shared by onMessageSendHandler and onMessageComposeHandler: matches the project-category
 // naming convention this codebase already uses everywhere else (email-index's keywords.py,

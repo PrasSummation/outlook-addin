@@ -1044,25 +1044,29 @@ silently chokes on a `contextData` value that isn't valid JSON. Fixed by JSON-en
 (`commands.js`) and parsing it back out on both paths (`taskpane.html`). **Not yet
 independently confirmed this resolves it** — reproduce live before trusting it.
 
-## File on Send: Smart Alerts redesign, re-enabling in progress 2026-10-21 with a safer SendMode
+## File on Send: Smart Alerts redesign, re-enabled 2026-10-21 with a safer SendMode
 
-**Current status: `FILE_ON_SEND_ENABLED = false` still, `SendMode="PromptUser"` (manifest2.xml,
-1.0.0.20) pushed and awaiting admin-center propagation.** Triggered by the user asking whether
-Save Both/Reply Only could actually let the send through (they can't trigger a send on their
-own — Office.js has no API for a task pane or dialog to invoke Send programmatically; this is the
-only mechanism that gets that experience, by letting the user's own Send click be the trigger).
+**Current status: `FILE_ON_SEND_ENABLED = true`, `SendMode="PromptUser"` (manifest2.xml,
+1.0.0.20).** Triggered by the user asking whether Save Both/Reply Only could actually let the send
+through (they can't trigger a send on their own — Office.js has no API for a task pane or dialog
+to invoke Send programmatically; this is the only mechanism that gets that experience, by letting
+the user's own Send click be the trigger).
 
 **Deliberately split into two steps, not pushed together**: `commands.js` deploys in ~10 minutes
-via its own CDN cache, but the manifest's `SendMode` change needs a slower re-upload to the
-Microsoft 365 admin center's Integrated Apps and propagation before it's actually live on users'
-clients. Flipping `FILE_ON_SEND_ENABLED` to `true` in the *same* push as the manifest change would
-create a window where File on Send is active while clients are still running the OLD manifest
-(`SendMode="SoftBlock"`) — exactly the risky combination that caused the incident below. **Next
-steps, in order**: (1) re-upload manifest2.xml (1.0.0.20) to the Microsoft 365 admin center —
-strongly consider scoping this deployment to a single test account first, given the history below;
-(2) confirm the new `SendMode="PromptUser"` has actually propagated to a real client (the same
-"restart Outlook, don't just wait" lesson from the 2026-10-07 incident likely applies); (3) only
-then flip `FILE_ON_SEND_ENABLED` back to `true` in `commands.js` (fast, GitHub-Pages-only change).
+via its own CDN cache, but the manifest's `SendMode` change needed a slower re-upload to the
+Microsoft 365 admin center's Integrated Apps and propagation before it was actually live on the
+client. Flipping `FILE_ON_SEND_ENABLED` to `true` in the *same* push as the manifest change would
+have created a window where File on Send was active while the client was still running the OLD
+manifest (`SendMode="SoftBlock"`) — exactly the risky combination that caused the incident below.
+**Steps actually taken, in order**: (1) manifest2.xml (1.0.0.20) re-uploaded to the Microsoft 365
+admin center via Integrated Apps → Summation Assistant → Update add-in → "Provide link to
+manifest file" (`https://prassummation.github.io/outlook-addin/manifest2.xml`) → validated →
+accepted; confirmed already scoped to "Just me (Pras@summation.au)" beforehand, not "Everyone", so
+this only ever affected the one account; (2) user restarted Outlook (not just waited) to pick up
+the new manifest, same lesson as the 2026-10-07 incident; (3) `FILE_ON_SEND_ENABLED` flipped back
+to `true` in `commands.js`. **Not yet live-tested with an actual send** — the next real send that
+gets intercepted should be checked for whether Outlook's native Smart Alert actually offers "Send
+Anyway" (confirms `PromptUser` took effect, not a stale cached `SoftBlock` manifest).
 
 All the root causes found during the 2026-10-16 to 2026-10-21 debugging arc are believed fixed by
 the time step 3 happens: the Graph GET 404 right after `saveAsync()` (retry added), the
