@@ -112,7 +112,13 @@
   </div>
 
   <div id="cancelRow">
-    <span class="txt">Sending will pause until you choose an option.</span>
+    <!-- "Sending will pause..." was accurate only for the OnMessageSend-triggered path, which
+         is currently always off (FILE_ON_SEND_ENABLED = false, commands.js) -- today this dialog
+         only ever opens from the proactive compose-time banner, which never blocks or resumes a
+         send at all (the user still sends manually afterward). Updated 2026-10-21 to stop
+         implying otherwise; if File on Send is ever re-enabled, this needs to go back to being
+         conditional on which path opened the dialog (sendContext has no such flag yet). -->
+    <span class="txt">Choose a project to tag this email -- send it yourself when ready.</span>
     <button id="cancelLink" class="link-button" style="color:#B3401F">&larr; Back to email</button>
   </div>
 
@@ -848,7 +854,7 @@
         return created.id;
     }
 
-    async function postFeBatch(entry, signal) {
+    async function postFeBatch(entry) {
         const graphToken = await signInAndGetToken(mailWriteRequest, true);
         if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
         const bridgeToken = await signInAndGetToken(bridgeRequest, true);
@@ -862,8 +868,7 @@
                 categoryName: entry.categoryName,
                 destinationFolderId: entry.destinationFolderId,
                 items: entry.items
-            }),
-            signal
+            })
         });
         if (!response.ok) {
             const errorText = await response.text();
@@ -873,12 +878,29 @@
     }
 
     // Files "the original" via the exact same bridge endpoint File Email already uses --
-    // this is functionally identical to a one-item File Email batch, just auto-triggered
-    // here instead of picked manually. Fire-and-forget with the same abort-before-close
-    // pattern as File Email's own Confirm, for the same reason (some Outlook hosts hold
-    // a dialog open until its outstanding requests settle).
+    // this is functionally identical to a one-item File Email batch, just auto-triggered here
+    // instead of picked manually.
+    //
+    // BUG FOUND LIVE 2026-10-21: originally fire-and-forget with an abort-before-close pattern
+    // (close this dialog and abort the in-flight bridge request 500ms after clicking Save Both,
+    // same rationale originally given for File Email's own Confirm -- "some Outlook hosts hold a
+    // dialog open until its outstanding requests settle"). In practice this silently killed the
+    // request before it ever reached the bridge nearly every time: findMasterCategory() and
+    // getOrCreateEmailsToFileFolderId() above are both awaited Graph round-trips, so by the time
+    // postFeBatch() even starts acquiring its own two tokens (mailWriteRequest again, then a
+    // fresh bridgeRequest) and sending the POST, the 500ms window was usually already gone --
+    // confirmed live via two Save-Both attempts showing up as "stuck" entries in File Email's own
+    // pending-batches notice, which only succeeded once a later File Email dialog's stuck-batch
+    // recovery retried them. File Email's own Confirm handler (file-email-dialog.html) never
+    // actually had this problem -- it disabled its auto-close entirely (see its own comment) and
+    // just stays open until the user leaves, which is what actually made it reliable. Fixed by
+    // doing the same here: await the bridge call fully, show its outcome, and only close once
+    // it's actually done (success or failure) rather than racing a fixed timeout against it.
     async function fileOriginalMessage(categoryName) {
         if (!originalMessage) return;
+        document.getElementById("confirmOriginalLine").textContent = "Filing the original...";
+        document.getElementById("cancelLink").disabled = true;
+
         let categoryPreExisted = true;
         try { categoryPreExisted = (await findMasterCategory(categoryName)) !== null; }
         catch (err) { categoryPreExisted = true; }
@@ -895,15 +917,19 @@
             items: [{ restId: originalMessage.id, subject: originalMessage.subject || sendContext.subject }],
             destinationFolderId: emailsToFileFolderId, categoryPreExisted
         };
+        // Durably tracked before the request even starts -- if this dialog is closed or crashes
+        // mid-request regardless, File Email's own stuck-batch recovery still picks it up later.
         addFeBatchToStorage(batchEntry);
 
-        const abortController = new AbortController();
-        postFeBatch(batchEntry, abortController.signal)
-            .then(() => removeFeBatchFromStorage(batchId))
-            .catch(err => {
-                if (err.name !== "AbortError") console.error("Filing the original message failed after this dialog moved on:", err);
-            });
-        return abortController;
+        try {
+            await postFeBatch(batchEntry);
+            removeFeBatchFromStorage(batchId);
+            document.getElementById("confirmOriginalLine").textContent = "Original filed.";
+        } catch (err) {
+            console.error("Filing the original message failed:", err);
+            document.getElementById("confirmOriginalLine").textContent =
+                `Could not file the original right now -- it's queued and will be retried automatically next time File Email opens. (${err.message || err})`;
+        }
     }
 
     // ---- Confirm / Cancel ----
@@ -917,13 +943,17 @@
         // anything below.
         messageParent({ action: "save", categoryName: selectedProjectName });
 
-        let abortController = null;
         if (saveOriginal && isReplyLike && originalMessage) {
-            abortController = await fileOriginalMessage(selectedProjectName);
+            // Awaited fully now (see fileOriginalMessage()'s own comment) -- this dialog only
+            // closes once that request has actually completed, not on a fixed timer racing it.
+            await fileOriginalMessage(selectedProjectName);
+            setTimeout(() => {
+                try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
+            }, 1200);
+            return;
         }
 
         setTimeout(() => {
-            if (abortController) abortController.abort();
             try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
         }, 500);
     }

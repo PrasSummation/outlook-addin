@@ -665,8 +665,35 @@ order. `receivedDateTime` was only ever in `$orderby` here, never in `$filter` �
 outright incompatible combination, not something advanced query parameters can override.
 **Fixed properly**: dropped `$orderby` entirely, raised `$top` to 25, and sort the (small) result
 set client-side by `receivedDateTime` instead — no ordering rule left to violate. Reverted the
-now-unused `graphGet()` extra-headers parameter added for the first attempt. **Not yet
-live-tested.**
+now-unused `graphGet()` extra-headers parameter added for the first attempt. **Confirmed live
+2026-10-21**: Save Both became clickable.
+
+**Save Both confirmed clickable, but the original still wasn't getting filed — root cause found
+live 2026-10-21**: the user's own "Recent File Email batches" notice (File Email's stuck-batch
+recovery, shared `FE_BATCHES_STORAGE_KEY`) showed two Save-Both attempts that had sat "stuck" and
+only succeeded once automatically retried later. Root cause: `handleSave()`'s original
+fire-and-forget pattern for `fileOriginalMessage()` closed this dialog (and explicitly aborted the
+in-flight bridge request via `AbortController`) just **500ms** after clicking Save Both — but
+`fileOriginalMessage()` first awaits two sequential Graph round-trips (`findMasterCategory()`,
+`getOrCreateEmailsToFileFolderId()`) before `postFeBatch()` even starts acquiring its own two
+tokens and sending the POST, so that window was essentially never enough in practice; the request
+was being killed before it ever reached the bridge, nearly every time. File Email's own
+`handleFeConfirmInner()` (`file-email-dialog.html`) never had this problem because it deliberately
+**disables its auto-close entirely** (see that function's own comment) and just leaves the dialog
+open — that's what actually made it reliable, not anything specific to its token/scope setup
+(confirmed separately that `MailboxBridge.Call` consent itself is fine — File Email's Confirm
+reliably works). **Fixed**: `fileOriginalMessage()` now awaits `postFeBatch()` fully (no
+`AbortController`, `postFeBatch()`'s now-unused `signal` parameter removed) and shows its real
+outcome ("Original filed." / a queued-for-retry message with the actual error) in the existing
+"Original" line; `handleSave()` only closes the dialog once that's actually done (plus a short
+1.2s grace to read the result), and disables "Back to email" for that window so the user can't
+re-introduce the same early-close problem manually. The batch is still durably tracked in
+localStorage *before* the request starts either way, so File Email's existing stuck-batch recovery
+remains the safety net if this dialog is ever killed externally (e.g. Outlook force-closing it).
+Also fixed the dialog's static "Sending will pause until you choose an option." header text, which
+was only ever accurate for the (currently always-off, `FILE_ON_SEND_ENABLED = false`)
+`OnMessageSend`-triggered path — today this dialog only ever opens from the proactive compose-time
+banner, which never blocks or resumes a send at all. **Not yet live-tested.**
 - Both dialogs share the same `matchesProjectCode(folderName, code)` helper (leading
   `CODE` matched against the folder name, same regex family as `extractProjectNumber`) to
   resolve a suggestion's bare project code back to one of the currently-loaded folder
