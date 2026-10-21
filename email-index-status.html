@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Email Index Status</title>
+  <script src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
+  <style>
+    :root{
+      --green:#408F4E; --green-dark:#2D6B38; --green-pale:#EDF7EE;
+      --grey-900:#2B2B2B; --grey-600:#646464; --grey-500:#787878; --grey-400:#909090;
+      --grey-300:#B4B4B4; --grey-200:#DCDCDC; --grey-100:#EFEFEF; --grey-50:#F7F7F7;
+      --amber:#E78707; --amber-pale:#FDF0DA; --amber-dark:#8A5A00;
+      --red:#C8102E; --red-pale:#FBE7EA; --red-dark:#8E0B20;
+      --font-body:'Calibri','Segoe UI',system-ui,sans-serif;
+      --font-mono:'Consolas','Courier New',monospace;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0}
+    body{display:flex;flex-direction:column;font:13px/1.45 var(--font-body);color:var(--grey-600);background:var(--grey-50)}
+    button{font:inherit;cursor:pointer}
+    a{color:var(--green-dark)}
+
+    #top{flex:none;display:flex;align-items:center;gap:16px;height:52px;padding:0 20px;background:var(--grey-900);color:#fff}
+    #brand{display:flex;align-items:center;gap:10px}
+    #brand img{width:22px;height:auto}
+    #brand b{font-size:12px;letter-spacing:.18em;font-weight:600}
+    #brand span{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--grey-300)}
+    #back{color:var(--grey-200);font-size:12px;text-decoration:none;margin-left:14px;padding:5px 10px;border:1px solid #555;border-radius:4px}
+    #back:hover{border-color:var(--green);color:#fff}
+    #topRight{margin-left:auto;display:flex;align-items:center;gap:12px}
+    #genAt{font-size:11px;color:var(--grey-300)}
+    #refreshBtn{width:30px;height:30px;border:1px solid #555;border-radius:4px;background:none;color:var(--grey-200);font-size:15px;line-height:1}
+    #refreshBtn:hover{border-color:var(--green);color:#fff}
+    #refreshBtn.spin{animation:spin .9s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    #who{font-size:11px;color:var(--grey-300)}
+
+    #main{flex:1;overflow-y:auto;padding:22px 28px 60px}
+    .wrap{max-width:1180px;margin:0 auto}
+    h1.page-title{font-size:20px;font-weight:600;color:var(--grey-900);margin:0 0 4px}
+    .sub{font-size:12.5px;color:var(--grey-500);margin:0 0 22px}
+
+    section{margin-bottom:28px}
+    .sec-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+    .sec-head h2{font-size:14px;font-weight:600;color:var(--grey-900);margin:0}
+    .sec-head .count{font-family:var(--font-mono);font-size:10.5px;color:#fff;background:var(--grey-400);border-radius:9px;padding:1px 7px}
+    .sec-note{font-size:11.5px;color:var(--grey-400);margin:-6px 0 12px}
+
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+    .card{background:#fff;border:1px solid var(--grey-200);border-radius:8px;padding:14px 16px;position:relative;overflow:hidden}
+    .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--grey-200)}
+    .card.ok::before{background:var(--green)}
+    .card.warn::before{background:var(--amber)}
+    .card.bad::before{background:var(--red)}
+    .card .v{font-size:24px;font-weight:600;color:var(--grey-900);line-height:1.2}
+    .card .l{font-size:11.5px;color:var(--grey-500);margin-top:2px}
+    .card .extra{font-size:11px;color:var(--grey-400);margin-top:6px;line-height:1.5}
+    .pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:2px 9px 2px 7px;border-radius:10px}
+    .pill i{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+    .pill.ok{background:var(--green-pale);color:var(--green-dark)}
+    .pill.warn{background:var(--amber-pale);color:var(--amber-dark)}
+    .pill.bad{background:var(--red-pale);color:var(--red-dark)}
+
+    table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--grey-200);border-radius:8px;overflow:hidden}
+    th,td{text-align:left;padding:8px 12px;font-size:12px;border-bottom:1px solid var(--grey-100)}
+    th{background:var(--grey-50);color:var(--grey-500);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+    tr:last-child td{border-bottom:none}
+    td.num{font-family:var(--font-mono);color:var(--grey-600)}
+    td.mono{font-family:var(--font-mono);font-size:11px;color:var(--grey-600);word-break:break-all}
+    .empty-row td{color:var(--grey-400);font-style:italic;text-align:center;padding:16px}
+
+    .chart-card{background:#fff;border:1px solid var(--grey-200);border-radius:8px;padding:16px}
+    .chart-legend{display:flex;gap:18px;margin-bottom:8px;flex-wrap:wrap}
+    .chart-legend span{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--grey-600)}
+    .chart-legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+    .chart-card svg{display:block;width:100%;height:160px}
+    .chart-foot{display:flex;justify-content:space-between;font-size:10.5px;color:var(--grey-400);margin-top:4px}
+
+    details.diag{background:#fff;border:1px solid var(--grey-200);border-radius:8px;padding:0}
+    details.diag summary{list-style:none;cursor:pointer;padding:12px 16px;font-size:13px;font-weight:600;color:var(--grey-900);display:flex;align-items:center;gap:8px}
+    details.diag summary::-webkit-details-marker{display:none}
+    details.diag summary .arrow{margin-left:auto;font-size:12px;color:var(--grey-400)}
+    details.diag[open] summary .arrow{transform:rotate(180deg)}
+    .diag-body{padding:0 16px 16px}
+    .diag-body p{font-size:11.5px;color:var(--grey-500);margin:0 0 10px}
+    #diagText{width:100%;min-height:260px;font:11.5px/1.5 var(--font-mono);color:var(--grey-900);background:var(--grey-900);color:#D7E9D9;border:none;border-radius:6px;padding:12px;resize:vertical}
+    .diag-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+    .btn{padding:6px 12px;border:1px solid var(--grey-200);background:#fff;border-radius:4px;color:var(--grey-900);font-size:12.5px}
+    .btn:hover{border-color:var(--grey-400)}
+    .btn.primary{background:var(--green);border-color:var(--green);color:#fff}
+    .btn.primary:hover{background:var(--green-dark)}
+
+    #signIn{position:fixed;inset:52px 0 0;display:none;align-items:center;justify-content:center;background:#fff;z-index:5}
+    #signIn div{text-align:center;max-width:360px}
+    #signIn p{margin:0 0 14px}
+    .err-banner{margin:24px;padding:12px;border:1px solid var(--amber);background:var(--amber-pale);color:var(--amber-dark);border-radius:4px;font-size:12.5px}
+    .loading{padding:60px 0;text-align:center;color:var(--grey-300);font-size:13px}
+
+    @media (max-width:760px){
+      #main{padding:16px}
+      #back{display:none}
+    }
+  </style>
+</head>
+<body>
+  <header id="top">
+    <div id="brand">
+      <img src="https://prassummation.github.io/outlook-addin/logo-symbol-80x80.png" alt="" />
+      <div><b>SUMMATION</b><br><span>Email Index Status</span></div>
+    </div>
+    <a id="back" href="email-search.html">&larr; Email Search</a>
+    <div id="topRight">
+      <span id="genAt"></span>
+      <button id="refreshBtn" title="Refresh now">&#8635;</button>
+      <span id="who"></span>
+    </div>
+  </header>
+  <div id="signIn"><div><p>Sign in with your Summation account to view the index status.</p><button class="btn primary" id="signInBtn">Sign in</button><p id="signInErr"></p></div></div>
+
+  <main id="main">
+    <div class="wrap" id="content">
+      <h1 class="page-title">Email Index Status</h1>
+      <p class="sub">Live health of the hosted search index &mdash; sync progress, background jobs, errors and infrastructure load.</p>
+      <div class="loading" id="loading">Loading&hellip;</div>
+    </div>
+  </main>
+
+<script>
+  const API_URL = "https://summation-email-index.azurewebsites.net";
+  const msalInstance = new msal.PublicClientApplication({
+    auth: {
+      clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
+      authority: "https://login.microsoftonline.com/ecb5f458-9548-4e8b-96f3-904f1828f931",
+      redirectUri: window.location.origin + window.location.pathname
+    },
+    cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+  });
+  const indexRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/EmailIndex.Access"] };
+
+  async function getToken(interactive = false) {
+    const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+    if (account) {
+      msalInstance.setActiveAccount(account);
+      try { return (await msalInstance.acquireTokenSilent({ ...indexRequest, account })).accessToken; }
+      catch (err) {
+        if (!interactive || !(err instanceof msal.InteractionRequiredAuthError)) throw err;
+        return (await msalInstance.acquireTokenPopup(indexRequest)).accessToken;
+      }
+    }
+    if (!interactive) return null;
+    const login = await msalInstance.loginPopup(indexRequest);
+    msalInstance.setActiveAccount(login.account);
+    return login.accessToken;
+  }
+
+  async function api(path) {
+    let token;
+    try { token = await getToken(false); } catch { token = null; }
+    if (!token) { showSignIn(true); throw new Error("Not signed in"); }
+    const resp = await fetch(API_URL + path, { headers: { Authorization: `Bearer ${token}` } });
+    if (resp.status === 401) { showSignIn(true); throw new Error("Not signed in"); }
+    return resp;
+  }
+
+  function showSignIn(show) {
+    document.getElementById("signIn").style.display = show ? "flex" : "none";
+    const account = msalInstance.getActiveAccount();
+    document.getElementById("who").textContent = !show && account ? account.username : "";
+  }
+
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmtNum = n => (n ?? 0).toLocaleString();
+  const fmtMs = ms => ms == null ? "—" : ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+
+  function fmtAgo(iso) {
+    if (!iso) return "never";
+    const mins = Math.round((Date.now() - new Date(iso)) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 48) return `${hrs}h ago`;
+    return `${Math.round(hrs / 24)}d ago`;
+  }
+  const fmtFull = iso => iso ? new Date(iso).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "—";
+
+  function pill(level, text) {
+    return `<span class="pill ${level}"><i></i>${esc(text)}</span>`;
+  }
+
+  // ---- overview cards: index totals, per-library sync health, data quality ----
+
+  function renderOverview(d) {
+    const libs = d.libraries || [];
+    const busy = libs.some(l => l.in_progress);
+    const totalErrors = libs.reduce((n, l) => n + ((l.last_result || {}).errors || 0), 0);
+    const dq = d.dataQuality || {};
+    const dqBad = (dq.filesWithErrors || 0) + (dq.blankSignatureEmails || 0) > 0;
+
+    const libCards = libs.map(l => {
+      const r = l.last_result || {};
+      const level = l.in_progress ? "warn" : (r.errors ? "bad" : "ok");
+      const status = l.in_progress ? "Syncing now" : (r.errors ? `${r.errors} error(s) last run` : "Up to date");
+      return `<div class="card ${level}">
+        <div class="v">${esc(l.library)}</div>
+        <div class="l">${pill(level, status)}</div>
+        <div class="extra">
+          Last finished: ${fmtAgo(l.finished_at)}<br>
+          Last run: +${fmtNum(r.indexed)} new, ${fmtNum(r.updated)} updated, ${fmtNum(r.removed)} removed, ${fmtNum(r.skipped)} skipped<br>
+          ${l.consecutive_empty_runs ? `${l.consecutive_empty_runs} empty run(s) in a row` : ""}
+        </div>
+      </div>`;
+    }).join("");
+
+    $("ovCards").innerHTML = `
+      <div class="card ok"><div class="v">${fmtNum(d.totals?.emails)}</div><div class="l">Emails indexed</div></div>
+      ${libCards}
+      <div class="card ${dqBad ? "bad" : "ok"}">
+        <div class="v">${fmtNum(dq.filesWithErrors)}</div>
+        <div class="l">Files that failed to index</div>
+        <div class="extra">${fmtNum(dq.blankSignatureEmails)} record(s) with the known corruption signature (2026-10-09 incident class)</div>
+      </div>`;
+  }
+
+  // ---- background jobs / queues ----
+
+  function renderQueues(d) {
+    const q = d.queues || {};
+    const pn = q.pendingNotify || {};
+    const rb = q.recipientBackfill || {};
+    const kw = q.keywordBuild || {};
+    const cards = [
+      { v: fmtNum(pn.depth), l: "Pending notify queue", extra: pn.depth
+          ? `Oldest queued ${fmtAgo(pn.oldestCreatedAt)}${pn.exhausted ? ` &middot; ${pn.exhausted} exhausted retries` : ""}`
+          : "Nothing waiting &mdash; drains every 2 minutes", level: pn.exhausted ? "bad" : pn.depth ? "warn" : "ok" },
+      { v: fmtNum(rb.remaining), l: "Recipient backfill remaining", extra: rb.remaining ? "One-time catch-up, running every 5 min" : "Fully caught up", level: rb.remaining ? "warn" : "ok" },
+      { v: fmtNum(kw.remaining), l: "Keyword rebuild backlog", extra: `${fmtNum(kw.projectsWithKeywords)} project(s) with suggestion profiles &middot; last built ${fmtAgo(kw.lastBuiltAt)}`, level: kw.remaining > 500 ? "warn" : "ok" },
+    ];
+    $("queueCards").innerHTML = cards.map(c => `
+      <div class="card ${c.level}">
+        <div class="v">${c.v}</div>
+        <div class="l">${c.l}</div>
+        <div class="extra">${c.extra}</div>
+      </div>`).join("");
+  }
+
+  // ---- request latency table (Azure Monitor) ----
+
+  const FRIENDLY_NAMES = {
+    sync_timer: "Sync (every 5 min)", pending_notify_timer: "Pending-notify retry (every 2 min)",
+    keyword_timer: "Keyword rebuild (every 5 min)", recipient_backfill_timer: "Recipient backfill (every 5 min)",
+    data_quality_timer: "Data quality check (every 5 min)", search_route: "Search", facet: "Facet / filters",
+    email_preview: "Email preview", suggest: "Project suggestions", bulk_download_route: "Bulk download",
+    record_email: "Record filing", record_email_pending: "Queue pending filing",
+    backfill_recipients_route: "Manual recipient backfill", rebuild_keywords: "Manual keyword rebuild",
+    labels: "Update labels", filed: "Filed lookup", status: "Status poll",
+  };
+
+  function renderRequestStats(rows) {
+    const tbody = $("reqBody");
+    if (!rows || !rows.length) {
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="6">No request data available${rows ? " for the last 3 hours" : " (Azure Monitor unreachable)"}</td></tr>`;
+      return;
+    }
+    const sorted = [...rows].sort((a, b) => (b.avgMs || 0) - (a.avgMs || 0));
+    tbody.innerHTML = sorted.map(r => `
+      <tr>
+        <td>${esc(FRIENDLY_NAMES[r.Name] || r.Name)}</td>
+        <td class="num">${fmtNum(r.count)}</td>
+        <td class="num">${fmtMs(r.avgMs)}</td>
+        <td class="num">${fmtMs(r.p50)}</td>
+        <td class="num">${fmtMs(r.p90)}</td>
+        <td class="num">${r.fails ? `<span style="color:var(--red)">${r.fails}</span>` : "0"}</td>
+      </tr>`).join("");
+  }
+
+  // ---- SQL DTU/CPU/IO chart (plain inline SVG, no chart library) ----
+
+  const SERIES = [
+    { key: "dtu_consumption_percent", label: "DTU", color: "#408F4E" },
+    { key: "cpu_percent", label: "CPU", color: "#C8102E" },
+    { key: "physical_data_read_percent", label: "Data IO", color: "#2D6B38" },
+    { key: "log_write_percent", label: "Log IO", color: "#909090" },
+  ];
+
+  function buildChart(metrics) {
+    const W = 760, H = 150, PAD = 6;
+    const present = SERIES.filter(s => metrics[s.key] && metrics[s.key].length);
+    if (!present.length) return { svg: "", legend: "", range: "" };
+    const allPoints = present.flatMap(s => metrics[s.key]);
+    const times = allPoints.map(p => new Date(p.time).getTime());
+    const t0 = Math.min(...times), t1 = Math.max(...times);
+    const x = t => t1 === t0 ? PAD : PAD + ((t - t0) / (t1 - t0)) * (W - 2 * PAD);
+    const y = v => H - PAD - (Math.max(0, Math.min(100, v)) / 100) * (H - 2 * PAD);
+    const gridlines = [0, 25, 50, 75, 100].map(v => `<line x1="${PAD}" y1="${y(v).toFixed(1)}" x2="${W - PAD}" y2="${y(v).toFixed(1)}" stroke="#EFEFEF" stroke-width="1"/>
+      <text x="${W - PAD}" y="${(y(v) - 2).toFixed(1)}" font-size="9" fill="#B4B4B4" text-anchor="end">${v}%</text>`).join("");
+    const lines = present.map(s => {
+      const pts = metrics[s.key].map(p => `${x(new Date(p.time).getTime()).toFixed(1)},${y(p.maximum ?? p.average).toFixed(1)}`).join(" ");
+      return `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    }).join("");
+    const svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gridlines}${lines}</svg>`;
+    const legend = present.map(s => `<span><i style="background:${s.color}"></i>${s.label} (peak per interval)</span>`).join("");
+    const range = `${fmtFull(new Date(t0).toISOString())} &rarr; ${fmtFull(new Date(t1).toISOString())}`;
+    return { svg, legend, range };
+  }
+
+  function renderChart(monitor) {
+    const card = $("chartCard");
+    if (!monitor || !monitor.available || !Object.keys(monitor.sqlMetrics || {}).length) {
+      card.innerHTML = `<p class="sec-note" style="margin:0">Live DTU/CPU/IO metrics aren't available right now (Azure Monitor access may still be propagating, or the call failed) &mdash; this needs the backend's own read-only Monitor permission, granted 2026-10-21.</p>`;
+      return;
+    }
+    const { svg, legend, range } = buildChart(monitor.sqlMetrics);
+    card.innerHTML = `<div class="chart-legend">${legend}</div>${svg}<div class="chart-foot"><span>${range}</span><span>Database: emailindex (Azure SQL)</span></div>`;
+  }
+
+  // ---- errors ----
+
+  function renderFileErrors(rows) {
+    const tbody = $("fileErrBody");
+    if (!rows || !rows.length) { tbody.innerHTML = `<tr class="empty-row"><td colspan="4">No indexing errors &mdash; everything parsed cleanly</td></tr>`; return; }
+    tbody.innerHTML = rows.map(r => `
+      <tr><td class="mono">${esc(r.name)}</td><td class="mono">${esc(r.folder || "")}</td><td>${esc(r.error)}</td><td class="num">${fmtAgo(r.seenAt)}</td></tr>`).join("");
+  }
+
+  function renderExceptions(rows) {
+    const tbody = $("excBody");
+    if (!rows || !rows.length) { tbody.innerHTML = `<tr class="empty-row"><td colspan="3">No exceptions in the last 24 hours</td></tr>`; return; }
+    tbody.innerHTML = rows.map(r => `
+      <tr><td>${esc(r.OuterMessage)}</td><td class="num">${fmtNum(r.count)}</td><td class="num">${fmtAgo(r.lastSeen)}</td></tr>`).join("");
+  }
+
+  // ---- diagnostic log: plain text, meant to be pasted into a Claude Code session ----
+
+  function buildDiagText(d) {
+    const lines = [];
+    lines.push(`Email index status snapshot — ${d.generatedAt}`);
+    lines.push(`Total emails indexed: ${d.totals?.emails ?? "?"}`);
+    (d.libraries || []).forEach(l => {
+      const r = l.last_result || {};
+      lines.push(`[${l.library}] in_progress=${!!l.in_progress} finished_at=${l.finished_at || "—"} ` +
+        `last_result={indexed:${r.indexed},updated:${r.updated},removed:${r.removed},skipped:${r.skipped},errors:${r.errors}} ` +
+        `consecutive_empty_runs=${l.consecutive_empty_runs || 0}`);
+    });
+    const dq = d.dataQuality || {};
+    lines.push(`Data quality: filesWithErrors=${dq.filesWithErrors ?? "?"} blankSignatureEmails=${dq.blankSignatureEmails ?? "?"}`);
+    const q = d.queues || {};
+    lines.push(`Queues: pendingNotify.depth=${q.pendingNotify?.depth ?? "?"} exhausted=${q.pendingNotify?.exhausted ?? "?"} ` +
+      `recipientBackfill.remaining=${q.recipientBackfill?.remaining ?? "?"} keywordBuild.remaining=${q.keywordBuild?.remaining ?? "?"}`);
+    lines.push("");
+    lines.push("-- Request stats (last 3h) --");
+    (d.monitor?.requestStats || []).forEach(r =>
+      lines.push(`${r.Name}: n=${r.count} avg=${Math.round(r.avgMs)}ms p50=${Math.round(r.p50)}ms p90=${Math.round(r.p90)}ms fails=${r.fails}`));
+    lines.push("");
+    lines.push("-- Exceptions (last 24h) --");
+    (d.monitor?.exceptions || []).forEach(e => lines.push(`[x${e.count}, last ${e.lastSeen}] ${e.OuterMessage}`));
+    lines.push("");
+    lines.push("-- Recent warnings (last 24h, most recent first) --");
+    (d.monitor?.warnings || []).forEach(w => lines.push(`[${w.TimeGenerated}] ${w.Message}`));
+    lines.push("");
+    lines.push("-- Recent file-level indexing errors --");
+    (d.recentFileErrors || []).forEach(e => lines.push(`[${e.seenAt}] ${e.name} (${e.folder}): ${e.error}`));
+    if (d.monitor && !d.monitor.available) {
+      lines.push("");
+      lines.push("NOTE: Azure Monitor data was unavailable when this snapshot was taken (" +
+        [d.monitor.requestStatsError, d.monitor.exceptionsError, d.monitor.warningsError, d.monitor.sqlMetricsError].filter(Boolean).join("; ") + ").");
+    }
+    return lines.join("\n");
+  }
+
+  // ---- page shell ----
+
+  function pageShell() {
+    return `
+      <h1 class="page-title">Email Index Status</h1>
+      <p class="sub">Live health of the hosted search index &mdash; sync progress, background jobs, errors and infrastructure load.</p>
+
+      <section>
+        <div class="sec-head"><h2>Overview</h2></div>
+        <div class="cards" id="ovCards"></div>
+      </section>
+
+      <section>
+        <div class="sec-head"><h2>Background jobs</h2></div>
+        <p class="sec-note">Everything here runs on its own timer, every few minutes &mdash; see the Email Search help for what each one does.</p>
+        <div class="cards" id="queueCards"></div>
+      </section>
+
+      <section>
+        <div class="sec-head"><h2>Request activity (last 3 hours)</h2></div>
+        <table><thead><tr><th>Process</th><th>Calls</th><th>Avg</th><th>p50</th><th>p90</th><th>Failures</th></tr></thead>
+          <tbody id="reqBody"><tr class="empty-row"><td colspan="6">Loading&hellip;</td></tr></tbody></table>
+      </section>
+
+      <section>
+        <div class="sec-head"><h2>Database load</h2></div>
+        <p class="sec-note">Azure SQL (S0 tier) consumption over the last 6 hours &mdash; DTU is roughly the ceiling across these.</p>
+        <div class="chart-card" id="chartCard"></div>
+      </section>
+
+      <section>
+        <div class="sec-head"><h2>Critical &amp; exceptions <span class="count" id="excCount">0</span></h2></div>
+        <table><thead><tr><th>Message</th><th>Count (24h)</th><th>Last seen</th></tr></thead>
+          <tbody id="excBody"><tr class="empty-row"><td colspan="3">Loading&hellip;</td></tr></tbody></table>
+      </section>
+
+      <section>
+        <div class="sec-head"><h2>Indexing errors <span class="count" id="fileErrCount">0</span></h2></div>
+        <p class="sec-note">Individual files the sync couldn't index (too large, unparseable, missing a Message-ID) &mdash; these retry automatically.</p>
+        <table><thead><tr><th>File</th><th>Folder</th><th>Error</th><th>Seen</th></tr></thead>
+          <tbody id="fileErrBody"><tr class="empty-row"><td colspan="4">Loading&hellip;</td></tr></tbody></table>
+      </section>
+
+      <section>
+        <details class="diag">
+          <summary>Diagnostic log (for Claude Code / fault-finding) <span class="arrow">&#9662;</span></summary>
+          <div class="diag-body">
+            <p>A plain-text snapshot of everything on this page, meant to be copied straight into a debugging session.</p>
+            <textarea id="diagText" readonly spellcheck="false"></textarea>
+            <div class="diag-actions"><button class="btn primary" id="copyDiagBtn">Copy to clipboard</button></div>
+          </div>
+        </details>
+      </section>
+    `;
+  }
+
+  async function load(isRefresh) {
+    const btn = $("refreshBtn");
+    if (isRefresh) btn.classList.add("spin");
+    try {
+      const d = await (await api("/api/admin/dashboard")).json();
+      if (d.error) { $("content").innerHTML = `<div class="err-banner">${esc(d.error)}</div>`; return; }
+      if (!document.getElementById("ovCards")) $("content").innerHTML = pageShell();
+      renderOverview(d);
+      renderQueues(d);
+      renderRequestStats(d.monitor?.requestStats);
+      renderChart(d.monitor);
+      renderExceptions(d.monitor?.exceptions);
+      renderFileErrors(d.recentFileErrors);
+      $("excCount").textContent = (d.monitor?.exceptions || []).length;
+      $("fileErrCount").textContent = (d.recentFileErrors || []).length;
+      $("diagText").value = buildDiagText(d);
+      $("genAt").textContent = "Updated " + fmtAgo(d.generatedAt);
+    } catch (err) {
+      if (err.message !== "Not signed in") {
+        $("content").innerHTML = `<div class="err-banner">Couldn't load the status dashboard: ${esc(err.message)}. Try refreshing in a minute.</div>`;
+      }
+    } finally {
+      btn.classList.remove("spin");
+    }
+  }
+
+  $("refreshBtn").addEventListener("click", () => load(true));
+  document.addEventListener("click", ev => {
+    if (ev.target.id === "copyDiagBtn") {
+      navigator.clipboard.writeText($("diagText").value).then(() => {
+        const btn = $("copyDiagBtn");
+        const original = btn.textContent;
+        btn.textContent = "Copied!";
+        setTimeout(() => { btn.textContent = original; }, 1500);
+      });
+    }
+  });
+  $("signInBtn").addEventListener("click", async () => {
+    $("signInErr").textContent = "";
+    try { if (await getToken(true)) { showSignIn(false); load(); } }
+    catch (err) { $("signInErr").textContent = `Sign-in failed: ${err.message}`; }
+  });
+
+  (async () => {
+    let token = null;
+    try { token = await getToken(false); } catch { token = null; }
+    if (token) { showSignIn(false); load(); setInterval(load, 60000); } else { showSignIn(true); }
+  })();
+</script>
+</body>
+</html>

@@ -31,7 +31,8 @@
     #q:focus{outline:2px solid var(--green)}
     #searchWrap svg{position:absolute;left:11px;top:10px}
     #sort{height:34px;border:none;border-radius:4px;padding:0 8px;font:13px var(--font-body)}
-    #syncStatus{margin-left:auto;font-size:11px;color:var(--grey-300);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px}
+    #syncStatus{margin-left:auto;font-size:11px;color:var(--grey-300);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px;text-decoration:none}
+    #syncStatus:hover{color:#fff;text-decoration:underline}
     #syncStatus.changed{color:#9FD6A8}
     #syncStatus.bad{color:#F2B24D}
     #syncBtn,#rebuildKeywordsBtn{flex:none;width:30px;height:30px;border:1px solid #555;border-radius:4px;background:none;color:var(--grey-200);font-size:15px;line-height:1}
@@ -200,7 +201,7 @@
       <option value="date">Newest first</option>
       <option value="relevance">Best match</option>
     </select>
-    <span id="syncStatus" title="The index checks both Hub libraries for new, changed and deleted emails every 5 minutes"></span>
+    <a id="syncStatus" href="email-index-status.html" target="_blank" rel="noopener" title="The index checks both Hub libraries for new, changed and deleted emails every 5 minutes — click for the full status dashboard"></a>
     <button id="rebuildKeywordsBtn" title="Rebuild the content-based suggestion keywords now, instead of waiting for the next scheduled run">&#8635;</button>
     <span id="who"></span>
   </header>
