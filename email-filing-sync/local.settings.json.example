@@ -10,6 +10,7 @@
     "WEBSITE_LOAD_CERTIFICATES": "<same thumbprint as GRAPH_CERT_THUMBPRINT, so Azure loads it into the instance's cert store>",
 
     "EMAIL_INDEX_BASE_URL": "https://summation-email-index.azurewebsites.net",
+    "EMAIL_INDEX_SYNC_KEY": "<shared secret, identical to the EMAIL_INDEX_SYNC_KEY app setting on summation-email-index itself - sent as X-Service-Key on /api/emails and /api/emails/pending, which are excluded from that app's own Easy Auth (see its function_app.py)>",
     "STAFF_GROUP_ID": "<object ID of the 'Summation Staff Mailboxes' mail-enabled security group - the SAME group the Exchange Application Access Policy is scoped to>",
 
     "SITE_ID": "summationptyltd.sharepoint.com,b0a8b5e8-0c27-4b46-a97f-e9f7668c3021,039ea15c-5b24-4eea-b48a-9f4e61e9439c",

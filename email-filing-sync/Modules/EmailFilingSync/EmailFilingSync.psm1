@@ -405,14 +405,21 @@ function Invoke-IndexApi {
     if (-not $baseUrl) { return [pscustomobject]@{ Success = $true; Data = $null } }
     $uri = "$baseUrl$Path"
     $json = if ($Method -eq "Post") { $Body | ConvertTo-Json -Depth 6 } else { $null }
+    # 2026-10-22: these calls carried no auth at all until now -- found via the index's own
+    # status dashboard that every single one had been returning 401 since the index went live
+    # (10,299 failures, 2026-10-09 to 2026-10-22, 100% failure rate). email-index's API requires
+    # a @summation.au *user* token for everything else, which this app-only tool can never hold,
+    # so these two routes specifically are excluded from that and guarded by this shared secret
+    # instead (EMAIL_INDEX_SYNC_KEY, set identically here and on the index's own Function App).
+    $headers = if ($env:EMAIL_INDEX_SYNC_KEY) { @{ "X-Service-Key" = $env:EMAIL_INDEX_SYNC_KEY } } else { @{} }
 
     $lastError = $null
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         try {
             if ($Method -eq "Get") {
-                $data = Invoke-RestMethod -Method Get -Uri $uri -TimeoutSec $TimeoutSec -ErrorAction Stop
+                $data = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -TimeoutSec $TimeoutSec -ErrorAction Stop
             } else {
-                $data = Invoke-RestMethod -Method Post -Uri $uri -ContentType "application/json" -Body $json -TimeoutSec $TimeoutSec -ErrorAction Stop
+                $data = Invoke-RestMethod -Method Post -Uri $uri -Headers $headers -ContentType "application/json" -Body $json -TimeoutSec $TimeoutSec -ErrorAction Stop
             }
             return [pscustomobject]@{ Success = $true; Data = $data }
         } catch {

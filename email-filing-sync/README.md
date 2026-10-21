@@ -142,23 +142,30 @@ noticed filed emails' categories had been rewritten down to the bare code. Fixed
 `run.ps1` to just add `Filed` on top of the existing categories unchanged, matching how the
 Sent Items pass already worked.
 
-## Found 2026-10-21, not yet investigated: `Invoke-IndexApi` sends no auth token
+## Fixed 2026-10-22: `Invoke-IndexApi` had been sending no auth token since launch
 
-While building the email-index status dashboard (`email-index-status.html` in the parent
-repo), noticed that `Invoke-IndexApi` (this module) calls `$EMAIL_INDEX_BASE_URL` with
-`Invoke-RestMethod` and no `Authorization` header at all. Every route on the hosted index
-API requires a bearer token for a signed-in `@summation.au` account (see email-index's
-`function_app.py`'s `@guarded` decorator) -- there's no documented app-only/API-key path in,
-so these calls are very likely getting a 401 every single time and have been since the index
-went live. If so, this means the "notify the index right away" fast path
-(`POST /api/emails` / `POST /api/emails/pending`) has never actually worked, and every filed
-email has only ever been appearing in search via `sync_timer`'s much slower Graph delta
-crawl. **Not confirmed** -- this needs checking against real Application Insights data
-(request/exception counts for these calls) before assuming it's actually broken, and if so,
-needs a real fix (most likely: expose an app role for app-only client-credentials auth on the
-"Summation Outlook Add-in" app's `EmailIndex.Access` API, and grant it to this app's own
-"Summation Email Filing Sync" registration). Logged here rather than fixed on the spot, since
-it's a materially different piece of work from what was being built when this was found.
+Found while building the email-index status dashboard (`email-index-status.html` in the
+parent repo), then confirmed against real data before fixing: `Invoke-IndexApi` (this
+module) called `$EMAIL_INDEX_BASE_URL` with `Invoke-RestMethod` and no `Authorization`
+header at all. Every other route on the hosted index API requires a bearer token for a
+signed-in `@summation.au` account, which this app-only tool can never hold -- so these calls
+had a **100% failure rate**: 10,299 logged `401`s between 2026-10-09 (when the retry/
+warning logging was added) and 2026-10-22, and zero ever recorded as a successful
+`record_email`/`record_email_pending` request on email-index's own side. Every filed email
+had only ever been appearing in search via `sync_timer`'s much slower (every 5 min) Graph
+delta crawl, not the fast path these calls exist for; the "durably queue it for retry"
+fallback (`/api/emails/pending`) had never recovered anything either, for the identical
+reason.
+
+**Fix** (deliberately not a full OAuth app-role grant, to avoid widening this app's trust
+boundary onto the "Summation Outlook Add-in" registration -- see "Why a third Function App"
+above): `/api/emails` and `/api/emails/pending` are now excluded from email-index's Easy
+Auth (`globalValidation.excludedPaths`, alongside its existing `/api/dl/*`) and instead check
+a shared secret, `EMAIL_INDEX_SYNC_KEY`, sent here as the `X-Service-Key` header and set as
+an identical app setting on both this Function App and `summation-email-index`. No other
+caller uses either route, so narrowing their auth model this way doesn't affect anything
+else. Deployed and verified live 2026-10-22 (correct key reaches `record_filing`/
+`queue_pending_notify`; wrong/missing key gets a 401 from the shared-secret check itself).
 
 ## What this version does NOT do (known v1 gaps)
 
