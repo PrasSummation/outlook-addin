@@ -1,7 +1,8 @@
 using namespace System.Net
 
 # POST /api/remediate-corrupted-emails
-# Body: { "mode": "scan", "resumeIndex": <int, optional>, "resumeFileIndex": <int, optional> }
+# Body (scan): { "mode": "scan", "resumeIndex": <int, optional>, "resumeFileIndex": <int, optional> }
+# Body (fix):  { "mode": "fix", "files": [ {driveId, itemId, fileName, project, emailsFolderId}, ... ] }
 #
 # TEMPORARY, one-off remediation helper for the "silent email-content corruption" bug (see
 # EmailFilingSync.psm1/SyncEmails's own history) -- a message fetched via the old
@@ -10,20 +11,25 @@ using namespace System.Net
 # (each byte rendered as its decimal value, space-separated) instead of the real bytes. Confirmed
 # live on an already-filed email (SUPER25060_Perth Town Hall Undercroft, dated 2026-10-20 -- ten
 # days after the first, incomplete fix for this class of bug). SyncEmails/run.ps1's switch to
-# Invoke-WebRequest (2026-10-21) is what stops NEW corruption; this finds already-corrupted files
-# already sitting in SharePoint. A "fix" mode that actually rewrites them is a deliberate follow-up,
-# not built yet -- this function is scan-only so the full list of affected files can be reviewed
-# before anything gets overwritten.
+# Invoke-WebRequest (2026-10-21) is what stops NEW corruption; this finds (and, in "fix" mode,
+# repairs) already-corrupted files already sitting in SharePoint. A full scan on 2026-10-21 found
+# 2,936 corrupted files across 80 projects (~19% of everything ever filed) -- "fix" decodes each
+# one back to its original bytes (the corruption is fully reversible) and overwrites it in place,
+# but only after a sanity check confirms the decoded content actually looks like a real email;
+# anything that fails either step is left untouched and reported, never guessed at.
 #
 # Remove this function (and its route) once remediation is confirmed complete -- it exists to use
 # the Function App's own app-only Graph identity against both project libraries for a one-off
 # job, which isn't something this app should carry around as permanent surface area.
 #
-# This endpoint only ever reads. Resumable: each call processes project folders starting at
-# resumeIndex within a time budget (leaving margin under host.json's 9-minute functionTimeout)
-# and returns the next resumeIndex to continue from, plus whatever it found in this chunk. The
-# caller is responsible for merging results across calls -- this function is stateless by design
-# (no blob/table state, nothing to clean up afterward beyond removing the function itself).
+# "scan" never writes anything. Resumable: each call processes project folders starting at
+# resumeIndex/resumeFileIndex within a time budget (shortened to 45 seconds, 2026-10-21 -- this
+# Consumption plan isn't reliable for long-running HTTP calls regardless of client-side timeout
+# settings) and returns where to resume from, plus whatever it found in this chunk. The caller is
+# responsible for merging results across calls -- this function is stateless by design (no blob/
+# table state, nothing to clean up afterward beyond removing the function itself). "fix" takes a
+# batch of files from a prior scan and actually overwrites them -- not resumable/chunked itself,
+# so the caller should keep each batch small enough to finish well within the same time budget.
 
 param($Request, $TriggerMetadata)
 
@@ -39,9 +45,9 @@ function New-JsonResponse {
 }
 
 $mode = $Request.Body.mode
-if ($mode -ne "scan") {
+if ($mode -ne "scan" -and $mode -ne "fix") {
     Push-OutputBinding -Name Response -Value (New-JsonResponse -StatusCode ([HttpStatusCode]::BadRequest) -Body @{
-        error = "Only mode: 'scan' is implemented so far. A 'fix' mode is a deliberate follow-up once scan results have been reviewed."
+        error = "mode must be 'scan' or 'fix'."
     })
     return
 }
@@ -52,6 +58,96 @@ try {
     Push-OutputBinding -Name Response -Value (New-JsonResponse -StatusCode ([HttpStatusCode]::InternalServerError) -Body @{
         error = "Could not acquire a Graph token: $($_.Exception.Message)"
     })
+    return
+}
+
+# "fix" mode: takes a list of files (as returned by a "scan" -- {driveId, itemId, fileName,
+# project, emailsFolderId}) and actually remediates them. Added 2026-10-21 after the scan found
+# 2,936 corrupted files across 80 projects -- too many to review individually, so this is
+# deliberately conservative: it decodes and sanity-checks each file before ever overwriting
+# anything, and reports a failure rather than guessing when either step doesn't check out.
+if ($mode -eq "fix") {
+    $files = $Request.Body.files
+    if (-not $files -or $files.Count -eq 0) {
+        Push-OutputBinding -Name Response -Value (New-JsonResponse -StatusCode ([HttpStatusCode]::BadRequest) -Body @{
+            error = "fix mode requires a non-empty 'files' array (as returned by a scan)."
+        })
+        return
+    }
+
+    # Reverses PowerShell's default array-to-string join: splits the corrupted text on
+    # whitespace, parses each token as a byte value (0-255). A token that isn't a clean integer
+    # in that range means this wasn't actually the known corruption pattern after all -- returns
+    # $null rather than guessing, so the caller can report it as unresolved instead of writing
+    # garbage back to SharePoint.
+    function ConvertFrom-CorruptedBytes {
+        param([Parameter(Mandatory)][string]$Text)
+        $tokens = $Text -split '\s+' | Where-Object { $_ -ne '' }
+        if ($tokens.Count -eq 0) { return $null }
+        $bytes = New-Object byte[] $tokens.Count
+        for ($k = 0; $k -lt $tokens.Count; $k++) {
+            $n = 0
+            if (-not [int]::TryParse($tokens[$k], [ref]$n) -or $n -lt 0 -or $n -gt 255) { return $null }
+            $bytes[$k] = [byte]$n
+        }
+        return $bytes
+    }
+
+    # Sanity check before ever overwriting anything: a real email's first line always looks like
+    # "Header-Name: value" (RFC 5322) -- printable ASCII, a colon, letters/hyphens before it.
+    function Test-LooksLikeRealEmail {
+        param([Parameter(Mandatory)][byte[]]$Bytes)
+        if ($Bytes.Length -lt 10) { return $false }
+        $prefixLen = [Math]::Min(500, $Bytes.Length)
+        $prefix = [System.Text.Encoding]::ASCII.GetString($Bytes, 0, $prefixLen)
+        $firstLine = ($prefix -split "`r`n|`n")[0]
+        return $firstLine -match '^[A-Za-z][A-Za-z0-9\-]*:\s'
+    }
+
+    $fixResults = [System.Collections.Generic.List[object]]::new()
+    foreach ($f in $files) {
+        try {
+            $resp = Invoke-WebRequest -Method Get `
+                -Uri "https://graph.microsoft.com/v1.0/drives/$($f.driveId)/items/$($f.itemId)/content" `
+                -Headers @{ Authorization = "Bearer $token" } -ErrorAction Stop
+            # Same byte[]-vs-string uncertainty as everywhere else in this codebase -- the
+            # corrupted file's content is plain ASCII digits/whitespace either way, so decoding
+            # it to a string for ConvertFrom-CorruptedBytes to split is safe regardless of which
+            # type Invoke-WebRequest actually handed back this time.
+            $rawContent = $resp.Content
+            $corruptedText = if ($rawContent -is [byte[]]) { [System.Text.Encoding]::ASCII.GetString($rawContent) } else { [string]$rawContent }
+
+            $decoded = ConvertFrom-CorruptedBytes -Text $corruptedText
+            if (-not $decoded) {
+                $fixResults.Add([ordered]@{ project = $f.project; fileName = $f.fileName; status = "failed"; reason = "could not decode as the known corruption pattern" })
+                continue
+            }
+            if (-not (Test-LooksLikeRealEmail -Bytes $decoded)) {
+                $fixResults.Add([ordered]@{ project = $f.project; fileName = $f.fileName; status = "failed"; reason = "decoded content doesn't look like a real email -- left untouched" })
+                continue
+            }
+
+            if ($decoded.Length -gt 4MB) {
+                Send-GraphLargeFile -DriveId $f.driveId -ParentId $f.emailsFolderId -FileName $f.fileName -Bytes $decoded -Token $token | Out-Null
+            } else {
+                Invoke-RestMethod -Method Put `
+                    -Uri "https://graph.microsoft.com/v1.0/drives/$($f.driveId)/items/$($f.itemId)/content" `
+                    -Headers @{ Authorization = "Bearer $token" } -ContentType "message/rfc822" -Body $decoded -ErrorAction Stop | Out-Null
+            }
+            $fixResults.Add([ordered]@{ project = $f.project; fileName = $f.fileName; status = "fixed"; corruptedSizeBytes = $corruptedText.Length; fixedSizeBytes = $decoded.Length })
+        } catch {
+            $fixResults.Add([ordered]@{ project = $f.project; fileName = $f.fileName; status = "failed"; reason = $_.Exception.Message })
+        }
+    }
+
+    $fixBody = [ordered]@{
+        mode    = "fix"
+        total   = $files.Count
+        fixed   = @($fixResults | Where-Object { $_.status -eq "fixed" }).Count
+        failed  = @($fixResults | Where-Object { $_.status -eq "failed" }).Count
+        results = $fixResults
+    }
+    Push-OutputBinding -Name Response -Value (New-JsonResponse -StatusCode ([HttpStatusCode]::OK) -Body $fixBody)
     return
 }
 
