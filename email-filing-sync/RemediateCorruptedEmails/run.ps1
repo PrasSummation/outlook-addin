@@ -1,7 +1,7 @@
 using namespace System.Net
 
 # POST /api/remediate-corrupted-emails
-# Body: { "mode": "scan", "resumeIndex": <int, optional> }
+# Body: { "mode": "scan", "resumeIndex": <int, optional>, "resumeFileIndex": <int, optional> }
 #
 # TEMPORARY, one-off remediation helper for the "silent email-content corruption" bug (see
 # EmailFilingSync.psm1/SyncEmails's own history) -- a message fetched via the old
@@ -69,15 +69,24 @@ function Test-CorruptionSignature {
 
 $resumeIndex = 0
 if ($Request.Body.resumeIndex) { $resumeIndex = [int]$Request.Body.resumeIndex }
+$resumeFileIndex = 0
+if ($Request.Body.resumeFileIndex) { $resumeFileIndex = [int]$Request.Body.resumeFileIndex }
 
 $folderEntries = Get-ProjectFolderEntries -Token $token
-$deadline = (Get-Date).AddMinutes(7)
+# Shortened from 7 minutes to 45 seconds, 2026-10-21: a long-running HTTP call on this Consumption
+# plan isn't reliable regardless of client-side timeout settings -- confirmed live, one call ran
+# the full ~7 minutes and completed successfully, but a later identical call got cut off by what
+# looks like a platform-level instance recycle around 1m41s into execution. Short, frequent,
+# resumable calls sidestep the problem entirely rather than fighting the platform's own lifetime
+# management for long-running Consumption-plan requests.
+$deadline = (Get-Date).AddSeconds(45)
 $scannedProjects = 0
 $scannedFiles = 0
 $corrupted = [System.Collections.Generic.List[object]]::new()
 $peekErrors = [System.Collections.Generic.List[object]]::new()
 $i = $resumeIndex
 $doneAll = $true
+$nextFileIndex = 0
 
 for (; $i -lt $folderEntries.Count; $i++) {
     if ((Get-Date) -gt $deadline) { $doneAll = $false; break }
@@ -95,7 +104,22 @@ for (; $i -lt $folderEntries.Count; $i++) {
         "https://graph.microsoft.com/v1.0/drives/$($entry.DriveId)/items/$($emailsFolder.id)/children" +
         "?`$select=id,name,size&`$top=200"
     )
-    foreach ($file in ($files | Where-Object { $_.name -match '(?i)\.eml$' })) {
+    $emlFiles = @($files | Where-Object { $_.name -match '(?i)\.eml$' })
+
+    # Checked per-file too, not just per-folder, added 2026-10-21: a single busy project's worth
+    # of files can take well past the deadline before the outer loop's own check is reached again
+    # -- confirmed live, one call overran a 45s deadline to 90s this way. A FILE-level resume
+    # cursor (resumeFileIndex), added the same day, is what actually makes this safe: a project
+    # with thousands of filed emails was found live to never advance past folder-level resuming
+    # alone -- every resumed call restarted peeking that same folder from its first file, hit the
+    # deadline at roughly the same position, and never got further. $startFileIndex only applies
+    # to the FIRST folder processed this call (the one actually being resumed into); every folder
+    # reached after that starts at its own file 0 as normal.
+    $startFileIndex = if ($i -eq $resumeIndex) { $resumeFileIndex } else { 0 }
+    $overran = $false
+    for ($fi = $startFileIndex; $fi -lt $emlFiles.Count; $fi++) {
+        if ((Get-Date) -gt $deadline) { $overran = $true; $nextFileIndex = $fi; break }
+        $file = $emlFiles[$fi]
         $scannedFiles++
         try {
             $peekResp = Invoke-WebRequest -Method Get `
@@ -117,6 +141,7 @@ for (; $i -lt $folderEntries.Count; $i++) {
             $peekErrors.Add([ordered]@{ project = $entry.Name; fileName = $file.name; error = $_.Exception.Message })
         }
     }
+    if ($overran) { $doneAll = $false; break }
 }
 
 $body = [ordered]@{
@@ -129,5 +154,6 @@ $body = [ordered]@{
     peekErrors              = $peekErrors
     done                    = $doneAll
     resumeIndex             = if ($doneAll) { $null } else { $i }
+    resumeFileIndex         = if ($doneAll) { $null } else { $nextFileIndex }
 }
 Push-OutputBinding -Name Response -Value (New-JsonResponse -StatusCode ([HttpStatusCode]::OK) -Body $body)
