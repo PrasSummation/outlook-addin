@@ -429,7 +429,7 @@
     const btn = $("refreshBtn");
     if (isRefresh) btn.classList.add("spin");
     try {
-      const d = await (await api("/api/admin/dashboard")).json();
+      const d = await (await api("/api/dashboard")).json();
       if (d.error) { $("content").innerHTML = `<div class="err-banner">${esc(d.error)}</div>`; return; }
       if (!document.getElementById("ovCards")) $("content").innerHTML = pageShell();
       renderOverview(d);
