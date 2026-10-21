@@ -1046,13 +1046,14 @@
       const busy = s.libraries.some(l => l.in_progress);
       const errors = s.libraries.reduce((n, l) => n + ((l.last_result || {}).errors || 0), 0);
       const ago = times.length ? Math.max(0, Math.round((Date.now() - new Date(times[0])) / 60000)) : null;
-      status.textContent = `${s.emails.toLocaleString()} emails indexed`
+      const detail = `${s.emails.toLocaleString()} emails indexed`
         + (busy ? " · first full index still running" : ago !== null ? ` · updated ${ago < 1 ? "just now" : ago + " min ago"}` : "");
+      status.textContent = "Status";
       status.className = errors ? "bad" : "";
-      status.title = errors
-        ? "Some files couldn't be indexed:\n" + s.libraries.flatMap(l => ((l.last_result || {}).errorSamples || []).map(e => `${e.file}: ${e.error}`)).join("\n")
-        : "The index checks both Hub libraries for new, changed and deleted emails every 5 minutes";
-    } catch { status.textContent = ""; }
+      status.title = (errors
+        ? "Some files couldn't be indexed:\n" + s.libraries.flatMap(l => ((l.last_result || {}).errorSamples || []).map(e => `${e.file}: ${e.error}`)).join("\n") + "\n\n"
+        : "") + detail + "\nClick for the full status dashboard.";
+    } catch { status.textContent = "Status"; }
   }
 
   // Deep link from the File to Project task pane: ?project=SUPER26000 opens pre-filtered.
