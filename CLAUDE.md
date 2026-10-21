@@ -1044,21 +1044,44 @@ silently chokes on a `contextData` value that isn't valid JSON. Fixed by JSON-en
 (`commands.js`) and parsing it back out on both paths (`taskpane.html`). **Not yet
 independently confirmed this resolves it** — reproduce live before trusting it.
 
-## File on Send: Smart Alerts redesign, re-disabled after a live-blocking incident (2026-10-16)
+## File on Send: Smart Alerts redesign, re-enabling in progress 2026-10-21 with a safer SendMode
 
-**Current status: `FILE_ON_SEND_ENABLED = false` again.** The redesign below was enabled, tested
-live, and immediately caused a real incident: the native Smart Alerts dialog showed correctly
-(**Choose project** / **Don't Send**), but `SendMode="SoftBlock"` gives no "Send Anyway" escape,
-and **Choose project** → task pane → `file-on-send-dialog.html` → `categories.addAsync` wasn't
-completing the categorization — leaving the user fully unable to send, stuck in a loop. Flipped
-back off within minutes (same kill switch as the 2026-10-07 incident; see that section's
-"Important correction" note above about also needing an Outlook restart, not just waiting on the
-cache). The architecture described below (Take Action button, `commandId`/`FileOnCompose.Url`
-reuse) is still believed correct; what needs root-causing before re-enabling is specifically why
-the categorize step doesn't complete, and whether `SendMode="PromptUser"` (which does offer
-"Send Anyway") would be a safer default than `SoftBlock` for this particular flow, given it has
-no server-side backstop the way the already-live `email-filing-sync` Sent Items pass does for
-plain categorization.
+**Current status: `FILE_ON_SEND_ENABLED = false` still, `SendMode="PromptUser"` (manifest2.xml,
+1.0.0.20) pushed and awaiting admin-center propagation.** Triggered by the user asking whether
+Save Both/Reply Only could actually let the send through (they can't trigger a send on their
+own — Office.js has no API for a task pane or dialog to invoke Send programmatically; this is the
+only mechanism that gets that experience, by letting the user's own Send click be the trigger).
+
+**Deliberately split into two steps, not pushed together**: `commands.js` deploys in ~10 minutes
+via its own CDN cache, but the manifest's `SendMode` change needs a slower re-upload to the
+Microsoft 365 admin center's Integrated Apps and propagation before it's actually live on users'
+clients. Flipping `FILE_ON_SEND_ENABLED` to `true` in the *same* push as the manifest change would
+create a window where File on Send is active while clients are still running the OLD manifest
+(`SendMode="SoftBlock"`) — exactly the risky combination that caused the incident below. **Next
+steps, in order**: (1) re-upload manifest2.xml (1.0.0.20) to the Microsoft 365 admin center —
+strongly consider scoping this deployment to a single test account first, given the history below;
+(2) confirm the new `SendMode="PromptUser"` has actually propagated to a real client (the same
+"restart Outlook, don't just wait" lesson from the 2026-10-07 incident likely applies); (3) only
+then flip `FILE_ON_SEND_ENABLED` back to `true` in `commands.js` (fast, GitHub-Pages-only change).
+
+All the root causes found during the 2026-10-16 to 2026-10-21 debugging arc are believed fixed by
+the time step 3 happens: the Graph GET 404 right after `saveAsync()` (retry added), the
+master-category cleanup race (deferred sweep instead of immediate removal), the compose-mode
+`item.subject` object bug, and Save Both's dialog killing its own bridge request before it landed
+(now awaits it fully instead of racing a timeout). `SendMode="PromptUser"` itself is the safety
+margin for whatever isn't — see manifest2.xml's own comment on the `LaunchEvent` for why that
+specifically matters (`PromptUser`'s native dialog includes a "Send Anyway" override; `SoftBlock`
+only ever failed open if the *handler* errored/hung, never gave an escape once its own Take Action
+dialog was already showing, which is exactly what trapped the user last time).
+
+**2026-10-16 live-blocking incident (why this was off until now)**: the redesign below was
+enabled, tested live, and immediately caused a real incident: the native Smart Alerts dialog
+showed correctly (**Choose project** / **Don't Send**), but `SendMode="SoftBlock"` gave no "Send
+Anyway" escape, and **Choose project** → task pane → `file-on-send-dialog.html` →
+`categories.addAsync` wasn't completing the categorization — leaving the user fully unable to
+send, stuck in a loop. Flipped back off within minutes (same kill switch as the 2026-10-07
+incident; see that section's "Important correction" note above about also needing an Outlook
+restart, not just waiting on the cache).
 
 **Root cause of the categorize step found, 2026-10-16**: `item.categories.addAsync()` requires
 the category to already exist in the mailbox's own master category list
@@ -1131,11 +1154,13 @@ accepted cosmetic trade-off for now, correctness over tidiness. If revisited, do
 **deferred sweep** (clean up entries from a *previous* run, tracked separately, never the one
 just added in the current run) rather than retrying immediate removal with different timing.
 
-Still outstanding before re-enabling File on Send specifically: confirm live that this fix
-actually resolves it (diagnostic markers already in place via `diagNotify()` throughout
-`onMessageSendHandler`, see "Diagnostic round in progress" below — reproduce and read the
-banners rather than assume), and decide on the `SendMode="PromptUser"` question above as a
-safety margin for next time.
+**Decided 2026-10-21**: the `SendMode="PromptUser"` question above is settled (switched, see the
+"re-enabling in progress" section above) — `FILE_ON_SEND_ENABLED` stays `false` until that manifest
+change is confirmed live, per that section's step-by-step sequencing. The `diagNotify()` markers
+that were in `onMessageSendHandler` have since been removed now that the compose-time filing chain
+they covered is confirmed working — see "Diagnostic round in progress" below for that history;
+this flow (`onMessageSendHandler` specifically) has never had a live send-triggered test of its
+own since the 2026-10-16 incident, so that's the first thing to confirm once re-enabled.
 
 Re-enabled (`FILE_ON_SEND_ENABLED = true`) using the redesign option 1 below actually calls for,
 combined with option 2's commandId mechanism: `onMessageSendHandler` no longer calls

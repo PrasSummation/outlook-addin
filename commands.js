@@ -27,18 +27,33 @@
  * Office global, which is why there's no Office.onReady wrapper -- adding one would just
  * never fire on classic Windows.
  *
- * The manifest's SendMode="SoftBlock" means Outlook itself lets the send through if this
- * handler throws, hangs, or never calls event.completed() within its own platform timeout --
- * a deliberate safety net this code leans on rather than duplicates.
+ * The manifest's SendMode="PromptUser" (changed from "SoftBlock" 2026-10-21, manifest2.xml) means
+ * Outlook's own Smart Alerts dialog offers a "Send Anyway" override in addition to this handler's
+ * own Take Action button -- a real escape hatch if the categorize-and-file flow misbehaves,
+ * which SoftBlock never provided (it only fails open if this handler itself throws, hangs, or
+ * never calls event.completed() within Outlook's own platform timeout -- a different, narrower
+ * safety net this code still leans on rather than duplicates).
  */
-// EMERGENCY KILL SWITCH, re-tripped 2026-10-16: live-blocking incident confirmed -- the Smart
-// Alerts dialog shows correctly (Choose project / Don't Send), but there's no way to send
-// through untagged (SendMode="SoftBlock" gives no "Send Anyway"), and "Choose project" ->
-// task pane -> file-on-send-dialog.html -> categories.addAsync isn't completing the
-// categorization, leaving the user stuck unable to send at all. Flipping this back to false
-// restores "every send allowed through immediately, untagged" while the categorize-then-send
-// path gets fixed -- deploys in ~10 minutes via commands.js's own CDN cache, no manifest
-// re-upload needed, since OnMessageSend's LaunchEvent registration itself hasn't changed.
+// STILL DISABLED, 2026-10-21: deliberately NOT flipped to true in the same push that changed the
+// manifest's SendMode to "PromptUser" above. That manifest change needs a slower admin-center
+// re-upload and propagation before it's actually live, while this file deploys in ~10 minutes via
+// its own CDN cache -- flipping both together would create a window where File on Send is active
+// under the OLD SendMode="SoftBlock" still running on users' clients, exactly the risky
+// combination that caused the incident below. Flip this to true only after confirming the
+// PromptUser manifest has actually propagated (see CLAUDE.md's "File on Send" section). All the
+// root causes found and fixed since the incident (Graph GET 404 right after saveAsync(), the
+// master-category cleanup race, the compose-mode item.subject object bug, and Save Both's dialog
+// killing its own bridge request before it landed) are believed to make this safe to re-enable
+// once that sequencing is respected.
+//
+// EMERGENCY KILL SWITCH -- history: first tripped 2026-10-16 after a live-blocking incident --
+// the Smart Alerts dialog showed correctly (Choose project / Don't Send), but there was no way
+// to send through untagged (SendMode="SoftBlock" gave no "Send Anyway"), and "Choose project" ->
+// task pane -> file-on-send-dialog.html -> categories.addAsync wasn't completing the
+// categorization, leaving the user stuck unable to send at all. Flipping this to false restores
+// "every send allowed through immediately, untagged" while a fix is worked out -- deploys in
+// ~10 minutes via commands.js's own CDN cache, no manifest re-upload needed, since OnMessageSend's
+// LaunchEvent registration itself doesn't need to change for this switch alone.
 const FILE_ON_SEND_ENABLED = false;
 
 // Shared by onMessageSendHandler and onMessageComposeHandler: matches the project-category

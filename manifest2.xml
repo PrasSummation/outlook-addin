@@ -5,7 +5,7 @@
            xsi:type="MailApp">
   
   <Id>619b06f8-0000-4b8a-8a1a-000000000000</Id>
-  <Version>1.0.0.19</Version>
+  <Version>1.0.0.20</Version>
   <ProviderName>Summation Group</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Summation Assistant" />
@@ -176,9 +176,25 @@
                separately-approved mockup (https://claude.ai/artifact/EqTMRsGos3VHXtspmZPXpp).
                The user can file the email (tagging it and, for a reply/forward, optionally
                the original too), or cancel the send entirely and go back to the draft.
-               SendMode "SoftBlock" means Outlook itself still lets the send through if this
-               handler ever errors, hangs, or times out, so a bug here can't trap someone's
-               email mid-send; that safety net is deliberately relied on, not duplicated.
+
+               SendMode changed from "SoftBlock" to "PromptUser" on 2026-10-21, after re-enabling
+               FILE_ON_SEND_ENABLED (commands.js) following the 2026-10-16 live-blocking incident.
+               Once onMessageSendHandler calls event.completed() with the Take Action commandId,
+               Outlook shows its own native Smart Alerts dialog, and SoftBlock's "fails open on
+               handler error/hang/timeout" safety net only covers the handler itself; it does NOT
+               add a "Send Anyway" option to that native dialog once shown. That's exactly what
+               trapped a user mid-send last time: the dialog appeared correctly, but the
+               categorize step inside it didn't complete, and SoftBlock's own dialog offered no
+               way past "Choose project" (which led into the stuck step) or "Don't Send" (abandon
+               the draft). PromptUser's dialog does include a "Send Anyway" override, giving a
+               real escape hatch even if the categorize-and-file flow misbehaves again. The root
+               causes found during the 2026-10-16 to 2026-10-21 debugging (a Graph GET 404 right
+               after saveAsync(), the master-category cleanup race, the compose-mode
+               item.subject object bug, and Save Both's dialog killing its own bridge request
+               before it landed) are now believed fixed, but this flip is being made cautiously
+               given the history; see CLAUDE.md's "File on Send" section before changing this
+               again, and strongly consider scoping this deployment to a single test account in
+               the Microsoft 365 admin center before it reaches other staff.
 
                Runtimes is required for classic Outlook on Windows specifically: that client
                runs the event handler in a JavaScript-only runtime that loads commands.js
@@ -199,7 +215,7 @@
             <FunctionFile resid="Commands.Url" />
             <ExtensionPoint xsi:type="LaunchEvent">
               <LaunchEvents>
-                <LaunchEvent Type="OnMessageSend" FunctionName="onMessageSendHandler" SendMode="SoftBlock" />
+                <LaunchEvent Type="OnMessageSend" FunctionName="onMessageSendHandler" SendMode="PromptUser" />
                 <!-- Added 2026-10-13, replacing an earlier SPIKE that tried to force the task
                      pane open via a shared runtime (Outlook doesn't support shared runtimes at
                      all, confirmed empirically, see git history). onMessageComposeHandler
