@@ -656,7 +656,17 @@ also sorting by `receivedDateTime` can trigger `InefficientFilter` unless the re
 Graph's "advanced query parameters" mode. **Fixed**: `findOriginalMessage()`'s Graph `GET` now
 adds the `ConsistencyLevel: eventual` header (via a new optional third argument on `graphGet()`)
 and `$count=true` to the query string — Graph's own documented workaround for this exact error.
-**Not yet live-tested.**
+
+**That fix did NOT work, confirmed live 2026-10-21**: identical `InefficientFilter` error on a
+second test email. Root cause per Graph's own "List messages" docs (confirmed via web search,
+[Microsoft Q&A](https://learn.microsoft.com/en-us/answers/a/658420)): when `$filter` and
+`$orderby` are combined, every property in `$orderby` must also appear in `$filter`, in matching
+order. `receivedDateTime` was only ever in `$orderby` here, never in `$filter` — that's an
+outright incompatible combination, not something advanced query parameters can override.
+**Fixed properly**: dropped `$orderby` entirely, raised `$top` to 25, and sort the (small) result
+set client-side by `receivedDateTime` instead — no ordering rule left to violate. Reverted the
+now-unused `graphGet()` extra-headers parameter added for the first attempt. **Not yet
+live-tested.**
 - Both dialogs share the same `matchesProjectCode(folderName, code)` helper (leading
   `CODE` matched against the folder name, same regex family as `extractProjectNumber`) to
   resolve a suggestion's bare project code back to one of the currently-loaded folder
