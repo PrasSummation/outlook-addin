@@ -612,14 +612,18 @@ deduplicated so a suggested project doesn't also appear again further down the l
   conversationId,subject,bodyPreview`) for the first selected item, then calls `/api/suggest`
   with all of that. Guarded against a stale response landing after the selection moved on
   (`feSuggestionsLoadedFor`).
-- **`file-on-send-dialog.html`**: fires at send time, before the outgoing item is a
-  Graph-addressable object at all — deliberately lighter-weight than File Email's version.
-  Rather than forcing an interactive `mailWriteRequest` consent right as the dialog opens
-  (too intrusive for a nice-to-have, and `findOriginalMessage()`'s own lookup is already
-  deferred until a project's actually picked), this only sends `subject` and
-  `conversationId` — both already sitting in `sendContext` from `commands.js`'s own
-  detection, no extra Graph round-trip needed. `conversationId` alone still drives the
-  strongest signal (an exact thread match) for any reply/forward.
+- **`file-on-send-dialog.html`**: originally sent only `subject`+`conversationId` (no Graph
+  round-trip), reasoning that `findOriginalMessage()`'s own lookup was already deferred until a
+  project's picked and forcing it earlier would mean an interactive `mailWriteRequest` consent
+  popping right as the dialog opens. **Confirmed live 2026-10-21 this was a materially weaker
+  signal** — a reply produced few/no suggestions here while the identical thread's File Email
+  suggestions (richer from/to/cc/body) worked fine. **Fixed**: `findOriginalMessage()`'s `$select`
+  now also pulls `toRecipients`/`ccRecipients`/`bodyPreview`, and a new
+  `startOriginalMessageLookup()` kicks it off right alongside `fetchSuggestions()` — silently
+  (`isUserAction: false`, so the "no surprise popup" guarantee holds), sharing one result between
+  both features instead of running the lookup twice. `selectProject()` now reuses that same
+  promise for Save Both's own "Original" line, falling back to one interactive-capable retry only
+  if the silent attempt came back empty. **Not yet live-tested.**
 - Both dialogs share the same `matchesProjectCode(folderName, code)` helper (leading
   `CODE` matched against the folder name, same regex family as `extractProjectNumber`) to
   resolve a suggestion's bare project code back to one of the currently-loaded folder

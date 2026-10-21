@@ -455,15 +455,15 @@
     }
 
     // ---- Content-based project suggestions (SPEC_ContentBasedProjectSuggestions.md) ----
-    // Deliberately lighter-weight than File Email's version: this dialog fires at send time,
+    // Originally lighter-weight than File Email's version: this dialog fires at send time,
     // before the outgoing item is a Graph-addressable object, so there's no message to read
-    // from/to/cc/body off without a fresh Graph round-trip against "the original" (which would
-    // mean requesting mailWriteRequest interactively right as the dialog opens, before the
-    // user's done anything -- too intrusive for a nice-to-have). Subject + conversationId are
-    // already sitting in sendContext from commands.js's own detection, so this signal is
-    // index-token-only: silent (isUserAction=false), never a surprise consent popup, and the
-    // conversationId alone still drives the strongest signal (an exact thread match) for any
-    // reply/forward.
+    // from/to/cc/body off directly, and it only ever sent subject + conversationId. Confirmed
+    // live 2026-10-21 that this materially weaker signal produced few/no suggestions on a
+    // reply, where File Email's richer from/to/cc/body-driven call (same /api/suggest backend)
+    // reliably did. Fixed by pulling those fields from "the original" message instead -- the
+    // same best-effort conversationId lookup findOriginalMessage() already needs for Save Both,
+    // just started earlier (right alongside this, at sign-in) and reused by both rather than
+    // run twice. Still silent-only here (isUserAction=false) -- see startOriginalMessageLookup().
     let sendSuggestions = [];
 
     async function fetchSuggestions() {
@@ -476,6 +476,17 @@
                 conversationId: sendContext.conversationId || "",
                 subject: (sendContext.subject || "").slice(0, 1000)
             });
+            if (isReplyLike) {
+                const original = await withTimeout(startOriginalMessageLookup(), 4000, "suggest: original message lookup").catch(() => null);
+                if (original) {
+                    const addrList = (recipients) => (recipients || [])
+                        .map(r => r.emailAddress && r.emailAddress.address).filter(Boolean).join(",");
+                    params.set("from", (original.from && original.from.emailAddress && original.from.emailAddress.address) || "");
+                    params.set("to", addrList(original.toRecipients));
+                    params.set("cc", addrList(original.ccRecipients));
+                    params.set("body", (original.bodyPreview || "").slice(0, 1000));
+                }
+            }
             const response = await withTimeout(fetch(`${SUGGEST_API_URL}/api/suggest?${params}`, {
                 headers: { Authorization: `Bearer ${indexToken}` }
             }), 15000, "suggest: api call");
@@ -649,7 +660,8 @@
             // Disabled until the lookup resolves either way -- don't let "Save Both" be
             // clicked before we actually know whether there's an original to attach.
             document.getElementById("saveBothButton").disabled = true;
-            findOriginalMessage().then(msg => {
+
+            const applyOriginalMessage = (msg) => {
                 originalMessage = msg;
                 if (msg) {
                     const from = (msg.from && msg.from.emailAddress && (msg.from.emailAddress.name || msg.from.emailAddress.address)) || "unknown sender";
@@ -668,6 +680,16 @@
                     document.getElementById("confirmOriginalLine").textContent = "Original message not found -- only the reply can be filed.";
                     document.getElementById("saveBothButton").disabled = true;
                 }
+            };
+
+            // Reuses the same lookup already kicked off (silently) for suggestions -- avoids a
+            // second Graph round-trip in the common case. If that silent attempt came back empty
+            // (no cached token yet, rather than a genuine "no original" result), retry once here
+            // with an interactive-capable token, since picking a project is a deliberate user
+            // action that justifies a consent prompt if one's actually still needed.
+            startOriginalMessageLookup().then(msg => {
+                if (msg) { applyOriginalMessage(msg); return; }
+                findOriginalMessage(true).then(applyOriginalMessage);
             });
         } else {
             originalContext.style.display = "none";
@@ -693,16 +715,24 @@
     // that wasn't sent by the signed-in user themselves (their own prior replies also
     // share the conversationId). Good enough for the common case; if it can't find
     // anything, "Save Both" is disabled above rather than filing something wrong.
-    async function findOriginalMessage() {
+    //
+    // $select includes toRecipients/ccRecipients/bodyPreview (added 2026-10-21) so the same
+    // lookup also feeds fetchSuggestions() -- previously that only had subject+conversationId
+    // to go on, a much weaker signal than File Email's from/to/cc/body-driven suggestions
+    // against the same /api/suggest backend. isUserAction is passed through rather than fixed:
+    // the early, suggestions-driven call must stay silent (startOriginalMessageLookup() below),
+    // while selectProject()'s own fallback call may prompt interactively, since by then the user
+    // has taken a deliberate action.
+    async function findOriginalMessage(isUserAction) {
         if (!sendContext.conversationId) return null;
         try {
-            const token = await signInAndGetToken(mailWriteRequest, true);
+            const token = await signInAndGetToken(mailWriteRequest, isUserAction);
             if (!token) return null;
             const account = msalInstance.getActiveAccount();
             const myAddress = (account && account.username || "").toLowerCase();
             const url = "https://graph.microsoft.com/v1.0/me/messages?$filter=" +
                 encodeURIComponent(`conversationId eq '${sendContext.conversationId}'`) +
-                "&$orderby=receivedDateTime desc&$top=10&$select=id,subject,from,receivedDateTime";
+                "&$orderby=receivedDateTime desc&$top=10&$select=id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime";
             const data = await graphGet(url, token);
             const messages = data.value || [];
             return messages.find(m => {
@@ -713,6 +743,19 @@
             console.error("Could not look up the original message:", err);
             return null;
         }
+    }
+
+    // Kicks off findOriginalMessage() at most once per dialog instance, silently (isUserAction=
+    // false -- this fires proactively alongside fetchSuggestions(), before the user has done
+    // anything, so it must never pop an interactive sign-in prompt). Shared by fetchSuggestions()
+    // and selectProject() so both reuse one Graph call instead of each doing their own.
+    let originalMessagePromise = null;
+
+    function startOriginalMessageLookup() {
+        if (!originalMessagePromise) {
+            originalMessagePromise = isReplyLike ? findOriginalMessage(false) : Promise.resolve(null);
+        }
+        return originalMessagePromise;
     }
 
     // ---- Shared File Email batch-tracking plumbing (ported from file-email-dialog.html) ----
