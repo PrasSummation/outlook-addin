@@ -142,6 +142,24 @@ noticed filed emails' categories had been rewritten down to the bare code. Fixed
 `run.ps1` to just add `Filed` on top of the existing categories unchanged, matching how the
 Sent Items pass already worked.
 
+## Found 2026-10-21, not yet investigated: `Invoke-IndexApi` sends no auth token
+
+While building the email-index status dashboard (`email-index-status.html` in the parent
+repo), noticed that `Invoke-IndexApi` (this module) calls `$EMAIL_INDEX_BASE_URL` with
+`Invoke-RestMethod` and no `Authorization` header at all. Every route on the hosted index
+API requires a bearer token for a signed-in `@summation.au` account (see email-index's
+`function_app.py`'s `@guarded` decorator) -- there's no documented app-only/API-key path in,
+so these calls are very likely getting a 401 every single time and have been since the index
+went live. If so, this means the "notify the index right away" fast path
+(`POST /api/emails` / `POST /api/emails/pending`) has never actually worked, and every filed
+email has only ever been appearing in search via `sync_timer`'s much slower Graph delta
+crawl. **Not confirmed** -- this needs checking against real Application Insights data
+(request/exception counts for these calls) before assuming it's actually broken, and if so,
+needs a real fix (most likely: expose an app role for app-only client-credentials auth on the
+"Summation Outlook Add-in" app's `EmailIndex.Access` API, and grant it to this app's own
+"Summation Email Filing Sync" registration). Logged here rather than fixed on the spot, since
+it's a materially different piece of work from what was being built when this was found.
+
 ## What this version does NOT do (known v1 gaps)
 
 - **File names use the email's UTC sent time, not a true mailbox-local time.** The index
