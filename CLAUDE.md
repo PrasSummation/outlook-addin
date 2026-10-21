@@ -647,6 +647,16 @@ Graph), or Graph returned messages but every one was attributed to the signed-in
 address (points at the matching logic or a shared/delegate-mailbox from-address mismatch instead)
 — and `selectProject()`'s "Original message not found" text now appends that reason. Next live
 test should say which of these it actually is.
+
+**Root cause confirmed live 2026-10-21**: the appended reason gave a hard answer —
+`Graph API error: 400 Bad Request - {"error":{"code":"InefficientFilter","message":"The
+restriction or sort order is too complex for this operation."}}`. This is a documented Microsoft
+Graph limitation, not specific to this query: filtering `/me/messages` by `conversationId` while
+also sorting by `receivedDateTime` can trigger `InefficientFilter` unless the request opts into
+Graph's "advanced query parameters" mode. **Fixed**: `findOriginalMessage()`'s Graph `GET` now
+adds the `ConsistencyLevel: eventual` header (via a new optional third argument on `graphGet()`)
+and `$count=true` to the query string — Graph's own documented workaround for this exact error.
+**Not yet live-tested.**
 - Both dialogs share the same `matchesProjectCode(folderName, code)` helper (leading
   `CODE` matched against the folder name, same regex family as `extractProjectNumber`) to
   resolve a suggestion's bare project code back to one of the currently-loaded folder

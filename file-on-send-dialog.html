@@ -409,8 +409,8 @@
         return path.split("/").map(encodeURIComponent).join("/");
     }
 
-    async function graphGet(url, token) {
-        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    async function graphGet(url, token, extraHeaders) {
+        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, ...extraHeaders } });
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
@@ -750,10 +750,17 @@
             }
             const account = msalInstance.getActiveAccount();
             const myAddress = (account && account.username || "").toLowerCase();
+            // Confirmed live 2026-10-21: filtering /me/messages by conversationId while also
+            // sorting by receivedDateTime hits Graph's own "InefficientFilter" error ("The
+            // restriction or sort order is too complex for this operation") -- a documented
+            // Graph limitation, not specific to this query. Fixed with Graph's own documented
+            // workaround: "advanced query parameters" (the ConsistencyLevel: eventual header
+            // plus $count=true), which opts into a query evaluation mode that can handle it.
             const url = "https://graph.microsoft.com/v1.0/me/messages?$filter=" +
                 encodeURIComponent(`conversationId eq '${sendContext.conversationId}'`) +
-                "&$orderby=receivedDateTime desc&$top=10&$select=id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime";
-            const data = await graphGet(url, token);
+                "&$orderby=receivedDateTime desc&$top=10&$count=true" +
+                "&$select=id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime";
+            const data = await graphGet(url, token, { ConsistencyLevel: "eventual" });
             const messages = data.value || [];
             const found = messages.find(m => {
                 const addr = (m.from && m.from.emailAddress && m.from.emailAddress.address || "").toLowerCase();
