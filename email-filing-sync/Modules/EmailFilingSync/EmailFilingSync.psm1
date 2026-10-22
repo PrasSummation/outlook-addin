@@ -123,7 +123,7 @@ function Get-ProjectFolderEntries {
     $entries = @()
     foreach ($combo in $ActiveBranchPath.Keys) {
         $path = $ActiveBranchPath[$combo]
-        $data = Invoke-GraphGetOrNull -Uri "https://graph.microsoft.com/v1.0/drives/$env:ACTIVE_DRIVE_ID/root:/$([uri]::EscapeDataString($path) -replace '%2F','/'):/children?`$select=id,name,folder&`$top=999" -Token $Token
+        $data = Invoke-GraphGetOrNull -Uri "https://graph.microsoft.com/v1.0/drives/$env:ACTIVE_DRIVE_ID/root:/$([uri]::EscapeDataString($path) -replace '%2F','/'):/children?`$select=id,name,folder&`$top=999&`$orderby=name" -Token $Token
         if ($data -and $data.value) {
             foreach ($f in ($data.value | Where-Object { $_.folder -and $_.name -notmatch '(?i)template' })) {
                 $entries += [pscustomobject]@{ Name = $f.name; Id = $f.id; DriveId = $env:ACTIVE_DRIVE_ID; BranchPath = $path; Source = "Active" }
@@ -132,7 +132,7 @@ function Get-ProjectFolderEntries {
     }
     foreach ($combo in $ArchiveBranchPath.Keys) {
         $path = $ArchiveBranchPath[$combo]
-        $data = Invoke-GraphGetOrNull -Uri "https://graph.microsoft.com/v1.0/drives/$env:ARCHIVE_DRIVE_ID/root:/$([uri]::EscapeDataString($path) -replace '%2F','/'):/children?`$select=id,name,folder&`$top=999" -Token $Token
+        $data = Invoke-GraphGetOrNull -Uri "https://graph.microsoft.com/v1.0/drives/$env:ARCHIVE_DRIVE_ID/root:/$([uri]::EscapeDataString($path) -replace '%2F','/'):/children?`$select=id,name,folder&`$top=999&`$orderby=name" -Token $Token
         if ($data -and $data.value) {
             foreach ($f in ($data.value | Where-Object { $_.folder -and $_.name -notmatch '(?i)template' })) {
                 $entries += [pscustomobject]@{ Name = $f.name; Id = $f.id; DriveId = $env:ARCHIVE_DRIVE_ID; BranchPath = $path; Source = "Archive" }

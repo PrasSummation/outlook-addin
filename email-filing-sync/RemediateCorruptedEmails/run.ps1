@@ -208,9 +208,13 @@ for (; $i -lt $folderEntries.Count; $i++) {
     if (-not $emailsFolder) { continue }
     $scannedProjects++
 
+    # $orderby=name is load-bearing, not cosmetic: without it, Graph does not guarantee the same
+    # order across separate requests, which silently breaks file-index-based resume (confirmed
+    # live 2026-10-22 -- a resumable scan without it both double-visited some folders and silently
+    # skipped files in others, missing ~1,749 corrupted files a second independent scan then found).
     $files = Get-GraphAllPages -Token $token -Uri (
         "https://graph.microsoft.com/v1.0/drives/$($entry.DriveId)/items/$($emailsFolder.id)/children" +
-        "?`$select=id,name,size&`$top=200"
+        "?`$select=id,name,size&`$top=200&`$orderby=name"
     )
     $emlFiles = @($files | Where-Object { $_.name -match '(?i)\.eml$' })
 
