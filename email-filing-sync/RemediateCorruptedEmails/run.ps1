@@ -80,6 +80,18 @@ if ($mode -eq "fix") {
     # in that range means this wasn't actually the known corruption pattern after all -- returns
     # $null rather than guessing, so the caller can report it as unresolved instead of writing
     # garbage back to SharePoint.
+    #
+    # The leading comma on `return ,$bytes` matters: `return $bytes` (no comma) unrolls a byte[]
+    # element-by-element onto the pipeline -- a classic PowerShell gotcha. The caller's simple
+    # assignment (`$decoded = ConvertFrom-CorruptedBytes ...`) would then reassemble those
+    # individually emitted, boxed byte values back into a generic [object[]], not a true [byte[]]
+    # -- confirmed live 2026-10-21/22 as the root cause of "fix" reporting 200 OK and a genuinely
+    # new SharePoint version each time while the stored content never actually changed:
+    # [System.Text.Encoding]::GetString($decoded, ...) still worked despite the wrong type (a
+    # .NET method call's own argument binding coerces [object[]] back to [byte[]] more leniently
+    # than Invoke-WebRequest's -Body parameter does), so the bug stayed invisible until the
+    # return type itself was checked directly. The comma wraps $bytes as a single pipeline
+    # object instead of enumerating it.
     function ConvertFrom-CorruptedBytes {
         param([Parameter(Mandatory)][string]$Text)
         $tokens = $Text -split '\s+' | Where-Object { $_ -ne '' }
@@ -90,7 +102,7 @@ if ($mode -eq "fix") {
             if (-not [int]::TryParse($tokens[$k], [ref]$n) -or $n -lt 0 -or $n -gt 255) { return $null }
             $bytes[$k] = [byte]$n
         }
-        return $bytes
+        return ,$bytes
     }
 
     # Sanity check before ever overwriting anything: a real email's first line always looks like
@@ -131,7 +143,7 @@ if ($mode -eq "fix") {
                 Send-GraphLargeFile -DriveId $f.driveId -ParentId $f.emailsFolderId -FileName $f.fileName -Bytes $decoded -Token $token | Out-Null
             } else {
                 Invoke-RestMethod -Method Put `
-                    -Uri "https://graph.microsoft.com/v1.0/drives/$($f.driveId)/items/$($f.itemId)/content" `
+                    -Uri "https://graph.microsoft.com/v1.0/drives/$($f.driveId)/items/$($f.emailsFolderId):/$([uri]::EscapeDataString($f.fileName)):/content" `
                     -Headers @{ Authorization = "Bearer $token" } -ContentType "message/rfc822" -Body $decoded -ErrorAction Stop | Out-Null
             }
             $fixResults.Add([ordered]@{ project = $f.project; fileName = $f.fileName; status = "fixed"; corruptedSizeBytes = $corruptedText.Length; fixedSizeBytes = $decoded.Length })
