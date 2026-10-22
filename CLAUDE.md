@@ -1423,15 +1423,21 @@ unary comma operator: `return ,$bytes`. **Confirmed live, end to end**: `SUPER26
 filed email now reads correctly both via the Graph API and the local OneDrive-synced copy,
 immediately, no propagation delay.
 
-**Status as of 2026-10-22**: `scan`/`fix` both confirmed correct on individual test files (2-3
-files remediated so far, all from "test"-named projects). **The bulk remediation of the remaining
-~2,930 corrupted files across 80 projects has not been run yet** — same resumable-batching
-approach as `scan` is the obvious next step, driven externally (e.g. a small script looping calls
-with a bounded batch size per call, well within the 45-second-per-call budget already proven
-reliable) rather than attempting it all in one call. Once that's done and confirmed, remove
-`RemediateCorruptedEmails` (the function, its manifest entry, and this section) — it exists only
-to use the Function App's own app-only Graph identity for a one-off job, not something this app
-should carry around as permanent HTTP surface area.
+**Status as of 2026-10-22**: bulk remediation has been RUN and is complete. After the individual
+test-file confirmations, a Node.js driver (byte-budgeted batches of ~800KB/5 files, 4-way
+concurrency, 3 retries per batch, checkpointed to disk) ran the `fix` endpoint against all 2,933
+remaining corrupted files. First-pass result: 2,926 fixed, 7 reported "failed". All 7 were
+investigated directly (reading the live file content) and turned out to be false negatives, not
+genuine failures — every one already contained valid, correctly-decoded content by the time it was
+checked. The mechanism: a batch's HTTP call can succeed server-side (the fix lands) but still
+appear to fail client-side (timeout/connection hiccup before the response is received), triggering
+the driver's retry logic; the retry then correctly declines to "fix" an already-fixed file,
+reporting a confusing-but-harmless "could not decode as the known corruption pattern" or similar.
+A follow-up full re-scan is being run as an independent check to confirm zero corrupted files
+remain (not yet complete as of this writing). Once confirmed, `RemediateCorruptedEmails` (the
+function, its manifest entry, and this section) should be removed — it existed only to use the
+Function App's own app-only Graph identity for a one-off job, not something this app should carry
+around as permanent HTTP surface area.
 
 ## Where to look for more
 
