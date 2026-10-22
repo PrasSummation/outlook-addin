@@ -47,7 +47,7 @@ project mailbox.
 | `manage-mailbox-automapping.html` | Standalone page, **not linked from the taskpane UI** either. Reconciles "what Exchange says you have Full Access to" against "what's actually showing in your Outlook folder pane" — these drift apart and neither Graph nor Exchange exposes that comparison directly. Requires the user to import a local JSON export of their actual Outlook mailbox list (`{ mailboxes: [...], exportedAtUtc }`) via a file picker; that export is **not produced by this repo** — it comes from some other local tool/script the user runs against their own Outlook. Also tracks Outlook's ~32-mailbox folder-pane display limit. |
 | `exchange-bridge/` | Azure Function (PowerShell 7.6) — see its own `README.md`, which is the authoritative, detailed doc. Summary below. |
 | `exchange-bridge/README.md` | **Read this in full before touching the bridge.** Covers the two-app-registration trust model, why the originally-planned least-privilege Exchange RBAC didn't work (ended up needing the full Exchange Administrator directory role), the API contract, and a completed setup runbook. |
-| `email-filing-sync/` | A **separate, timer-triggered** Azure Function App (own Entra app registration, own resource group — never the bridge's) that watches every staff mailbox's "Emails to File" folder and files categorized emails into their project's SharePoint `Emails` folder, then moves the originals into a local "Filed" folder. No HTTP surface, no signed-in user — see its own `README.md`, which is authoritative. **Status as of 2026-10-06: live in production**, including the >4MB upload-session path. This is what the taskpane's removed "Sync Emails" button/local desktop Filer used to do manually — it's now fully automatic. |
+| `email-filing-sync/` | A **separate** Azure Function App (own Entra app registration, own resource group — never the bridge's) with a timer-triggered `SyncEmails` (watches every staff mailbox's "Emails to File" folder, files categorized emails into their project's SharePoint `Emails` folder, moves the originals into a local "Filed" folder) and a temporary HTTP-triggered `RemediateCorruptedEmails` (see "2026-10-21/22 content-corruption incident" below — remove once remediation is confirmed complete, see that section). No signed-in user for either — see `email-filing-sync/README.md` for `SyncEmails`'s own design, which is authoritative for that function. **Status as of 2026-10-06: live in production**, including the >4MB upload-session path. This is what the taskpane's removed "Sync Emails" button/local desktop Filer used to do manually — it's now fully automatic. |
 | `README.md` (repo root) | Just a one-line stub — not useful, don't rely on it. |
 | *(elsewhere)* | The email **index and search** backend (indexing + the API `email-search.html` calls) lives in its own private repo, `PrasSummation/email-index` (split out of this repo's former `prototypes/email-index/`). Read its `HANDOFF.md` before touching the search page or its backend. It shares this repo's Entra app registration and GitHub Pages origin. |
 | `logo-symbol-*.png` | Add-in icons referenced by the manifest and page headers. |
@@ -1341,6 +1341,97 @@ naming patterns, before touching Exchange.
   UI at all** — only from a direct GitHub Pages URL. If asked to make them
   more discoverable, that likely means adding a taskpane button/link, not
   changing the pages themselves.
+
+## email-filing-sync: 2026-10-21/22 content-corruption incident, root-caused and fixed
+
+Triggered by a user report that a filed email in a project's SharePoint `Emails` folder "contains
+no information" — investigation found this was far bigger and more active than a single bad file.
+
+**Scale, confirmed via a full scan (`RemediateCorruptedEmails`, mode `scan`, 2026-10-21)**: 2,936
+distinct corrupted `.eml` files across 80 projects (~19% of all 15,096 filed emails scanned).
+Failure volume in `SyncEmails` had also been climbing every single day since 2026-10-07 (670
+failures that day, 3,331/day by 2026-10-20, ~29,800 total) — two bugs, both now fixed:
+
+1. **`New-EmailFileName`'s `$Subject`/`$FromName` params lacked `[AllowEmptyString()]`** —
+   PowerShell rejects an empty string for a `[Parameter(Mandatory)][string]` by default. A
+   genuinely blank-subject email hit this every single retry, forever (16,000+ occurrences).
+2. **`Invoke-RestMethod`'s content-type auto-detection for the `/$value` fetch** caused two
+   separate problems: (a) decoding most responses as a .NET string roughly doubled peak memory,
+   blowing the Consumption plan's hard 1.5GB-per-instance ceiling for emails with large
+   attachments (13,500+ `OutOfMemoryException` occurrences, 107 distinct real emails never
+   filed); (b) for some binary content types it returned something that wasn't exactly `[byte[]]`
+   and silently got stringified via PowerShell's own default array-to-string join (each byte
+   rendered as its decimal value, space-separated) instead of erroring — this is the actual
+   corruption signature found in all 2,936 files. Switched to `Invoke-WebRequest` (whose
+   `.Content` is far more consistently `byte[]`, though see the remediation bug below for why
+   "consistently" still isn't "always"), removing the ambiguity rather than pattern-matching
+   around it.
+3. A size-based circuit breaker (skip/move messages too large to safely process instead of
+   retrying forever) was attempted and **reverted the same day**: it depended on Graph's message
+   `size` property, which this tenant's Graph resolver doesn't expose on **any** message query —
+   confirmed live, fails with `"Could not find a property named 'size' on type
+   'Microsoft.OutlookServices.Message'"` even on a bare `/me/messages` call. A HEAD request
+   against `/$value` (hoping for a `Content-Length` without downloading the body) also isn't
+   supported (405). A proper circuit breaker that doesn't depend on a property this tenant
+   doesn't have is a deliberate follow-up, not yet built — the 107 OOM emails may now succeed
+   anyway given the memory fix, worth checking before building anything more here.
+
+**Remediation tooling**: `RemediateCorruptedEmails` (new HTTP-triggered function, temporary —
+remove it and this section once remediation is confirmed fully complete) reuses `SyncEmails`'s
+own `Get-GraphAppToken`/`Get-ProjectFolderEntries` helpers.
+- **`mode: "scan"`**: read-only, peeks the first ~200 bytes of every `.eml` in every project's
+  `Emails` folder (a corrupted file is *entirely* digits/whitespace throughout — a short peek is
+  enough to tell apart from a real MIME header line). Resumable via `resumeIndex` (which project)
+  **and** `resumeFileIndex` (which file within it) — a single project with thousands of filed
+  emails was found live to never advance past folder-level resuming alone, since every resumed
+  call just restarted peeking that same folder from file zero and hit the deadline at roughly the
+  same position every time. Time-boxed to 45 seconds per call, not the function's own 9-minute
+  `functionTimeout` — confirmed live that a long-running HTTP call isn't reliable on this
+  Consumption plan regardless of client-side timeout settings (one call ran the full 7 minutes and
+  completed successfully server-side; a later identical call got cut off by what looks like a
+  platform-level instance recycle around 1m41s in, with the client-side connection separately
+  timing out or resetting before ever seeing the response either way).
+- **`mode: "fix"`**: takes a batch of files from a scan and actually remediates them. The
+  corruption is **fully reversible** — decodes each file back to its original bytes (split the
+  corrupted text on whitespace, parse each token as a 0-255 byte value) and overwrites it in
+  place, but only after confirming the decoded content's first line actually looks like a real
+  RFC 5322 header (`Header-Name: value`); anything that fails either the decode or the sanity
+  check is left untouched and reported, never guessed at. No separate re-fetch from the original
+  mailbox needed — the corrupted file alone already contains 100% of the information needed to
+  reconstruct it.
+
+**A second, genuinely tricky bug found live while first testing "fix"**: every attempt reported
+`200 OK` and even created a *genuinely new SharePoint version* each time (confirmed via the
+`/versions` endpoint, version numbers incrementing normally), yet the stored content — and even
+its own size metadata — never actually changed, repeated identically across different content-
+types, different addressing styles (`/items/{id}/content` vs `/items/{parentId}:/{name}:/content`,
+both independently confirmed to work fine via an isolated trivial write), and different file
+sizes. This looked exactly like a SharePoint retention policy or "declared record" setting might
+be silently accepting writes as new version stubs while pinning the actual content immutable —
+**ruled out** by a trivial hardcoded write to the exact same item succeeding perfectly, byte-for-
+byte, on the first try. Root cause was actually in `ConvertFrom-CorruptedBytes` itself: `return
+$bytes` (no leading comma) **unrolls a `byte[]` element-by-element onto the pipeline** — a classic
+PowerShell gotcha. The caller's plain assignment (`$decoded = ConvertFrom-CorruptedBytes ...`)
+reassembled those individually emitted, boxed byte values back into a generic `System.Object[]`,
+not the original `byte[]` — confirmed directly via `$decoded.GetType().FullName`. This stayed
+completely invisible through several rounds of diagnosis because
+`[System.Text.Encoding]::GetString($decoded, ...)` (a .NET method call) still worked and produced
+a perfectly correct preview — a method call's own argument binding coerces `object[]` back to
+`byte[]` far more leniently than `Invoke-WebRequest`'s `-Body` parameter does, which instead
+silently serialized the wrapped array as something that was not the real bytes. Fixed with the
+unary comma operator: `return ,$bytes`. **Confirmed live, end to end**: `SUPER26102_Babylon`'s
+filed email now reads correctly both via the Graph API and the local OneDrive-synced copy,
+immediately, no propagation delay.
+
+**Status as of 2026-10-22**: `scan`/`fix` both confirmed correct on individual test files (2-3
+files remediated so far, all from "test"-named projects). **The bulk remediation of the remaining
+~2,930 corrupted files across 80 projects has not been run yet** — same resumable-batching
+approach as `scan` is the obvious next step, driven externally (e.g. a small script looping calls
+with a bounded batch size per call, well within the 45-second-per-call budget already proven
+reliable) rather than attempting it all in one call. Once that's done and confirmed, remove
+`RemediateCorruptedEmails` (the function, its manifest entry, and this section) — it exists only
+to use the Function App's own app-only Graph identity for a one-off job, not something this app
+should carry around as permanent HTTP surface area.
 
 ## Where to look for more
 
