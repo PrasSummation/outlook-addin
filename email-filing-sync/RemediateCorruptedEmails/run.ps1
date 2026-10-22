@@ -92,17 +92,42 @@ if ($mode -eq "fix") {
     # than Invoke-WebRequest's -Body parameter does), so the bug stayed invisible until the
     # return type itself was checked directly. The comma wraps $bytes as a single pipeline
     # object instead of enumerating it.
+    # Single-pass scan instead of -split + Where-Object + TryParse-per-token: the split approach
+    # OOM'd on an 11MB corrupted file (~2.8M whitespace-separated tokens) -- confirmed live
+    # 2026-10-22, reproducibly, on the same file across multiple attempts. -split '\s+' materializes
+    # millions of individual string objects (plus the Where-Object pipeline and its own enumerator
+    # overhead) before a single byte is decoded; this walks the string once, writing straight into
+    # a pre-sized byte array (worst case 1 byte per 2 chars, e.g. all single-digit values with a
+    # 1-char separator), so peak memory is ~Text.Length + bytes.Length instead of a multi-million-
+    # object intermediate collection.
     function ConvertFrom-CorruptedBytes {
         param([Parameter(Mandatory)][string]$Text)
-        $tokens = $Text -split '\s+' | Where-Object { $_ -ne '' }
-        if ($tokens.Count -eq 0) { return $null }
-        $bytes = New-Object byte[] $tokens.Count
-        for ($k = 0; $k -lt $tokens.Count; $k++) {
+        $len = $Text.Length
+        if ($len -eq 0) { return $null }
+        $bytes = New-Object byte[] ([Math]::Max(1, [int]($len / 2) + 1))
+        $count = 0
+        $i = 0
+        while ($i -lt $len) {
+            while ($i -lt $len -and [char]::IsWhiteSpace($Text[$i])) { $i++ }
+            if ($i -ge $len) { break }
+            $start = $i
+            while ($i -lt $len -and $Text[$i] -ge '0' -and $Text[$i] -le '9') { $i++ }
+            if ($i -eq $start -or ($i - $start) -gt 3) { return $null }
             $n = 0
-            if (-not [int]::TryParse($tokens[$k], [ref]$n) -or $n -lt 0 -or $n -gt 255) { return $null }
-            $bytes[$k] = [byte]$n
+            for ($j = $start; $j -lt $i; $j++) { $n = $n * 10 + ([int][char]$Text[$j] - 48) }
+            if ($n -gt 255) { return $null }
+            if ($count -ge $bytes.Length) {
+                $grown = New-Object byte[] ($bytes.Length * 2)
+                [Array]::Copy($bytes, $grown, $count)
+                $bytes = $grown
+            }
+            $bytes[$count] = [byte]$n
+            $count++
         }
-        return ,$bytes
+        if ($count -eq 0) { return $null }
+        $result = New-Object byte[] $count
+        [Array]::Copy($bytes, $result, $count)
+        return ,$result
     }
 
     # Sanity check before ever overwriting anything: a real email's first line always looks like
