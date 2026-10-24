@@ -486,9 +486,19 @@
 
         noSelection.style.display = "none";
         pickBody.style.display = "block";
-        if (feFolderEntries.length === 0) {
-            loadFeFolderNames();
-        } else {
+        if (feFolderEntries.length === 0 && !feFolderListInitStarted) {
+            // Runs once per dialog lifetime: render instantly from cache if there is one, then
+            // always kick off a live background refresh so a newly-created project still shows
+            // up without anyone waiting on it (see loadFeFolderNames's own comment).
+            feFolderListInitStarted = true;
+            const cached = readFolderEntriesCache();
+            const hadCache = Array.isArray(cached) && cached.length > 0;
+            if (hadCache) {
+                feFolderEntries = cached;
+                renderFeFolderList(document.getElementById("feFilterBox").value);
+            }
+            loadFeFolderNames(hadCache);
+        } else if (feFolderEntries.length > 0) {
             renderFeFolderList(document.getElementById("feFilterBox").value);
         }
         // Best-effort, not awaited -- never delays showing the folder list itself, and
@@ -543,11 +553,34 @@
     }
 
     let feFolderEntries = [];
+    let feFolderListInitStarted = false;
 
-    async function loadFeFolderNames() {
+    // Stale-while-revalidate, added 2026-10-24 -- same cache key format as file-on-send-dialog.html
+    // on purpose: both dialogs list the exact same Archive/Active project folders via the same
+    // Graph calls, and they're served from the same origin, so this localStorage cache is shared
+    // between them for free (warming it in one dialog benefits the other). See
+    // file-on-send-dialog.html's own copy of this comment for the full rationale.
+    function folderEntriesCacheKey() {
+        const account = msalInstance.getActiveAccount();
+        return `feFolderEntriesCache:${(account && account.username) || "unknown"}`;
+    }
+    function readFolderEntriesCache() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(folderEntriesCacheKey()));
+            return Array.isArray(parsed && parsed.entries) ? parsed.entries : null;
+        } catch (err) { return null; }
+    }
+    function writeFolderEntriesCache(entries) {
+        try { localStorage.setItem(folderEntriesCacheKey(), JSON.stringify({ entries, cachedAt: Date.now() })); }
+        catch (err) { /* ignore storage errors */ }
+    }
+
+    async function loadFeFolderNames(silent) {
         const status = document.getElementById("feSetupStatus");
-        status.style.color = "#333";
-        status.textContent = "Loading Archive & Active project folders...";
+        if (!silent) {
+            status.style.color = "#333";
+            status.textContent = "Loading Archive & Active project folders...";
+        }
         try {
             const token = await signInAndGetToken(sitesRequest, true);
             if (!token) throw new Error("Could not get permission to access SharePoint.");
@@ -566,19 +599,24 @@
             ]);
 
             feFolderEntries = [...archiveResults.flat(), ...activeResults.flat()];
+            writeFolderEntriesCache(feFolderEntries);
             renderFeFolderList(document.getElementById("feFilterBox").value);
-            status.textContent = "";
+            if (!silent) status.textContent = "";
         } catch (err) {
             console.error("Failed to load Archive/Active project folders:", err);
-            status.textContent = `Error: ${err.message}`;
-            status.style.color = "red";
+            if (!silent) {
+                status.textContent = `Error: ${err.message}`;
+                status.style.color = "red";
+            } else {
+                console.warn("Background folder-list refresh failed; keeping the cached list on screen.");
+            }
         }
     }
 
     function refreshFeFolderList() {
         const btn = document.getElementById("feRefreshListButton");
         btn.classList.add("spinning");
-        loadFeFolderNames().finally(() => {
+        loadFeFolderNames(false).finally(() => {
             setTimeout(() => btn.classList.remove("spinning"), 400);
             document.getElementById("feSetupStatus").textContent = "Updated just now.";
         });

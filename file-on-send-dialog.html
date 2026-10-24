@@ -340,12 +340,34 @@
         return null;
     }
 
+    // Acquires two different-scope tokens concurrently when possible, added 2026-10-24 to cut
+    // save-on-send latency (postFeBatch needed mailWriteRequest then bridgeRequest, one after the
+    // other, even though they're unrelated resources). Silent acquisition for both is tried in
+    // parallel -- the common case, since both are normally already cached from earlier in the
+    // dialog's lifecycle -- but falls back to serial interactive popups for whichever one needs it,
+    // since MSAL throws "interaction_in_progress" if two acquireTokenPopup calls overlap.
+    async function signInAndGetTwoTokens(requestA, requestB, isUserAction) {
+        const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+        async function trySilent(request) {
+            if (!account) return undefined;
+            try { return (await msalInstance.acquireTokenSilent({ ...request, account })).accessToken; }
+            catch (error) {
+                if (error instanceof msal.InteractionRequiredAuthError) return undefined;
+                throw error;
+            }
+        }
+        let [tokenA, tokenB] = await Promise.all([trySilent(requestA), trySilent(requestB)]);
+        if (tokenA === undefined) tokenA = await signInAndGetToken(requestA, isUserAction);
+        if (tokenB === undefined) tokenB = await signInAndGetToken(requestB, isUserAction);
+        return [tokenA, tokenB];
+    }
+
     async function handleLogin() {
         try {
             const loginResponse = await msalInstance.loginPopup(graphRequest);
             msalInstance.setActiveAccount(loginResponse.account);
             showApp(true);
-            loadFolderNames();
+            initFolderList();
             focusSearchBoxOnce();
             fetchSuggestions();
         } catch (err) {
@@ -358,7 +380,7 @@
             const token = await signInAndGetToken(graphRequest, false);
             if (token) {
                 showApp(true);
-                loadFolderNames();
+                initFolderList();
                 focusSearchBoxOnce();
                 fetchSuggestions();
             } else {
@@ -524,10 +546,34 @@
 
     let folderEntries = [];
 
-    async function loadFolderNames() {
+    // Stale-while-revalidate, added 2026-10-24: this list rarely changes (new projects are
+    // created at most a few times a week), but was being fetched fresh -- several parallel Graph
+    // listings across both libraries and every branch combo -- on every single dialog open, with
+    // nothing shown until it finished. initFolderList() now renders instantly from whatever was
+    // cached last time, then always refreshes live in the background so a newly-created project
+    // still shows up within moments without the user ever waiting on it. The refresh button
+    // remains for "I need this to be current right now, don't make me wait for the background one."
+    function folderEntriesCacheKey() {
+        const account = msalInstance.getActiveAccount();
+        return `feFolderEntriesCache:${(account && account.username) || "unknown"}`;
+    }
+    function readFolderEntriesCache() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(folderEntriesCacheKey()));
+            return Array.isArray(parsed && parsed.entries) ? parsed.entries : null;
+        } catch (err) { return null; }
+    }
+    function writeFolderEntriesCache(entries) {
+        try { localStorage.setItem(folderEntriesCacheKey(), JSON.stringify({ entries, cachedAt: Date.now() })); }
+        catch (err) { /* ignore storage errors */ }
+    }
+
+    async function loadFolderNames(silent) {
         const status = document.getElementById("listStatus");
-        status.style.color = "#333";
-        status.textContent = "Loading Archive & Active project folders...";
+        if (!silent) {
+            status.style.color = "#333";
+            status.textContent = "Loading Archive & Active project folders...";
+        }
         try {
             const token = await signInAndGetToken(sitesRequest, true);
             if (!token) throw new Error("Could not get permission to access SharePoint.");
@@ -546,19 +592,37 @@
             ]);
 
             folderEntries = [...archiveResults.flat(), ...activeResults.flat()];
+            writeFolderEntriesCache(folderEntries);
             renderFolderList(document.getElementById("fosFilterBox").value);
-            status.textContent = "";
+            if (!silent) status.textContent = "";
         } catch (err) {
             console.error("Failed to load Archive/Active project folders:", err);
-            status.textContent = `Error: ${err.message}`;
-            status.style.color = "red";
+            // A silent (background) refresh failing is not worth alarming the user over --
+            // whatever was already rendered from cache (or the prior successful load) stays
+            // on screen untouched, and the next dialog open or manual refresh will try again.
+            if (!silent) {
+                status.textContent = `Error: ${err.message}`;
+                status.style.color = "red";
+            } else {
+                console.warn("Background folder-list refresh failed; keeping the cached list on screen.");
+            }
         }
+    }
+
+    function initFolderList() {
+        const cached = readFolderEntriesCache();
+        const hadCache = Array.isArray(cached) && cached.length > 0;
+        if (hadCache) {
+            folderEntries = cached;
+            renderFolderList(document.getElementById("fosFilterBox").value);
+        }
+        return loadFolderNames(hadCache);
     }
 
     function refreshFolderList() {
         const btn = document.getElementById("refreshListButton");
         btn.classList.add("spinning");
-        loadFolderNames().finally(() => {
+        loadFolderNames(false).finally(() => {
             setTimeout(() => btn.classList.remove("spinning"), 400);
             document.getElementById("listStatus").textContent = "Updated just now.";
         });
@@ -833,48 +897,93 @@
         return (result.value || []).find(c => c.displayName === categoryName) || null;
     }
 
+    // Cached per-mailbox, added 2026-10-24: this folder is created once and then just reused
+    // forever, so every Save was paying for a full Graph round trip to re-confirm something that
+    // essentially never changes. clearEmailsToFileFolderCache() below self-heals the rare case
+    // where the cached id has gone stale (e.g. someone manually deleted the staging folder).
+    function emailsToFileFolderCacheKey() {
+        const account = msalInstance.getActiveAccount();
+        return `emailsToFileFolderId:${(account && account.username) || "unknown"}`;
+    }
+    function clearEmailsToFileFolderCache() {
+        try { localStorage.removeItem(emailsToFileFolderCacheKey()); } catch (err) { /* ignore */ }
+    }
     async function getOrCreateEmailsToFileFolderId() {
+        const cacheKey = emailsToFileFolderCacheKey();
+        try {
+            const cached = localStorage.getItem(cacheKey);
+            if (cached) return cached;
+        } catch (err) { /* ignore storage errors, fall through to resolving it live */ }
+
         const token = await signInAndGetToken(mailWriteRequest, true);
         if (!token) throw new Error("Could not get permission to access your mailbox.");
         const existing = await graphGet(
             `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/childFolders?$filter=${encodeURIComponent("displayName eq 'Emails to File'")}`,
             token
         );
-        if (existing.value && existing.value.length > 0) return existing.value[0].id;
-        const response = await fetch("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/childFolders", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ displayName: "Emails to File" })
-        });
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Could not create "Emails to File": ${response.status} ${errorText}`);
+        let folderId;
+        if (existing.value && existing.value.length > 0) {
+            folderId = existing.value[0].id;
+        } else {
+            const response = await fetch("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/childFolders", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ displayName: "Emails to File" })
+            });
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Could not create "Emails to File": ${response.status} ${errorText}`);
+            }
+            const created = await response.json();
+            folderId = created.id;
         }
-        const created = await response.json();
-        return created.id;
+        try { localStorage.setItem(cacheKey, folderId); } catch (err) { /* ignore storage errors */ }
+        return folderId;
     }
 
-    async function postFeBatch(entry) {
-        const graphToken = await signInAndGetToken(mailWriteRequest, true);
-        if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
-        const bridgeToken = await signInAndGetToken(bridgeRequest, true);
-        if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
+    // Returns { sent, result } instead of a single promise (2026-10-24, this dialog only): `sent`
+    // resolves as soon as the two tokens are in hand and the keepalive fetch has actually been
+    // handed to the browser's network stack -- await THIS before letting the dialog close, so the
+    // request is guaranteed to have been issued regardless of what happens to the page right
+    // after. `result` is the bridge's eventual response (three sequential Graph calls inside it,
+    // plus possible PowerShell cold-start) -- that's the slow part, and nothing requires waiting
+    // for it once the request is confirmed sent, so callers that don't need to block on it can
+    // just attach a .then()/.catch() for cleanup/logging instead of awaiting it.
+    function postFeBatch(entry) {
+        let resolveSent;
+        const sent = new Promise((resolve) => { resolveSent = resolve; });
+        const result = (async () => {
+            const [graphToken, bridgeToken] = await signInAndGetTwoTokens(mailWriteRequest, bridgeRequest, true);
+            if (!graphToken) { resolveSent(); throw new Error("Could not get permission to categorize/move emails."); }
+            if (!bridgeToken) { resolveSent(); throw new Error("Could not get permission to call the bridge."); }
 
-        const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-                graphAccessToken: graphToken,
-                categoryName: entry.categoryName,
-                destinationFolderId: entry.destinationFolderId,
-                items: entry.items
-            })
-        });
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Bridge returned ${response.status}: ${errorText}`);
-        }
-        return response.json();
+            // keepalive: lets this specific request keep going even though the page that started
+            // it (this dialog) may unload moments later -- same mechanism sendBeacon relies on.
+            // Safe here because this dialog only ever files a single original message, so the
+            // body is nowhere near browsers' ~64KB keepalive request cap (unlike File Email's own
+            // copy of this function, which can carry a much larger multi-item batch and
+            // deliberately does NOT use keepalive for that reason).
+            const fetchPromise = fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
+                method: "POST",
+                keepalive: true,
+                headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    graphAccessToken: graphToken,
+                    categoryName: entry.categoryName,
+                    destinationFolderId: entry.destinationFolderId,
+                    items: entry.items
+                })
+            });
+            resolveSent();
+
+            const response = await fetchPromise;
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Bridge returned ${response.status}: ${errorText}`);
+            }
+            return response.json();
+        })();
+        return { sent, result };
     }
 
     // Files "the original" via the exact same bridge endpoint File Email already uses --
@@ -886,28 +995,38 @@
     // same rationale originally given for File Email's own Confirm -- "some Outlook hosts hold a
     // dialog open until its outstanding requests settle"). In practice this silently killed the
     // request before it ever reached the bridge nearly every time: findMasterCategory() and
-    // getOrCreateEmailsToFileFolderId() above are both awaited Graph round-trips, so by the time
-    // postFeBatch() even starts acquiring its own two tokens (mailWriteRequest again, then a
-    // fresh bridgeRequest) and sending the POST, the 500ms window was usually already gone --
-    // confirmed live via two Save-Both attempts showing up as "stuck" entries in File Email's own
-    // pending-batches notice, which only succeeded once a later File Email dialog's stuck-batch
-    // recovery retried them. File Email's own Confirm handler (file-email-dialog.html) never
-    // actually had this problem -- it disabled its auto-close entirely (see its own comment) and
-    // just stays open until the user leaves, which is what actually made it reliable. Fixed by
-    // doing the same here: await the bridge call fully, show its outcome, and only close once
-    // it's actually done (success or failure) rather than racing a fixed timeout against it.
+    // getOrCreateEmailsToFileFolderId() above were both awaited Graph round-trips back then, so by
+    // the time postFeBatch() even started acquiring its own two tokens and sending the POST, the
+    // 500ms window was usually already gone -- confirmed live via two Save-Both attempts showing
+    // up as "stuck" entries in File Email's own pending-batches notice. FIXED 2026-10-21 by
+    // awaiting the bridge call fully instead -- correct, but made every Save Both wait on three
+    // sequential Graph calls inside the bridge plus possible Azure Functions cold-start.
+    //
+    // REVISED 2026-10-24: postFeBatch() now splits into `sent` (tokens acquired, keepalive
+    // fetch() actually issued) and `result` (the bridge's eventual response). Only `sent` is
+    // awaited below, which fixes the root cause of the 2026-10-21 bug properly instead of working
+    // around it with a full await -- the request is now *guaranteed* to have left the browser
+    // (keepalive survives the page unloading right after) rather than hoping a fixed timer runs
+    // long enough. `result` is handled fire-and-forget: the batch is already durably tracked in
+    // storage before any of this, and the bridge keeps running to completion server-side
+    // regardless of whether this dialog is still around to see the response, so File Email's own
+    // stuck-batch recovery remains the safety net for the rare real failure.
     async function fileOriginalMessage(categoryName) {
         if (!originalMessage) return;
         document.getElementById("confirmOriginalLine").textContent = "Filing the original...";
         document.getElementById("cancelLink").disabled = true;
 
-        let categoryPreExisted = true;
-        try { categoryPreExisted = (await findMasterCategory(categoryName)) !== null; }
-        catch (err) { categoryPreExisted = true; }
-
-        let emailsToFileFolderId = null;
-        try { emailsToFileFolderId = await getOrCreateEmailsToFileFolderId(); }
-        catch (err) { console.error("Could not resolve the Emails to File folder:", err); }
+        // Independent Graph lookups -- run concurrently (2026-10-24) instead of one after the
+        // other. Each keeps its original fallback on failure: categoryPreExisted defaults to
+        // true (don't touch the master category list if we couldn't check it), folder id
+        // defaults to null (categorize-only, no move) if it couldn't be resolved.
+        const [categoryResult, folderResult] = await Promise.allSettled([
+            findMasterCategory(categoryName),
+            getOrCreateEmailsToFileFolderId()
+        ]);
+        const categoryPreExisted = categoryResult.status === "fulfilled" ? (categoryResult.value !== null) : true;
+        const emailsToFileFolderId = folderResult.status === "fulfilled" ? folderResult.value : null;
+        if (folderResult.status === "rejected") console.error("Could not resolve the Emails to File folder:", folderResult.reason);
 
         const batchId = crypto.randomUUID();
         const now = new Date().toISOString();
@@ -921,15 +1040,24 @@
         // mid-request regardless, File Email's own stuck-batch recovery still picks it up later.
         addFeBatchToStorage(batchEntry);
 
-        try {
-            await postFeBatch(batchEntry);
-            removeFeBatchFromStorage(batchId);
-            document.getElementById("confirmOriginalLine").textContent = "Original filed.";
-        } catch (err) {
-            console.error("Filing the original message failed:", err);
-            document.getElementById("confirmOriginalLine").textContent =
-                `Could not file the original right now -- it's queued and will be retried automatically next time File Email opens. (${err.message || err})`;
-        }
+        const { sent, result } = postFeBatch(batchEntry);
+        result
+            .then((r) => {
+                removeFeBatchFromStorage(batchId);
+                // A failed item here is rare, but can mean the cached "Emails to File" folder id
+                // has gone stale (e.g. someone deleted it by hand) -- clear it so the next attempt
+                // re-resolves instead of failing the same way every time.
+                if (r && r.failed > 0) clearEmailsToFileFolderCache();
+            })
+            .catch((err) => {
+                // This dialog is very likely gone by the time this runs -- nothing to show the
+                // user here. The batch stays in storage either way, so File Email's stuck-batch
+                // recovery will surface and retry it next time it opens.
+                console.error("Filing the original message failed after this dialog moved on:", err);
+            });
+
+        await sent;
+        document.getElementById("confirmOriginalLine").textContent = "Filing the original in the background...";
     }
 
     // ---- Confirm / Cancel ----
@@ -944,12 +1072,14 @@
         messageParent({ action: "save", categoryName: selectedProjectName });
 
         if (saveOriginal && isReplyLike && originalMessage) {
-            // Awaited fully now (see fileOriginalMessage()'s own comment) -- this dialog only
-            // closes once that request has actually completed, not on a fixed timer racing it.
+            // fileOriginalMessage() now only awaits long enough to confirm its background filing
+            // request has actually been sent (see its own comment), not the bridge's full
+            // response -- so this delay is back to being purely cosmetic, same as the plain case
+            // below, just long enough to show "Filing the original in the background...".
             await fileOriginalMessage(selectedProjectName);
             setTimeout(() => {
                 try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
-            }, 1200);
+            }, 500);
             return;
         }
 
