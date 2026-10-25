@@ -918,53 +918,47 @@
         return (result.value || []).find(c => c.displayName === categoryName) || null;
     }
 
-    // Returns { sent, result } instead of a single promise (2026-10-24, this dialog only): `sent`
-    // resolves as soon as the two tokens are in hand and the keepalive fetch has actually been
-    // handed to the browser's network stack -- await THIS before letting the dialog close, so the
-    // request is guaranteed to have been issued regardless of what happens to the page right
-    // after. `result` is the bridge's eventual response (three sequential Graph calls inside it,
-    // plus possible PowerShell cold-start) -- that's the slow part, and nothing requires waiting
-    // for it once the request is confirmed sent, so callers that don't need to block on it can
-    // just attach a .then()/.catch() for cleanup/logging instead of awaiting it.
-    function postFeBatch(entry) {
-        let resolveSent;
-        const sent = new Promise((resolve) => { resolveSent = resolve; });
-        const result = (async () => {
-            const [graphToken, bridgeToken] = await signInAndGetTwoTokens(mailWriteRequest, bridgeRequest, true);
-            if (!graphToken) { resolveSent(); throw new Error("Could not get permission to categorize/move emails."); }
-            if (!bridgeToken) { resolveSent(); throw new Error("Could not get permission to call the bridge."); }
+    // Acquires both tokens concurrently (independent resources -- no reason to serialize them)
+    // and posts the batch, returning the bridge's full response.
+    //
+    // HISTORY: a 2026-10-24 revision split this into { sent, result } so the caller could await
+    // only `sent` (tokens acquired, fetch() issued) and close the dialog immediately, treating
+    // `result` as fire-and-forget -- on the theory that `keepalive: true` would let the request
+    // keep running on the server even after the page closed. REVERTED 2026-10-25: confirmed live
+    // via Application Insights that this doesn't hold -- closing the dialog tears down the
+    // underlying connection fast enough that the bridge's invocation gets cancelled mid-flight
+    // (a TaskCanceledException after ~2.4s, nowhere near enough time for its Graph calls to
+    // finish), so the categorize PATCH silently never happened despite keepalive. `keepalive` is
+    // kept below as a defensive measure for the rare case this dialog gets torn down some other
+    // way mid-request (e.g. the user force-closing it), but callers must actually await this
+    // function's result for the categorize to be relied upon -- see categorizeBatch.
+    async function postFeBatch(entry) {
+        const [graphToken, bridgeToken] = await signInAndGetTwoTokens(mailWriteRequest, bridgeRequest, true);
+        if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
+        if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
 
-            // keepalive: lets this specific request keep going even though the page that started
-            // it (this dialog) may unload moments later -- same mechanism sendBeacon relies on.
-            // This dialog only ever categorises a handful of messages at a time (the original, or
-            // every message in one conversation), nowhere near browsers' ~64KB keepalive request
-            // cap in the normal case -- but an unusually long thread could get close, so the cap
-            // is checked explicitly rather than assumed; keepalive is only set when safely under
-            // it; still works without it, just loses the "survives this dialog unloading early"
-            // guarantee for that rare oversized case. (File Email's own copy of this function can
-            // carry a much larger multi-item batch and deliberately never uses keepalive at all.)
-            const body = JSON.stringify({
-                graphAccessToken: graphToken,
-                categoryName: entry.categoryName,
-                destinationFolderId: entry.destinationFolderId,
-                items: entry.items
-            });
-            const fetchPromise = fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
-                method: "POST",
-                keepalive: body.length < 60 * 1024,
-                headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
-                body
-            });
-            resolveSent();
-
-            const response = await fetchPromise;
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Bridge returned ${response.status}: ${errorText}`);
-            }
-            return response.json();
-        })();
-        return { sent, result };
+        // This dialog only ever categorises a handful of messages at a time (the original, or
+        // every message in one conversation), nowhere near browsers' ~64KB keepalive request cap
+        // in the normal case -- but an unusually long thread could get close, so the cap is
+        // checked explicitly rather than assumed. (File Email's own copy of this function can
+        // carry a much larger multi-item batch and deliberately never uses keepalive at all.)
+        const body = JSON.stringify({
+            graphAccessToken: graphToken,
+            categoryName: entry.categoryName,
+            destinationFolderId: entry.destinationFolderId,
+            items: entry.items
+        });
+        const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
+            method: "POST",
+            keepalive: body.length < 60 * 1024,
+            headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
+            body
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bridge returned ${response.status}: ${errorText}`);
+        }
+        return response.json();
     }
 
     // Fires a categorize-only batch through the exact same bridge endpoint File Email already
@@ -983,11 +977,11 @@
     // relocated the original (the original's own compose window side-effect, not a timing bug).
     // Categorizing in place has no such effect, and the user now moves a categorized item into
     // "Emails to File" themselves whenever they're ready, same as File Email's own staging step.
-    // What's still true from the 2026-10-24 revision: postFeBatch() splits into `sent` (tokens
-    // acquired, keepalive fetch() actually issued -- awaited here) and `result` (the bridge's
-    // eventual response, including the bridge's own Graph round-trips plus possible cold start --
-    // NOT awaited, handled fire-and-forget since the batch is already durably tracked above).
-    async function categorizeBatchInBackground(categoryName, items, statusElementId) {
+    // Awaits the bridge's FULL response (see postFeBatch's own comment for why a fire-and-forget
+    // version of this doesn't work) -- categorize-only is fast now that this flow no longer also
+    // moves anything (two Graph calls, not three, per item), so waiting for it is a small,
+    // worthwhile cost for it to actually happen.
+    async function categorizeBatch(categoryName, items, statusElementId) {
         const categoryPreExisted = (await findMasterCategory(categoryName).catch(() => null)) !== null;
 
         const batchId = crypto.randomUUID();
@@ -997,21 +991,27 @@
             startedAt: now, lastAttemptAt: now, retryCount: 0,
             items, destinationFolderId: null, categoryPreExisted
         };
+        // Durably tracked before the request even starts -- if this dialog is closed or crashes
+        // mid-request regardless, File Email's own stuck-batch recovery still picks it up later.
         addFeBatchToStorage(batchEntry);
 
-        const { sent, result } = postFeBatch(batchEntry);
-        result
-            .then(() => removeFeBatchFromStorage(batchId))
-            .catch((err) => {
-                // This dialog is very likely gone by the time this runs -- nothing to show the
-                // user here. The batch stays in storage either way, so File Email's stuck-batch
-                // recovery will surface and retry it next time it opens.
-                console.error("Categorizing failed after this dialog moved on:", err);
-            });
-
-        await sent;
-        if (statusElementId) {
-            document.getElementById(statusElementId).textContent = "Categorising in the background...";
+        try {
+            const r = await postFeBatch(batchEntry);
+            removeFeBatchFromStorage(batchId);
+            if (statusElementId) {
+                const failed = (r && r.failed) || 0;
+                document.getElementById(statusElementId).textContent = failed > 0
+                    ? `Categorised ${r.succeeded || 0} of ${items.length} -- ${failed} failed (will retry via File Email).`
+                    : `Categorised ${items.length} message(s).`;
+            }
+        } catch (err) {
+            console.error("Categorizing failed:", err);
+            // Left in storage -- File Email's own stuck-batch recovery will retry it next time
+            // it opens, same safety net as any other batch that fails outright.
+            if (statusElementId) {
+                document.getElementById(statusElementId).textContent =
+                    `Could not categorise right now -- it's queued and will be retried automatically next time File Email opens. (${err.message || err})`;
+            }
         }
     }
 
@@ -1019,7 +1019,7 @@
         if (!originalMessage) return;
         document.getElementById("confirmOriginalLine").textContent = "Categorising the original...";
         document.getElementById("cancelLink").disabled = true;
-        await categorizeBatchInBackground(
+        await categorizeBatch(
             categoryName,
             [{ restId: originalMessage.id, subject: originalMessage.subject || sendContext.subject }],
             "confirmOriginalLine"
@@ -1071,7 +1071,7 @@
         }
 
         statusEl.textContent = `Categorising ${messages.length} message(s) in this conversation...`;
-        await categorizeBatchInBackground(
+        await categorizeBatch(
             categoryName,
             messages.map(m => ({ restId: m.id, subject: m.subject })),
             "confirmOriginalLine"
@@ -1086,10 +1086,13 @@
         document.getElementById("categoriseConversationButton").disabled = true;
     }
 
+    // Brief pause after the real work (categorizeBatch awaits the bridge's full
+    // response, see its own comment) so the final status line is actually readable before the
+    // dialog vanishes -- not hiding any remaining wait, there isn't one left at this point.
     function closeDialogSoon() {
         setTimeout(() => {
             try { Office.context.ui.closeContainer(); } catch (err) { window.close(); }
-        }, 500);
+        }, 700);
     }
 
     async function handleSave(saveOriginal) {
@@ -1101,10 +1104,6 @@
         messageParent({ action: "save", categoryName: selectedProjectName });
 
         if (saveOriginal && isReplyLike && originalMessage) {
-            // fileOriginalMessage() now only awaits long enough to confirm its background
-            // categorize request has actually been sent (see categorizeBatchInBackground's own
-            // comment), not the bridge's full response -- so this delay is purely cosmetic, same
-            // as the plain case below, just long enough to show the "in the background" status.
             await fileOriginalMessage(selectedProjectName);
         }
         closeDialogSoon();
