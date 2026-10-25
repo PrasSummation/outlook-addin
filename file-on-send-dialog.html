@@ -805,10 +805,26 @@
         }
     }
 
-    // Best-effort "what am I replying to": there's no direct API for it from a compose
-    // item, so this approximates it as the most recent message in the same conversation
-    // that wasn't sent by the signed-in user themselves (their own prior replies also
-    // share the conversationId). Good enough for the common case; if it can't find
+    // "What am I replying to": primarily an EXACT match via inReplyTo (added 2026-10-25),
+    // falling back to the old best-effort conversationId heuristic when that's not available.
+    //
+    // sendContext.inReplyToMessageId is set by taskpane.html before this dialog ever opens
+    // (dialogs have no Office.context.mailbox of their own, so they can't read it directly) --
+    // it comes from Office.js's LoadedMessageCompose.inReplyTo, which carries the ORIGINAL
+    // message's actual internetMessageId (confirmed via its underlying MAPI property,
+    // PidTagInReplyToId), not an approximation. Looking that exact ID up via Graph
+    // ($filter=internetMessageId eq ...) is immune to the old heuristic's known failure modes:
+    // confirmed live 2026-10-25 that "most recent non-self message in this conversationId" had
+    // picked a self-forward sitting in Sent Items instead of the actual Inbox original, and
+    // Microsoft's own docs note inReplyTo survives a subject edit, which conversationId does not
+    // reliably. Only documented for replies, not confirmed for forwards -- if it's not set (or
+    // the lookup finds nothing), this falls through to the conversationId search below exactly
+    // as before, so forwards (and any other case where it's absent) still work, just with the
+    // old approximation.
+    //
+    // conversationId fallback: approximates "the original" as the most recent message in the
+    // same conversation that wasn't sent by the signed-in user themselves (their own prior
+    // replies also share the conversationId). Good enough for the common case; if it can't find
     // anything, "Save Both" is disabled above rather than filing something wrong.
     //
     // $select includes toRecipients/ccRecipients/bodyPreview (added 2026-10-21) so the same
@@ -828,15 +844,34 @@
     // by me" matching logic itself, or a shared/delegate-mailbox from-address mismatch).
     let lastOriginalLookupResult = null;
 
+    const ORIGINAL_MESSAGE_SELECT = "id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime";
+
     async function findOriginalMessage(isUserAction) {
-        if (!sendContext.conversationId) {
-            lastOriginalLookupResult = { reason: "no conversationId was available to search with" };
-            return null;
-        }
         try {
             const token = await signInAndGetToken(mailWriteRequest, isUserAction);
             if (!token) {
                 lastOriginalLookupResult = { reason: "could not get permission to check (no token)" };
+                return null;
+            }
+
+            if (sendContext.inReplyToMessageId) {
+                try {
+                    const exactUrl = "https://graph.microsoft.com/v1.0/me/messages?$filter=" +
+                        encodeURIComponent(`internetMessageId eq '${sendContext.inReplyToMessageId}'`) +
+                        `&$top=1&$select=${ORIGINAL_MESSAGE_SELECT}`;
+                    const exactData = await graphGet(exactUrl, token);
+                    const exactMatch = (exactData.value || [])[0];
+                    if (exactMatch) return exactMatch;
+                } catch (err) {
+                    console.error("Exact inReplyTo lookup failed, falling back to conversation search:", err);
+                }
+                // Falls through deliberately -- inReplyTo was set but didn't resolve to a message
+                // (deleted since, or some other edge case). The conversationId search below is
+                // still worth trying rather than giving up immediately.
+            }
+
+            if (!sendContext.conversationId) {
+                lastOriginalLookupResult = { reason: "no conversationId was available to search with" };
                 return null;
             }
             const account = msalInstance.getActiveAccount();
@@ -854,7 +889,7 @@
             // there's no ordering requirement left to violate.
             const url = "https://graph.microsoft.com/v1.0/me/messages?$filter=" +
                 encodeURIComponent(`conversationId eq '${sendContext.conversationId}'`) +
-                "&$top=25&$select=id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime";
+                `&$top=25&$select=${ORIGINAL_MESSAGE_SELECT}`;
             const data = await graphGet(url, token);
             const messages = (data.value || []).slice()
                 .sort((a, b) => new Date(b.receivedDateTime) - new Date(a.receivedDateTime));
