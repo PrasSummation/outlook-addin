@@ -430,6 +430,38 @@ list-head + refresh button, button hint subtext, context/summary box
 styling — its interaction model (virtual-highlight-index nav, not real
 DOM focus) was deliberately left alone.
 
+**Redesign, 2026-10-25 — categorize-only, no more moving the original**: the
+paragraphs above describing "Save (Both/Reply Only)" firing `FileEmailBatch`
+to **file and move** the original are now stale on two counts. First, the
+2026-10-24 latency pass (not otherwise logged here) replaced the "abort its
+own fetch after a brief delay" pattern with `postFeBatch()` splitting into
+`sent` (tokens acquired, a `keepalive: true` fetch actually issued -- awaited)
+and `result` (the bridge's eventual response -- fire-and-forget), plus
+parallelizing the independent Graph lookups and caching the "Emails to File"
+folder id, all to cut the close-delay on what was then still a categorize-
+**and-move** action. Second, and more fundamentally: moving the original into
+"Emails to File" immediately was found to drag an open, in-progress
+reply/forward draft along with it -- a real UI side effect of relocating the
+item a draft is replying to while that draft is still live, not a timing bug
+fixable with a shorter delay. The fix is to stop moving it at all: this
+dialog now only ever **categorizes**, never moves, anything. Buttons renamed
+to match (**Categorise Both** / **Categorise Reply Only** / plain
+**Categorise** for a new message) and a third option, **Categorise
+Conversation**, added -- tags every message found via a `conversationId`
+search (`/me/messages`, whole mailbox, not folder-scoped), not just the one
+`findOriginalMessage()` guesses is "the original". A categorized original (or
+older conversation message) now just sits wherever it already was; the user
+moves it into "Emails to File" themselves when ready, the same manual staging
+step File Email's own batch flow already relies on, and `SyncEmails`'s
+existing staging-folder pass files and relocates it from there. Deliberately
+**not** done as part of this change: extending `SyncEmails` with a matching
+Inbox-wide scan (so a categorized-but-not-yet-staged original gets filed
+automatically) -- full-Inbox scanning every 5 minutes for every staff mailbox
+is a materially bigger job than the current small staging-folder scan, and
+Graph has no efficient server-side filter on the `categories` property, so
+this needs its own sizing/performance pass before being added. Relying on
+manual staging for now.
+
 **Incident, 2026-10-07 — sends hanging on "add-in taking longer than
 expected"**: a teammate (classic Outlook for Windows) got stuck on
 Outlook's own slow-add-in warning when sending, with no visible picker
