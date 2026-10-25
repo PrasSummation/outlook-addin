@@ -882,7 +882,9 @@
                 // (deleted since, or some other edge case). The conversationId search below is
                 // still worth trying rather than giving up immediately.
             } else {
-                lastOriginalLookupMethod = "no inReplyToMessageId was received from the opener -- used conversationId fallback directly";
+                lastOriginalLookupMethod = sendContext.inReplyToDiagError
+                    ? `getInReplyToMessageId() threw on the opener side: "${sendContext.inReplyToDiagError}" -- used conversationId fallback`
+                    : "no inReplyToMessageId was received (Outlook gave null, no error) -- used conversationId fallback directly";
             }
 
             if (!sendContext.conversationId) {

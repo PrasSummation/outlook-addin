@@ -1961,6 +1961,10 @@
     // per Microsoft's own docs ("only one mail item can be loaded at a time"). Returns null on any
     // failure (including "not available for this compose type") rather than throwing -- this is a
     // best-effort enhancement, not something that should ever block opening the dialog.
+    // TEMPORARY diagnostic shape (2026-10-25): returns { value, error } instead of a bare value so
+    // the dialog's own DIAG line can distinguish "Outlook genuinely didn't provide one" (value
+    // null, error null) from "something threw while trying to read it" (error set) -- collapse
+    // back to a bare nullable string once the inReplyTo path is confirmed working live.
     async function getInReplyToMessageId(item) {
         try {
             await officeAsync(item, "saveAsync");
@@ -1968,10 +1972,10 @@
             const loadedItem = await officeAsync(Office.context.mailbox, "loadItemByIdAsync", itemId);
             const inReplyTo = loadedItem.inReplyTo || null;
             await officeAsync(loadedItem, "unloadAsync").catch(() => {});
-            return inReplyTo;
+            return { value: inReplyTo, error: null };
         } catch (err) {
             console.error("Could not read inReplyTo (non-fatal, falls back to conversationId search):", err);
-            return null;
+            return { value: null, error: (err && err.message) || String(err) };
         }
     }
 
@@ -2025,13 +2029,18 @@
         // sitting in Sent Items instead of the real Inbox original). Only documented for replies,
         // not confirmed for forwards -- null here just means that dialog falls back to its
         // existing heuristic, same as before this existed.
-        const inReplyToMessageId = isReplyLike ? await getInReplyToMessageId(item) : null;
+        const inReplyToResult = isReplyLike
+            ? await getInReplyToMessageId(item)
+            : { value: null, error: null };
 
         const context = {
             composeType,
             subject: (typeof subjectText === "string" && subjectText) || "(no subject)",
             conversationId: item.conversationId || null,
-            inReplyToMessageId
+            inReplyToMessageId: inReplyToResult.value,
+            // TEMPORARY diagnostic field (2026-10-25), remove alongside getInReplyToMessageId's
+            // own temporary { value, error } shape once this is confirmed working live.
+            inReplyToDiagError: inReplyToResult.error
         };
         const url = `https://prassummation.github.io/outlook-addin/file-on-send-dialog.html?context=${encodeURIComponent(JSON.stringify(context))}`;
 
