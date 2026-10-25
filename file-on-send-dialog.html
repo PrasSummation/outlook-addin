@@ -755,8 +755,11 @@
                 if (msg) {
                     const from = (msg.from && msg.from.emailAddress && (msg.from.emailAddress.name || msg.from.emailAddress.address)) || "unknown sender";
                     const when = msg.receivedDateTime ? new Date(msg.receivedDateTime).toLocaleDateString() : "";
+                    // TEMPORARY diagnostic line (2026-10-25) -- remove once the inReplyTo path is
+                    // confirmed working live.
+                    const diag = `<div style="font-size:10px;color:#B3401F">DIAG: ${lastOriginalLookupMethod || "(no method recorded)"}</div>`;
                     document.getElementById("confirmOriginalLine").innerHTML =
-                        `&#129525; <b>Original</b> &mdash; "${msg.subject || sendContext.subject}" from ${from}${when ? ", " + when : ""}`;
+                        `&#129525; <b>Original</b> &mdash; "${msg.subject || sendContext.subject}" from ${from}${when ? ", " + when : ""}${diag}`;
                     document.getElementById("saveBothButton").disabled = false;
                     // Save Both is the default action once it's actually usable -- move
                     // focus to it, but only if focus is still sitting on the fallback
@@ -769,8 +772,9 @@
                     const why = lastOriginalLookupResult && lastOriginalLookupResult.reason
                         ? ` (${lastOriginalLookupResult.reason})`
                         : "";
-                    document.getElementById("confirmOriginalLine").textContent =
-                        `Original message not found -- only the reply can be filed.${why}`;
+                    document.getElementById("confirmOriginalLine").innerHTML =
+                        `Original message not found -- only the reply can be filed.${why}` +
+                        `<div style="font-size:10px;color:#B3401F">DIAG: ${lastOriginalLookupMethod || "(no method recorded)"}</div>`;
                     document.getElementById("saveBothButton").disabled = true;
                 }
             };
@@ -843,6 +847,10 @@
     // returned messages that were all attributed to the signed-in user (points at the "not sent
     // by me" matching logic itself, or a shared/delegate-mailbox from-address mismatch).
     let lastOriginalLookupResult = null;
+    // TEMPORARY diagnostic (2026-10-25), remove once the inReplyTo path is confirmed working live:
+    // records which method actually produced the result, and the raw inReplyToMessageId received
+    // from the opener, so this can be surfaced directly in the dialog's own UI without DevTools.
+    let lastOriginalLookupMethod = null;
 
     const ORIGINAL_MESSAGE_SELECT = "id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime";
 
@@ -861,13 +869,20 @@
                         `&$top=1&$select=${ORIGINAL_MESSAGE_SELECT}`;
                     const exactData = await graphGet(exactUrl, token);
                     const exactMatch = (exactData.value || [])[0];
-                    if (exactMatch) return exactMatch;
+                    if (exactMatch) {
+                        lastOriginalLookupMethod = `exact inReplyTo match (${sendContext.inReplyToMessageId})`;
+                        return exactMatch;
+                    }
+                    lastOriginalLookupMethod = `inReplyTo was "${sendContext.inReplyToMessageId}" but no message with that internetMessageId was found -- fell back to conversationId`;
                 } catch (err) {
                     console.error("Exact inReplyTo lookup failed, falling back to conversation search:", err);
+                    lastOriginalLookupMethod = `exact lookup threw (${err.message || err}) -- fell back to conversationId`;
                 }
                 // Falls through deliberately -- inReplyTo was set but didn't resolve to a message
                 // (deleted since, or some other edge case). The conversationId search below is
                 // still worth trying rather than giving up immediately.
+            } else {
+                lastOriginalLookupMethod = "no inReplyToMessageId was received from the opener -- used conversationId fallback directly";
             }
 
             if (!sendContext.conversationId) {
