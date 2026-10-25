@@ -257,6 +257,37 @@ their own Outlook if it lingers," not promise instant disappearance.
    mailbox left no lasting change, and an anonymous request after enabling
    Easy Auth correctly returned 401.
 
+## Redeploying — ExchangeOnlineManagement is vendored, not a managed dependency
+
+As of 2026-10-24, `requirements.psd1` is deliberately empty and `host.json`'s
+`managedDependency.enabled` is `false`. `ExchangeOnlineManagement` (needed
+only by `Connect-IfNeeded`, used by `Grant/RevokeMailboxPermission`,
+`GetMailboxPermissions`, and `CreateSharedMailbox`) is vendored directly into
+`Modules/ExchangeOnlineManagement` instead, alongside `Modules/MailboxBridge`.
+
+**Why:** `managedDependency.enabled: true` makes Azure eagerly import every
+module in `requirements.psd1` into the shared PowerShell runspace on *every*
+cold start of this app, regardless of which function actually gets invoked.
+`ExchangeOnlineManagement` is one of the heavier modules to import, and
+`FileEmailBatch`/`FileEmailBatchStatus` — the hot path for the Outlook
+add-in's "Save" flows — never touch Exchange Online PowerShell at all, so
+they were paying that cost for nothing. Vendoring it into `Modules/` instead
+still makes it available on `PSModulePath` for `Connect-IfNeeded`'s own
+explicit `Import-Module`, but only loaded on demand, by whichever function
+actually calls it.
+
+**The vendored module folders are gitignored, not committed** (it's ~60MB
+across `ExchangeOnlineManagement`, `PackageManagement`, and `PowerShellGet`,
+its own two dependencies) — re-fetch them before building a deploy zip:
+
+```powershell
+cd exchange-bridge/Modules
+Save-Module -Name ExchangeOnlineManagement -RequiredVersion 3.9.2 -Path . -Force
+```
+
+If bumping the pinned version, update both this command and
+`Modules/.gitignore`'s own comment to match.
+
 ## Cost
 
 Consumption plan: 1,000,000 free executions + 400,000 GB-seconds free per

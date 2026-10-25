@@ -1,0 +1,7 @@
+# Vendored at deploy time, not committed -- see exchange-bridge/README.md's "Redeploying" note
+# and requirements.psd1's own comment. Re-fetch with:
+#   Save-Module -Name ExchangeOnlineManagement -RequiredVersion 3.9.2 -Path . -Force
+# (pulls PackageManagement and PowerShellGet too, as its own dependencies -- vendor all three.)
+/ExchangeOnlineManagement/
+/PackageManagement/
+/PowerShellGet/
