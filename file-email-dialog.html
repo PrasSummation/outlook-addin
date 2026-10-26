@@ -809,13 +809,39 @@
     // for the full hierarchy and why. Only resolves the two folders this dialog actually needs;
     // "Emails Yet to Label" (purely manual user staging) is ensured by SyncEmails instead, since
     // it runs for every staff mailbox regardless of whether File Email has ever been used there.
+    //
+    // Cached to localStorage (added 2026-10-27, chasing the visible delay before "Filing X --
+    // continuing in the background" appears): this page is a fresh dialog load every single time
+    // File Email is used (see "File Email is a dialog, not a wizard"), so the in-memory
+    // `feEmailsToFileFolderId` above only ever helps a second file-this-batch within the SAME
+    // dialog instance, which never happens in practice -- every real use was paying two
+    // sequential Graph round-trips (plus a token acquisition) to re-resolve an id that is, for
+    // all practical purposes, permanent once the folder exists. Same stale-is-acceptable
+    // trade-off the project-folder-list cache above already makes: if this id is ever wrong
+    // (folder deleted/renamed by hand), the downstream move fails visibly via the bridge's own
+    // error reporting in the "Recent File Email batches" notice -- nothing here auto-heals that,
+    // but it's a rare enough edge case not to be worth the complexity.
+    function feAwaitingSyncFolderCacheKey() {
+        const account = msalInstance.getActiveAccount();
+        return `feAwaitingSyncFolderIdCache:${(account && account.username) || "unknown"}`;
+    }
+
     async function getOrCreateEmailsToFileFolderId() {
         if (feEmailsToFileFolderId) return feEmailsToFileFolderId;
+        try {
+            const cached = localStorage.getItem(feAwaitingSyncFolderCacheKey());
+            if (cached) {
+                feEmailsToFileFolderId = cached;
+                return feEmailsToFileFolderId;
+            }
+        } catch (err) { /* ignore, fall through to resolving it live */ }
+
         const token = await signInAndGetToken(mailWriteRequest, true);
         if (!token) throw new Error("Could not get permission to access your mailbox.");
 
         const masterId = await getOrCreateMailFolder("Master Email Management", token);
         feEmailsToFileFolderId = await getOrCreateMailFolder("Emails Awaiting Sync", token, masterId);
+        try { localStorage.setItem(feAwaitingSyncFolderCacheKey(), feEmailsToFileFolderId); } catch (err) { /* non-fatal */ }
         return feEmailsToFileFolderId;
     }
 
@@ -882,10 +908,16 @@
         // same reason -- bridgeRequest in particular is never requested anywhere else in
         // this dialog, so this can be the first thing needing a silent token for it. Timing
         // this out at least lets this promise settle (so the fire-and-forget .catch above
-        // actually runs) instead of leaving it dangling forever.
-        const graphToken = await withTimeout(signInAndGetToken(mailWriteRequest, true), 8000, "signInAndGetToken(mailWriteRequest)");
+        // actually runs) instead of leaving it dangling forever. The two scopes are unrelated,
+        // so request them together rather than one after the other -- doesn't affect the
+        // visible "continuing in the background" delay (this whole function already runs
+        // unawaited by the UI), but gets the actual filing done and reflected in the next
+        // pending-batches check sooner.
+        const [graphToken, bridgeToken] = await Promise.all([
+            withTimeout(signInAndGetToken(mailWriteRequest, true), 8000, "signInAndGetToken(mailWriteRequest)"),
+            withTimeout(signInAndGetToken(bridgeRequest, true), 8000, "signInAndGetToken(bridgeRequest)")
+        ]);
         if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
-        const bridgeToken = await withTimeout(signInAndGetToken(bridgeRequest, true), 8000, "signInAndGetToken(bridgeRequest)");
         if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
 
         const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
@@ -1048,19 +1080,28 @@
         resultSummary.innerHTML = `<div class="summary-box"><div class="row">Starting...</div></div>`;
         showFeStep("result");
 
+        // Independent reads (one checks the mailbox's category list, the other resolves a
+        // folder id) -- run them together instead of one after the other. This was the main
+        // source of the visible delay before "Filing X -- continuing in the background" showed
+        // up: both are real Graph round-trips, awaited sequentially, before that message could
+        // render at all.
+        const [categoryCheck, folderCheck] = await Promise.allSettled([
+            withTimeout(findMasterCategory(categoryName), 8000, "findMasterCategory"),
+            withTimeout(getOrCreateEmailsToFileFolderId(), 8000, "getOrCreateEmailsToFileFolderId")
+        ]);
+
         let categoryPreExisted = true;
-        try {
-            categoryPreExisted = (await withTimeout(findMasterCategory(categoryName), 8000, "findMasterCategory")) !== null;
-        } catch (err) {
-            console.error("Could not check master category list beforehand:", err);
-            categoryPreExisted = true;
+        if (categoryCheck.status === "fulfilled") {
+            categoryPreExisted = categoryCheck.value !== null;
+        } else {
+            console.error("Could not check master category list beforehand:", categoryCheck.reason);
         }
 
         let emailsToFileFolderId = null;
-        try {
-            emailsToFileFolderId = await withTimeout(getOrCreateEmailsToFileFolderId(), 8000, "getOrCreateEmailsToFileFolderId");
-        } catch (err) {
-            console.error("Could not resolve the Emails to File folder:", err);
+        if (folderCheck.status === "fulfilled") {
+            emailsToFileFolderId = folderCheck.value;
+        } else {
+            console.error("Could not resolve the Emails to File folder:", folderCheck.reason);
         }
 
         const batchId = crypto.randomUUID();

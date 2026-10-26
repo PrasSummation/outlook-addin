@@ -347,6 +347,27 @@ Both entry points share `file-email-dialog.html` and the same
 share storage with `taskpane.html` normally — also worth confirming once
 tested live, since nothing in this repo had opened a dialog before this).
 
+**Confirm latency fix (2026-10-27)**: a user-reported delay between clicking "Add Category &
+Stage for Filing" and seeing "Filing X — continuing in the background." Root cause: two
+independent Graph reads (`findMasterCategory`, `getOrCreateEmailsToFileFolderId`) were `await`ed
+one after the other in `handleFeConfirmInner`, both blocking that status message from rendering
+at all. Three fixes, same shape as File on Send's own earlier latency work:
+1. The two reads now run together via `Promise.allSettled` (each keeps its own independent
+   fallback-on-error behavior, just concurrently instead of sequentially).
+2. `getOrCreateEmailsToFileFolderId`'s result is now cached to localStorage
+   (`feAwaitingSyncFolderIdCache:<username>`), not just the in-memory `feEmailsToFileFolderId`
+   above it — this page is a *fresh dialog load every single time* File Email is used, so that
+   in-memory cache never actually helped in practice; every real use was paying two sequential
+   Graph round-trips to re-resolve an id that's permanent for all practical purposes once the
+   folder exists. This is the main win: after the first use on a given browser profile, this
+   entire resolution is skipped. Same stale-is-acceptable trade-off the project-folder-list cache
+   already makes — a wrong cached id fails visibly later (via the bridge's own error reporting in
+   the pending-batches notice), nothing here auto-heals it.
+3. `postFeBatch`'s two token acquisitions (`mailWriteRequest`, `bridgeRequest`) also now run via
+   `Promise.all` instead of sequentially — doesn't affect the visible pre-"continuing" delay
+   (this function is already fire-and-forget relative to the UI), but makes the actual background
+   filing finish sooner.
+
 ## File on Send is live (2026-10-06)
 
 Replaces the earlier `onMessageSendHandler` phase-1 probe (which only
