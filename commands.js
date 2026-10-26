@@ -134,7 +134,7 @@ function onMessageSendHandler(event) {
 
     event.completed({
       allowEvent: false,
-      errorMessage: "File this email to a project before sending.",
+      errorMessage: "Assign email to a project",
       cancelLabel: "Choose project",
       commandId: "Summation.ComposeTaskpaneButton"
     });
