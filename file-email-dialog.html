@@ -165,6 +165,42 @@
     // cache -- expected standard same-origin dialog behavior, worth confirming once this is
     // actually tested live).
 
+    // ---- Timing diagnostics (added 2026-10-27, chasing a reported multi-second wait on
+    // "Filing X -- continuing in the background" that survived the parallelization/caching/
+    // prefetch fixes already applied) -- rendered directly into the result step's own UI
+    // (not just console.log) since this is an Office.js dialog hosted inside Outlook's
+    // WebView, where attaching DevTools isn't something a normal user can casually do. Every
+    // mark is logged relative to feConfirmClickedAt (when Confirm was actually clicked) except
+    // the two prefetch marks, which are relative to feT0 (page load) since they happen before
+    // any click exists to measure from. ----
+    const feT0 = performance.now();
+    let feConfirmClickedAt = null;
+    let feTimingRows = [];
+
+    function feTimingReset() {
+        feConfirmClickedAt = performance.now();
+        feTimingRows = [];
+    }
+    function feTiming(label) {
+        if (feConfirmClickedAt == null) return; // e.g. postFeBatch running from a later automatic retry, not this Confirm click
+        const ms = Math.round(performance.now() - feConfirmClickedAt);
+        feTimingRows.push({ label, ms });
+        console.log(`[FE-TIMING] +${ms}ms — ${label}`);
+        renderFeTimingBox();
+    }
+    function feEscapeTimingLabel(s) {
+        return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+    function renderFeTimingBox() {
+        const el = document.getElementById("feTimingBox");
+        if (!el || feTimingRows.length === 0) return;
+        // Most labels are fixed strings from this file, but the failure row below interpolates
+        // a real error message (ultimately from the bridge's own response body) -- escape every
+        // label uniformly rather than trying to track which ones are "safe."
+        el.innerHTML = `<div class="row"><b>Timing (since Confirm was clicked):</b></div>` +
+            feTimingRows.map(r => `<div class="row">${r.ms == null ? "" : `+${r.ms}ms — `}${feEscapeTimingLabel(r.label)}</div>`).join("");
+    }
+
     const BRIDGE_URL = "https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net";
     const ACTIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5wp-OK02_E3RbZkRH_jE_Lr";
     const ARCHIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5zGiD4R7k2PQZMwL6mUreXS";
@@ -867,8 +903,17 @@
 
     // Fired once, right after sign-in (see renderFeContext) -- the Confirm-time call later just
     // awaits this same promise, which has usually already settled by then.
+    let fePrefetchStartedAt = null;
+    let fePrefetchSettledAt = null;
     function startFolderIdPrefetch() {
-        getOrCreateEmailsToFileFolderId().catch(() => { /* surfaced for real at Confirm time */ });
+        fePrefetchStartedAt = performance.now();
+        console.log(`[FE-TIMING] +${Math.round(fePrefetchStartedAt - feT0)}ms since page load — folder-id prefetch started`);
+        getOrCreateEmailsToFileFolderId()
+            .then(() => { fePrefetchSettledAt = performance.now(); })
+            .catch(() => { fePrefetchSettledAt = performance.now(); })
+            .finally(() => {
+                console.log(`[FE-TIMING] +${Math.round(fePrefetchSettledAt - feT0)}ms since page load — folder-id prefetch settled`);
+            });
     }
 
     // ---- Server-side batch handoff ----
@@ -945,6 +990,7 @@
         ]);
         if (!graphToken) throw new Error("Could not get permission to categorize/move emails.");
         if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
+        feTiming("Background: bridge/mailbox tokens acquired");
 
         const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
             method: "POST",
@@ -956,6 +1002,7 @@
                 items: entry.items
             })
         });
+        feTiming("Background: bridge response received");
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Bridge returned ${response.status}: ${errorText}`);
@@ -1103,7 +1150,24 @@
     async function handleFeConfirmInner() {
         const categoryName = feState.projectName;
         const resultSummary = document.getElementById("feResultSummary");
-        resultSummary.innerHTML = `<div class="summary-box"><div class="row">Starting...</div></div>`;
+
+        feTimingReset();
+        // These two run before feConfirmClickedAt exists, so they're reported relative to page
+        // load instead -- pushed as rows directly rather than through feTiming().
+        if (fePrefetchStartedAt != null) {
+            feTimingRows.push({ label: "Folder-id prefetch started (since dialog opened)", ms: Math.round(fePrefetchStartedAt - feT0) });
+            feTimingRows.push(fePrefetchSettledAt != null
+                ? { label: "Folder-id prefetch finished (since dialog opened)", ms: Math.round(fePrefetchSettledAt - feT0) }
+                : { label: "Folder-id prefetch was STILL PENDING when Confirm was clicked", ms: null });
+        }
+
+        function renderFeStatusText(html) {
+            resultSummary.innerHTML = `<div class="summary-box">${html}</div>` +
+                `<div class="summary-box" id="feTimingBox" style="margin-top:8px;font-size:11px;color:var(--grey-400);"></div>`;
+            renderFeTimingBox();
+        }
+
+        renderFeStatusText(`<div class="row">Starting...</div>`);
         showFeStep("result");
 
         // Independent reads (one checks the mailbox's category list, the other resolves a
@@ -1115,6 +1179,7 @@
             withTimeout(findMasterCategory(categoryName), 8000, "findMasterCategory"),
             withTimeout(getOrCreateEmailsToFileFolderId(), 8000, "getOrCreateEmailsToFileFolderId")
         ]);
+        feTiming("Category check + folder lookup settled");
 
         let categoryPreExisted = true;
         if (categoryCheck.status === "fulfilled") {
@@ -1142,6 +1207,7 @@
             items, destinationFolderId: emailsToFileFolderId, categoryPreExisted
         };
         addFeBatchToStorage(batchEntry);
+        feTiming("Batch recorded locally (localStorage)");
 
         // Fire the actual categorize+move request, but don't make the user wait here for
         // it to finish -- the bridge keeps it running to completion on its own regardless
@@ -1156,11 +1222,16 @@
                 removeFeBatchFromStorage(batchId);
                 return finalizeFeBatchResult(batchEntry, result);
             })
+            .then(() => {
+                feTiming("Background: fully finished (categorized, moved, category list cleaned up)");
+            })
             .catch((err) => {
                 console.error("File Email batch failed after this dialog moved on:", err);
+                feTiming(`Background: failed -- ${err.message}`);
             });
 
-        resultSummary.innerHTML = `<div class="summary-box"><div class="row">Filing "${categoryName}" — continuing in the background.</div></div>`;
+        renderFeStatusText(`<div class="row">Filing "${categoryName}" — continuing in the background.</div>`);
+        feTiming("UI shows 'continuing in the background'");
 
         // Auto-close disabled 2026-10-07 while the AppDomains manifest fix is still
         // propagating (see CLAUDE.md) -- leaving this window open on purpose so pending-
