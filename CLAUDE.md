@@ -925,11 +925,17 @@ pass, rather than one-at-a-time via File Email. Opens `batch-file-dialog.html`.
   and the result screen still shows live succeeded/failed counts as responses come back, now
   explicitly saying "this continues on the server even if this window closes" since that's
   the honest behavior rather than something to hide.
-  **Not yet confirmed**: whether this actually prevents the self-closing dialog, since the
-  cause of the close itself is still unknown — this only shrinks the window during which an
-  early close costs you unsent work. A large table (742+ rows, each with its own input and
-  shared datalist) is a plausible contributor to host/WebView memory pressure over a long
-  session, but unconfirmed; worth revisiting with real telemetry if this still recurs.
+  **Update, 2026-10-13**: the self-closing-window problem above was a *dialog* problem
+  specifically — separately root-caused (via the "select the last item in the folder" repro) to
+  Outlook's own pane-teardown behavior being able to kill an Office.js dialog mid-run. Switching
+  to a real OS browser tab (see this section's first bullet) removes that failure mode
+  structurally, not just by shrinking the exposure window — Outlook has no way to touch an
+  independent browser process at all. Combined with the front-loaded, result-checked dispatch
+  above, both halves of the original "doesn't go through all emails" symptom have a real,
+  targeted fix in place now. **Still not done**: nobody has re-run an actual large (hundreds of
+  emails) batch against this exact current combination (browser tab + front-loaded dispatch) to
+  confirm it end-to-end since the tab switch landed — worth doing once, rather than assuming,
+  if this is ever raised again.
 
 ## Mailbox Sync (2026-10-26)
 
