@@ -66,7 +66,7 @@ foreach ($user in $staff) {
     $upn = $user.Mail
 
     # ---- Sent Items pass (File on Send) ----
-    # Independent of the "Emails to File" staging pass below -- runs for every staff
+    # Independent of the "Emails Awaiting Sync" staging pass below -- runs for every staff
     # mailbox every time, regardless of whether that mailbox has anything staged. A sent
     # reply/new email gets categorized (never staged/moved) by the taskpane's File on Send
     # dialog before it's sent, via Office.js categories.addAsync -- there's no "stage it
@@ -220,27 +220,54 @@ foreach ($user in $staff) {
         $totals.sentFailed++
     }
 
+    # "Master Email Management" / "Emails Awaiting Sync" / "Synced Emails" replace the old flat
+    # "Emails to File" / "Filed" folders (2026-10-26) -- ensured (created if missing) for every
+    # staff mailbox on every run, per-mailbox cost is a handful of cheap filtered GETs once the
+    # hierarchy already exists, since Get-OrCreateMailFolder only POSTs when a folder is actually
+    # missing. "Emails Yet to Label" (a sibling, purely for manual user staging -- nothing here
+    # reads or writes it) is created as part of the same call so it's ready from day one, not
+    # only once some other process happens to touch a given mailbox.
     try {
-        $stagingFolder = Invoke-RestMethod -Method Get `
-            -Uri "https://graph.microsoft.com/v1.0/users/$upn/mailFolders/inbox/childFolders?`$filter=$([uri]::EscapeDataString("displayName eq 'Emails to File'"))" `
-            -Headers @{ Authorization = "Bearer $token" } -ErrorAction Stop
+        $emailManagementFolders = Get-OrCreateEmailManagementFolders -Upn $upn -Token $token
     } catch {
-        Write-Error "EmailFilingSync: could not check '$upn' for an 'Emails to File' folder: $($_.Exception.Message)"
+        Write-Error "EmailFilingSync: could not ensure the Master Email Management folders for '$upn': $($_.Exception.Message)"
         $totals.failed++
         continue
     }
-    if (-not $stagingFolder.value -or $stagingFolder.value.Count -eq 0) { continue }
-    $stagingFolderId = $stagingFolder.value[0].id
+    $awaitingSyncId = $emailManagementFolders.AwaitingSyncId
+    $syncedEmailsId = $emailManagementFolders.SyncedEmailsId
 
-    $messages = Get-GraphAllPages -Token $token -Uri (
-        "https://graph.microsoft.com/v1.0/users/$upn/mailFolders/$stagingFolderId/messages" +
+    $messages = @(Get-GraphAllPages -Token $token -Uri (
+        "https://graph.microsoft.com/v1.0/users/$upn/mailFolders/$awaitingSyncId/messages" +
         "?`$select=id,subject,categories,internetMessageId,from,toRecipients,ccRecipients,sentDateTime,conversationId,conversationIndex,hasAttachments" +
         "&`$top=25"
-    )
+    ))
+
+    # TRANSITIONAL, read-only, never recreated: anything already sitting in the OLD "Emails to
+    # File" folder from before this change shipped still needs to be processed, not silently
+    # stranded now that clients stage new items into "Emails Awaiting Sync" instead. Once every
+    # mailbox's old folder is confirmed empty, this whole block can be deleted.
+    try {
+        $legacyStagingFolder = Invoke-RestMethod -Method Get `
+            -Uri "https://graph.microsoft.com/v1.0/users/$upn/mailFolders/inbox/childFolders?`$filter=$([uri]::EscapeDataString("displayName eq 'Emails to File'"))" `
+            -Headers @{ Authorization = "Bearer $token" } -ErrorAction Stop
+        if ($legacyStagingFolder.value -and $legacyStagingFolder.value.Count -gt 0) {
+            $legacyMessages = @(Get-GraphAllPages -Token $token -Uri (
+                "https://graph.microsoft.com/v1.0/users/$upn/mailFolders/$($legacyStagingFolder.value[0].id)/messages" +
+                "?`$select=id,subject,categories,internetMessageId,from,toRecipients,ccRecipients,sentDateTime,conversationId,conversationIndex,hasAttachments" +
+                "&`$top=25"
+            ))
+            if ($legacyMessages.Count -gt 0) {
+                Write-Host "EmailFilingSync: '$upn' has $($legacyMessages.Count) email(s) still in the legacy 'Emails to File' folder -- processing them too"
+                $messages = @($messages) + @($legacyMessages)
+            }
+        }
+    } catch {
+        Write-Warning "EmailFilingSync: could not check '$upn' for the legacy 'Emails to File' folder (non-fatal, new-folder processing still proceeds): $($_.Exception.Message)"
+    }
+
     if ($messages.Count -eq 0) { continue }
     Write-Host "EmailFilingSync: '$upn' has $($messages.Count) email(s) staged for filing"
-
-    $filedFolderId = $null
 
     foreach ($msg in $messages) {
         $label = "'$upn' / $($msg.subject)"
@@ -381,12 +408,9 @@ foreach ($user in $staff) {
                 -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" } `
                 -Body (@{ categories = @($mergedCategories) } | ConvertTo-Json) -ErrorAction Stop | Out-Null
 
-            if (-not $filedFolderId) {
-                $filedFolderId = Get-OrCreateMailFolder -Upn $upn -DisplayName "Filed" -Token $token
-            }
             Invoke-RestMethod -Method Post -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)/move" `
                 -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" } `
-                -Body (@{ destinationId = $filedFolderId } | ConvertTo-Json) -ErrorAction Stop | Out-Null
+                -Body (@{ destinationId = $syncedEmailsId } | ConvertTo-Json) -ErrorAction Stop | Out-Null
 
         } catch {
             $errorMessage = $_.Exception.Message

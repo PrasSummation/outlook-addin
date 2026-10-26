@@ -302,25 +302,50 @@ function Get-LabelStatus {
 }
 
 function Get-OrCreateMailFolder {
-    # App-only equivalent of taskpane.html's getOrCreateEmailsToFileFolderId -- used here
-    # for the "Filed" destination folder (and defensively for "Emails to File" itself, in
-    # case a mailbox somehow has the category convention but not yet the folder).
+    # App-only equivalent of taskpane.html's getOrCreateEmailsToFileFolderId. ParentFolderId
+    # defaults to "inbox" (a direct child of Inbox) -- pass a specific folder id to nest one
+    # level deeper, used by Get-OrCreateEmailManagementFolders below to build the
+    # "Master Email Management" hierarchy without a separate nested-path helper.
     param(
         [Parameter(Mandatory)][string]$Upn,
         [Parameter(Mandatory)][string]$DisplayName,
-        [Parameter(Mandatory)][string]$Token
+        [Parameter(Mandatory)][string]$Token,
+        [string]$ParentFolderId = "inbox"
     )
     $filter = [uri]::EscapeDataString("displayName eq '$DisplayName'")
     $existing = Invoke-RestMethod -Method Get `
-        -Uri "https://graph.microsoft.com/v1.0/users/$Upn/mailFolders/inbox/childFolders?`$filter=$filter" `
+        -Uri "https://graph.microsoft.com/v1.0/users/$Upn/mailFolders/$ParentFolderId/childFolders?`$filter=$filter" `
         -Headers @{ Authorization = "Bearer $Token" } -ErrorAction Stop
     if ($existing.value -and $existing.value.Count -gt 0) { return $existing.value[0].id }
 
     $body = @{ displayName = $DisplayName } | ConvertTo-Json
     $created = Invoke-RestMethod -Method Post `
-        -Uri "https://graph.microsoft.com/v1.0/users/$Upn/mailFolders/inbox/childFolders" `
+        -Uri "https://graph.microsoft.com/v1.0/users/$Upn/mailFolders/$ParentFolderId/childFolders" `
         -Headers @{ Authorization = "Bearer $Token"; "Content-Type" = "application/json" } -Body $body -ErrorAction Stop
     return $created.id
+}
+
+# Resolves (creating as needed) the full "Master Email Management" hierarchy for one mailbox:
+#   Master Email Management
+#       Emails Yet to Label      -- purely a manual user staging folder; nothing in this
+#                                    codebase reads or writes it automatically. Created anyway,
+#                                    alongside its siblings, so it's visible and ready for staff
+#                                    to drag emails into from day one rather than only appearing
+#                                    once some other process happens to touch the mailbox.
+#       Emails Awaiting Sync     -- replaces the old flat "Emails to File" staging folder.
+#           Synced Emails        -- replaces the old flat "Filed" destination folder.
+# Returns the ids actually used elsewhere in this app: @{ AwaitingSyncId; SyncedEmailsId }.
+# Added 2026-10-26 replacing the old two-flat-folder model ("Emails to File" / "Filed").
+function Get-OrCreateEmailManagementFolders {
+    param(
+        [Parameter(Mandatory)][string]$Upn,
+        [Parameter(Mandatory)][string]$Token
+    )
+    $masterId = Get-OrCreateMailFolder -Upn $Upn -DisplayName "Master Email Management" -Token $Token
+    Get-OrCreateMailFolder -Upn $Upn -DisplayName "Emails Yet to Label" -Token $Token -ParentFolderId $masterId | Out-Null
+    $awaitingSyncId = Get-OrCreateMailFolder -Upn $Upn -DisplayName "Emails Awaiting Sync" -Token $Token -ParentFolderId $masterId
+    $syncedEmailsId = Get-OrCreateMailFolder -Upn $Upn -DisplayName "Synced Emails" -Token $Token -ParentFolderId $awaitingSyncId
+    return [ordered]@{ AwaitingSyncId = $awaitingSyncId; SyncedEmailsId = $syncedEmailsId }
 }
 
 function Send-GraphLargeFile {
@@ -443,4 +468,5 @@ Export-ModuleMember -Function `
     Get-GraphAppToken, Invoke-GraphGetOrNull, Get-GraphAllPages, Get-StaffMailboxes, `
     Get-ProjectFolderEntries, Get-ProjectCode, Resolve-ProjectFolder, Resolve-FilingCategory, `
     Get-OrCreateChildFolder, New-EmailFileName, Get-MessageIdHashPrefix, Add-SummationLabelsHeader, `
-    Get-LabelStatus, Get-OrCreateMailFolder, Invoke-IndexApi, Send-GraphLargeFile
+    Get-LabelStatus, Get-OrCreateMailFolder, Get-OrCreateEmailManagementFolders, Invoke-IndexApi, `
+    Send-GraphLargeFile
