@@ -486,6 +486,13 @@
 
         noSelection.style.display = "none";
         pickBody.style.display = "block";
+        if (!feFolderIdPrefetchStarted) {
+            // Runs once per dialog lifetime, alongside the folder-list kickoff below -- see
+            // startFolderIdPrefetch's own comment for why this needs to start now rather than
+            // waiting for Confirm.
+            feFolderIdPrefetchStarted = true;
+            startFolderIdPrefetch();
+        }
         if (feFolderEntries.length === 0 && !feFolderListInitStarted) {
             // Runs once per dialog lifetime: render instantly from cache if there is one, then
             // always kick off a live background refresh so a newly-created project still shows
@@ -554,6 +561,7 @@
 
     let feFolderEntries = [];
     let feFolderListInitStarted = false;
+    let feFolderIdPrefetchStarted = false;
 
     // Stale-while-revalidate, added 2026-10-24 -- same cache key format as file-on-send-dialog.html
     // on purpose: both dialogs list the exact same Archive/Active project folders via the same
@@ -826,23 +834,41 @@
         return `feAwaitingSyncFolderIdCache:${(account && account.username) || "unknown"}`;
     }
 
-    async function getOrCreateEmailsToFileFolderId() {
-        if (feEmailsToFileFolderId) return feEmailsToFileFolderId;
-        try {
-            const cached = localStorage.getItem(feAwaitingSyncFolderCacheKey());
-            if (cached) {
-                feEmailsToFileFolderId = cached;
-                return feEmailsToFileFolderId;
-            }
-        } catch (err) { /* ignore, fall through to resolving it live */ }
+    // Memoizes the in-flight *promise*, not just the resolved id -- lets startFolderIdPrefetch()
+    // below kick this off the moment the dialog opens (while the user is still picking a
+    // project), so by the time Confirm is actually clicked on a cold cache, this has usually
+    // already resolved instead of still blocking it. A failed attempt clears the memo so a later
+    // call (e.g. the real one at Confirm time) gets a fresh try rather than a cached rejection.
+    let feEmailsToFileFolderIdPromise = null;
 
-        const token = await signInAndGetToken(mailWriteRequest, true);
-        if (!token) throw new Error("Could not get permission to access your mailbox.");
+    function getOrCreateEmailsToFileFolderId() {
+        if (feEmailsToFileFolderIdPromise) return feEmailsToFileFolderIdPromise;
+        feEmailsToFileFolderIdPromise = (async () => {
+            if (feEmailsToFileFolderId) return feEmailsToFileFolderId;
+            try {
+                const cached = localStorage.getItem(feAwaitingSyncFolderCacheKey());
+                if (cached) {
+                    feEmailsToFileFolderId = cached;
+                    return feEmailsToFileFolderId;
+                }
+            } catch (err) { /* ignore, fall through to resolving it live */ }
 
-        const masterId = await getOrCreateMailFolder("Master Email Management", token);
-        feEmailsToFileFolderId = await getOrCreateMailFolder("Emails Awaiting Sync", token, masterId);
-        try { localStorage.setItem(feAwaitingSyncFolderCacheKey(), feEmailsToFileFolderId); } catch (err) { /* non-fatal */ }
-        return feEmailsToFileFolderId;
+            const token = await signInAndGetToken(mailWriteRequest, true);
+            if (!token) throw new Error("Could not get permission to access your mailbox.");
+
+            const masterId = await getOrCreateMailFolder("Master Email Management", token);
+            feEmailsToFileFolderId = await getOrCreateMailFolder("Emails Awaiting Sync", token, masterId);
+            try { localStorage.setItem(feAwaitingSyncFolderCacheKey(), feEmailsToFileFolderId); } catch (err) { /* non-fatal */ }
+            return feEmailsToFileFolderId;
+        })();
+        feEmailsToFileFolderIdPromise.catch(() => { feEmailsToFileFolderIdPromise = null; });
+        return feEmailsToFileFolderIdPromise;
+    }
+
+    // Fired once, right after sign-in (see renderFeContext) -- the Confirm-time call later just
+    // awaits this same promise, which has usually already settled by then.
+    function startFolderIdPrefetch() {
+        getOrCreateEmailsToFileFolderId().catch(() => { /* surfaced for real at Confirm time */ });
     }
 
     // ---- Server-side batch handoff ----

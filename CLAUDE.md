@@ -368,6 +368,21 @@ at all. Three fixes, same shape as File on Send's own earlier latency work:
    (this function is already fire-and-forget relative to the UI), but makes the actual background
    filing finish sooner.
 
+**Still slow on a cold cache, fixed same day**: fix #2 above only pays off from a dialog's
+*second* real use onward — the very first time (or after clearing storage), both Graph calls in
+`getOrCreateEmailsToFileFolderId` are still on the critical path at Confirm time, and a live user
+test right after deploying fix #1-3 still showed a multi-second wait on "Filing X — continuing in
+the background." Fix: `getOrCreateEmailsToFileFolderId` now memoizes its *in-flight promise*, not
+just the resolved id, and `renderFeContext()` fires it speculatively (`startFolderIdPrefetch()`)
+the moment the dialog opens and shows the project picker — the same already-shipped pattern
+`loadFeFolderNames` uses for the project-folder list on this same page. By the time the user has
+actually found and picked a project (a few seconds of human interaction, same order of magnitude
+as the Graph round-trips themselves), the Confirm-time call usually just awaits an
+already-settled promise instead of starting the work from scratch. A failed prefetch (e.g. an
+interactive-consent popup getting blocked because it wasn't a direct click) clears the memo so
+the real Confirm-time call — which *does* have a genuine user gesture — gets a clean retry rather
+than inheriting a cached rejection.
+
 ## File on Send is live (2026-10-06)
 
 Replaces the earlier `onMessageSendHandler` phase-1 probe (which only
