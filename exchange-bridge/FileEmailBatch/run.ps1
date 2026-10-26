@@ -80,6 +80,7 @@ foreach ($item in $items) {
     } catch {
         $status = "failed"
         $errorMessage = $_.Exception.Message
+        $graphErrorCode = $null
         # Invoke-RestMethod's own exception message is just the HTTP status line (e.g.
         # "Response status code does not indicate success: 404 (Not Found)."), not Graph's
         # actual error body -- but PowerShell 7's web cmdlets still capture that body in
@@ -90,6 +91,7 @@ foreach ($item in $items) {
             try {
                 $graphError = ($_.ErrorDetails.Message | ConvertFrom-Json).error
                 if ($graphError -and $graphError.code) {
+                    $graphErrorCode = $graphError.code
                     $errorMessage = "$($graphError.code): $($graphError.message)"
                 }
             } catch {
@@ -97,7 +99,25 @@ foreach ($item in $items) {
                 # generic exception message already captured above.
             }
         }
-        $failed++
+
+        # Self-heals a known false-negative, confirmed live repeatedly this week: a retry can
+        # fire after the ORIGINAL attempt actually succeeded but was merely slow to report back
+        # (this app's own Consumption-plan cold-start variance), not genuinely stuck. Graph's
+        # move operation assigns the moved item a brand new id and invalidates the old one --
+        # so if a move was requested ($destinationFolderId set) and the very first Graph call
+        # above (reading current categories, by the item's ORIGINAL id) 404s with
+        # ErrorItemNotFound, the only way that can happen -- given this code's own fixed order,
+        # categorize then move, always in that sequence, never partially -- is that a prior run
+        # already completed both steps for it. Reported as a success, not a failure: the item
+        # almost certainly IS correctly filed, just not reachable any more by the id this
+        # particular invocation was given.
+        if ($graphErrorCode -eq "ErrorItemNotFound" -and $destinationFolderId) {
+            $status = "already-filed"
+            $errorMessage = "Already filed by an earlier attempt (its id changed when it was moved) -- not a failure."
+            $succeeded++
+        } else {
+            $failed++
+        }
     }
     $results += [ordered]@{
         subject = $item.subject

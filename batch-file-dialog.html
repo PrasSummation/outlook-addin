@@ -75,6 +75,13 @@
     #bfTable input[type=text]:focus{outline:none;border-color:var(--green)}
     #bfTable input[type=text].suggested{border-color:var(--green);background:var(--green-pale)}
     #bfTable input[type=text]:disabled{background:var(--grey-50);color:var(--grey-400)}
+    .bf-project-field{position:relative}
+    .bf-project-field input[type=text].suggested{padding-right:24px}
+    .bf-clear-btn{display:none;position:absolute;right:3px;top:50%;transform:translateY(-50%);
+      width:18px;height:18px;border:none;background:none;color:var(--grey-500);font-size:15px;
+      line-height:1;cursor:pointer;padding:0;border-radius:3px}
+    .bf-clear-btn:hover{color:var(--grey-900);background:var(--grey-100)}
+    .bf-project-field input[type=text].suggested ~ .bf-clear-btn{display:block}
 
     #bfStepResult .row{margin-bottom:4px}
   </style>
@@ -667,13 +674,34 @@
         tr.appendChild(tdSubject);
 
         const tdProject = document.createElement("td");
+        const fieldWrap = document.createElement("div");
+        fieldWrap.className = "bf-project-field";
         const input = document.createElement("input");
         input.type = "text";
         input.setAttribute("list", "bfProjectList");
         input.placeholder = "Skip";
         input.disabled = document.getElementById("bfBulkCheckbox").checked;
         input.addEventListener("input", () => updateRowStatus(m));
-        tdProject.appendChild(input);
+        fieldWrap.appendChild(input);
+        // Shown only once a suggestion has been auto-applied (input.suggested, set by
+        // fetchSuggestionFor()) -- clears it back to the default "Skip" state so the user can
+        // search for a project themselves instead, without needing the native <datalist>
+        // dropdown indicator this field already shows (kept as-is -- no supported way to hide
+        // just that indicator without also losing the typed-search autocomplete it provides).
+        const clearBtn = document.createElement("button");
+        clearBtn.type = "button";
+        clearBtn.className = "bf-clear-btn";
+        clearBtn.title = "Clear suggestion";
+        clearBtn.setAttribute("aria-label", "Clear suggestion");
+        clearBtn.textContent = "×";
+        clearBtn.addEventListener("click", () => {
+            input.value = "";
+            input.classList.remove("suggested");
+            updateRowStatus(m);
+            input.focus();
+        });
+        fieldWrap.appendChild(clearBtn);
+        tdProject.appendChild(fieldWrap);
         tr.appendChild(tdProject);
 
         m.inputEl = input;
