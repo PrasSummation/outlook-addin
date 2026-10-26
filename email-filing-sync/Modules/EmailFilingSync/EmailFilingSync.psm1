@@ -284,7 +284,16 @@ function Add-SummationLabelsHeader {
     $combined = New-Object byte[] ($headerBytes.Length + $MimeBytes.Length)
     [Array]::Copy($headerBytes, 0, $combined, 0, $headerBytes.Length)
     [Array]::Copy($MimeBytes, 0, $combined, $headerBytes.Length, $MimeBytes.Length)
-    return $combined
+    # Unary comma is load-bearing: without it, PowerShell unrolls this byte[] onto the
+    # pipeline one byte at a time. The Azure Functions PowerShell worker traces every
+    # pipeline object individually regardless of whether the caller later collects them
+    # back into a variable, so a multi-MB email (attachments included) turned into
+    # millions of individual Application Insights trace lines -- enough to spike host
+    # CPU and trigger a DrainMode/listener restart before the run could finish. Found
+    # 2026-10-26 while chasing why SyncEmails runs were dying ~90s in, never reaching
+    # "run complete" (previously misattributed to a plain large-attachment OOM at
+    # whatever line number this file happened to have at the time).
+    return ,$combined
 }
 
 function Get-LabelStatus {
