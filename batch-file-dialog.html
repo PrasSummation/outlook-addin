@@ -114,6 +114,7 @@
       <div id="bfBulkBar">
         <label><input type="checkbox" id="bfBulkCheckbox" /> Assign 1 project to all emails</label>
         <input type="text" id="bfBulkProjectInput" list="bfProjectList" placeholder="Type a project..." style="display:none;" />
+        <label><input type="checkbox" id="bfGroupConversationCheckbox" checked /> Group by conversation</label>
       </div>
       <datalist id="bfProjectList"></datalist>
       <div id="bfSummaryLine"></div>
@@ -247,6 +248,7 @@
     window.addEventListener("load", () => {
         document.getElementById("signInButton").addEventListener("click", handleLogin);
         document.getElementById("bfBulkCheckbox").addEventListener("change", handleBulkToggle);
+        document.getElementById("bfGroupConversationCheckbox").addEventListener("change", handleGroupConversationToggle);
         document.getElementById("bfSelectAllCheckbox").addEventListener("change", handleSelectAllToggle);
         document.getElementById("bfBulkProjectInput").addEventListener("input", () => { renderSummaryLine(); updateConfirmEnabled(); });
         document.getElementById("bfConfirmButton").addEventListener("click", handleConfirm);
@@ -681,7 +683,10 @@
         input.setAttribute("list", "bfProjectList");
         input.placeholder = "Skip";
         input.disabled = document.getElementById("bfBulkCheckbox").checked;
-        input.addEventListener("input", () => updateRowStatus(m));
+        input.addEventListener("input", () => {
+            updateRowStatus(m);
+            if (m.status === "resolved") propagateToConversationGroup(m);
+        });
         fieldWrap.appendChild(input);
         // Shown only once a suggestion has been auto-applied (input.suggested, set by
         // fetchSuggestionFor()) -- clears it back to the default "Skip" state so the user can
@@ -781,6 +786,44 @@
         updateConfirmEnabled();
     }
 
+    // ---- Group by conversation: once a row resolves to a real project (typed, picked from the
+    // datalist, or auto-suggested), every OTHER row sharing its conversationId that's still
+    // untouched (blank) gets the same project -- never overrides a row the user already set
+    // themselves, same "don't clobber an existing choice" rule File Email's own suggestion-fill
+    // already follows. Reuses the "suggested" styling (highlight + clear button) rather than a
+    // separate visual, since both mean the same thing to the user: "filled in for you, not by
+    // you -- clear it if that's wrong." ----
+
+    function bfGroupConversationActive() {
+        return document.getElementById("bfGroupConversationCheckbox").checked;
+    }
+
+    function propagateToConversationGroup(sourceM) {
+        if (!bfGroupConversationActive() || bfBulkModeActive()) return;
+        const convId = sourceM.conversationId;
+        if (!convId) return;
+        const resolvedName = resolveProjectName(sourceM.inputEl.value);
+        if (!resolvedName) return;
+        for (const m of bfMessages) {
+            if (m === sourceM || m.conversationId !== convId) continue;
+            if (m.inputEl.value.trim() !== "") continue; // untouched-only
+            m.inputEl.value = resolvedName;
+            m.inputEl.classList.add("suggested");
+            updateRowStatus(m);
+        }
+    }
+
+    // Turning grouping ON sweeps every already-resolved row against the whole table, in case the
+    // user assigned some projects before switching it on -- turning it OFF deliberately leaves
+    // whatever's already filled in exactly as it is (same "nothing already visible gets clobbered"
+    // rule as everywhere else here).
+    function handleGroupConversationToggle(e) {
+        if (!e.target.checked) return;
+        for (const m of bfMessages) {
+            if (m.status === "resolved") propagateToConversationGroup(m);
+        }
+    }
+
     // ---- Content-based suggestions (SPEC_ContentBasedProjectSuggestions.md) -- a lighter
     // version of file-email-dialog.html's: only subject/from/conversationId (all already in
     // hand from the folder listing's own $select, no extra Graph round-trip per row), run
@@ -837,6 +880,7 @@
                 m.inputEl.value = match.name;
                 m.inputEl.classList.add("suggested");
                 updateRowStatus(m);
+                propagateToConversationGroup(m);
             }
         } catch (err) {
             console.error("Could not load a suggestion for one row (non-fatal):", err);

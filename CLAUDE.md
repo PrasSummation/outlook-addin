@@ -936,6 +936,17 @@ pass, rather than one-at-a-time via File Email. Opens `batch-file-dialog.html`.
   emails) batch against this exact current combination (browser tab + front-loaded dispatch) to
   confirm it end-to-end since the tab switch landed — worth doing once, rather than assuming,
   if this is ever raised again.
+- **Group by conversation (added 2026-10-26)**: a checkbox (`bfGroupConversationCheckbox`,
+  defaults on) that, once any row resolves to a real project — typed, picked from the datalist,
+  or auto-suggested — fills every *other* row sharing its `conversationId` that's still blank
+  with the same project. Untouched-only, same rule as the suggestion auto-fill it reuses styling
+  from (`.suggested`, highlight + clear button): never overrides a row the user already set
+  themselves. Deliberately conversation-only, not subject-based — `conversationId` is Graph's own
+  reliable thread identifier; grouping by normalized subject instead was considered and rejected
+  (risks merging unrelated emails that just happen to share a subject line). Turning the checkbox
+  ON sweeps every already-resolved row retroactively against the whole table; turning it OFF
+  leaves whatever's already filled in untouched, same "nothing visible gets clobbered" rule as
+  everywhere else on this page.
 
 ## Mailbox Sync (2026-10-26)
 
