@@ -1955,30 +1955,6 @@
         }
     }
 
-    // Loads the compose item by its own id to reach LoadedMessageCompose.inReplyTo -- not
-    // reachable on the plain Office.context.mailbox.item object. Must saveAsync() first (a fresh,
-    // unsaved draft may not have a usable itemId yet) and unloadAsync() the loaded copy afterward
-    // per Microsoft's own docs ("only one mail item can be loaded at a time"). Returns null on any
-    // failure (including "not available for this compose type") rather than throwing -- this is a
-    // best-effort enhancement, not something that should ever block opening the dialog.
-    // TEMPORARY diagnostic shape (2026-10-25): returns { value, error } instead of a bare value so
-    // the dialog's own DIAG line can distinguish "Outlook genuinely didn't provide one" (value
-    // null, error null) from "something threw while trying to read it" (error set) -- collapse
-    // back to a bare nullable string once the inReplyTo path is confirmed working live.
-    async function getInReplyToMessageId(item) {
-        try {
-            await officeAsync(item, "saveAsync");
-            const itemId = await officeAsync(item, "getItemIdAsync");
-            const loadedItem = await officeAsync(Office.context.mailbox, "loadItemByIdAsync", itemId);
-            const inReplyTo = loadedItem.inReplyTo || null;
-            await officeAsync(loadedItem, "unloadAsync").catch(() => {});
-            return { value: inReplyTo, error: null };
-        } catch (err) {
-            console.error("Could not read inReplyTo (non-fatal, falls back to conversationId search):", err);
-            return { value: null, error: (err && err.message) || String(err) };
-        }
-    }
-
     async function openComposeFilingDialog() {
         const item = Office.context.mailbox.item;
         const composeTypeResult = await officeAsync(item, "getComposeTypeAsync").catch(() => null);
@@ -2019,28 +1995,10 @@
             }
         }
 
-        // Exact "what am I replying to" signal, added 2026-10-25: Office.js's
-        // LoadedMessageCompose.inReplyTo carries the original message's actual
-        // internetMessageId (confirmed via its underlying MAPI property, PidTagInReplyToId) --
-        // only reachable from here, since dialogs have no Office.context.mailbox of their own.
-        // Passed through so file-on-send-dialog.html's findOriginalMessage() can look the exact
-        // message up via Graph instead of relying solely on its old conversationId-based guess,
-        // which was confirmed live to sometimes pick the wrong message (e.g. a self-forward
-        // sitting in Sent Items instead of the real Inbox original). Only documented for replies,
-        // not confirmed for forwards -- null here just means that dialog falls back to its
-        // existing heuristic, same as before this existed.
-        const inReplyToResult = isReplyLike
-            ? await getInReplyToMessageId(item)
-            : { value: null, error: null };
-
         const context = {
             composeType,
             subject: (typeof subjectText === "string" && subjectText) || "(no subject)",
-            conversationId: item.conversationId || null,
-            inReplyToMessageId: inReplyToResult.value,
-            // TEMPORARY diagnostic field (2026-10-25), remove alongside getInReplyToMessageId's
-            // own temporary { value, error } shape once this is confirmed working live.
-            inReplyToDiagError: inReplyToResult.error
+            conversationId: item.conversationId || null
         };
         const url = `https://prassummation.github.io/outlook-addin/file-on-send-dialog.html?context=${encodeURIComponent(JSON.stringify(context))}`;
 

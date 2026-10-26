@@ -163,13 +163,9 @@
         <div class="row">&#8629; <b>Reply</b> &mdash; your message, not yet sent</div>
       </div>
 
-      <button id="saveBothButton">
-        Categorise Both
-        <span class="hint">Categorises the original email and this reply</span>
-      </button>
-      <button id="categoriseConversationButton" class="secondary-action">
+      <button id="categoriseConversationButton">
         Categorise Conversation
-        <span class="hint">Categorises every message in this conversation</span>
+        <span class="hint">Categorises this reply and every message found in your Inbox for this conversation</span>
       </button>
       <button id="saveReplyOnlyButton" class="secondary-action">
         <span id="saveReplyOnlyLabel">Categorise Reply Only</span>
@@ -290,20 +286,21 @@
     Office.onReady(() => {
         document.getElementById("pickSubject").textContent = sendContext.subject;
         document.getElementById("pickContextLine").textContent = isReplyLike
-            ? "Replying/forwarding -- you can categorise the original message too."
+            ? "Replying/forwarding -- you can categorise the whole conversation too."
             : "New message -- categorised once it's sent.";
         document.getElementById("saveReplyOnlyButton").style.display = isReplyLike ? "block" : "none";
-        document.getElementById("categoriseConversationButton").style.display = isReplyLike ? "block" : "none";
         if (!isReplyLike) {
-            // No "original" to additionally categorise for a fresh compose -- one plain action.
-            document.getElementById("saveBothButton").textContent = "";
+            // No conversation to additionally categorise for a fresh compose -- one plain action.
+            // categoriseConversationButton doubles as this single action for a new message --
+            // see handlePrimaryAction().
+            document.getElementById("categoriseConversationButton").textContent = "";
             const label = document.createElement("span");
             label.textContent = "Categorise";
             const hint = document.createElement("span");
             hint.className = "hint";
             hint.textContent = "Categorises this email once it's sent";
-            document.getElementById("saveBothButton").appendChild(label);
-            document.getElementById("saveBothButton").appendChild(hint);
+            document.getElementById("categoriseConversationButton").appendChild(label);
+            document.getElementById("categoriseConversationButton").appendChild(hint);
         }
 
         document.getElementById("signInButton").addEventListener("click", handleLogin);
@@ -314,12 +311,10 @@
         );
         document.getElementById("refreshListButton").addEventListener("click", refreshFolderList);
         document.getElementById("backToPickButton").addEventListener("click", () => showStep("stepPick"));
-        document.getElementById("saveBothButton").addEventListener("click", () => handleSave(true));
-        document.getElementById("saveReplyOnlyButton").addEventListener("click", () => handleSave(false));
-        document.getElementById("categoriseConversationButton").addEventListener("click", () => handleSaveConversation());
-        document.getElementById("saveBothButton").addEventListener("keydown", handleConfirmButtonKeydown);
-        document.getElementById("saveReplyOnlyButton").addEventListener("keydown", handleConfirmButtonKeydown);
+        document.getElementById("categoriseConversationButton").addEventListener("click", handlePrimaryAction);
+        document.getElementById("saveReplyOnlyButton").addEventListener("click", handleReplyOnly);
         document.getElementById("categoriseConversationButton").addEventListener("keydown", handleConfirmButtonKeydown);
+        document.getElementById("saveReplyOnlyButton").addEventListener("keydown", handleConfirmButtonKeydown);
         document.getElementById("cancelLink").addEventListener("click", handleCancel);
         document.getElementById("skipSaveButton").addEventListener("click", handleSkip);
 
@@ -507,10 +502,11 @@
     // from/to/cc/body off directly, and it only ever sent subject + conversationId. Confirmed
     // live 2026-10-21 that this materially weaker signal produced few/no suggestions on a
     // reply, where File Email's richer from/to/cc/body-driven call (same /api/suggest backend)
-    // reliably did. Fixed by pulling those fields from "the original" message instead -- the
-    // same best-effort conversationId lookup findOriginalMessage() already needs for Save Both,
-    // just started earlier (right alongside this, at sign-in) and reused by both rather than
-    // run twice. Still silent-only here (isUserAction=false) -- see startOriginalMessageLookup().
+    // reliably did. Fixed by pulling those fields from the most recent Inbox conversation message
+    // instead -- the same lookup fetchConversationMessages() already needs for Categorise
+    // Conversation, just started earlier (right alongside this, at sign-in) and reused by both
+    // rather than run twice. Still silent-only here (isUserAction=false) -- see
+    // startConversationLookup().
     let sendSuggestions = [];
 
     async function fetchSuggestions() {
@@ -524,14 +520,19 @@
                 subject: (sendContext.subject || "").slice(0, 1000)
             });
             if (isReplyLike) {
-                const original = await withTimeout(startOriginalMessageLookup(), 4000, "suggest: original message lookup").catch(() => null);
-                if (original) {
+                const messages = await withTimeout(startConversationLookup(), 4000, "suggest: conversation lookup").catch(() => []);
+                // Most recently received -- the best single representative of "what this thread
+                // is about" for the suggestion API, same role the old single-"original" lookup
+                // played here.
+                const mostRecent = messages.slice()
+                    .sort((a, b) => new Date(b.receivedDateTime) - new Date(a.receivedDateTime))[0];
+                if (mostRecent) {
                     const addrList = (recipients) => (recipients || [])
                         .map(r => r.emailAddress && r.emailAddress.address).filter(Boolean).join(",");
-                    params.set("from", (original.from && original.from.emailAddress && original.from.emailAddress.address) || "");
-                    params.set("to", addrList(original.toRecipients));
-                    params.set("cc", addrList(original.ccRecipients));
-                    params.set("body", (original.bodyPreview || "").slice(0, 1000));
+                    params.set("from", (mostRecent.from && mostRecent.from.emailAddress && mostRecent.from.emailAddress.address) || "");
+                    params.set("to", addrList(mostRecent.toRecipients));
+                    params.set("cc", addrList(mostRecent.ccRecipients));
+                    params.set("body", (mostRecent.bodyPreview || "").slice(0, 1000));
                 }
             }
             const response = await withTimeout(fetch(`${SUGGEST_API_URL}/api/suggest?${params}`, {
@@ -553,12 +554,10 @@
         document.getElementById(step).classList.add("active");
         document.getElementById("cancelRow").style.display = step === "stepCancelled" ? "none" : "flex";
         if (step === "stepConfirm") {
-            // Save Both may still be disabled (original-message lookup in flight, or not
-            // reply-like at all) -- land on whichever default action is actually usable.
-            const both = document.getElementById("saveBothButton");
-            const replyOnly = document.getElementById("saveReplyOnlyButton");
-            if (!both.disabled) both.focus();
-            else if (replyOnly.style.display !== "none") replyOnly.focus();
+            // No lookup-completion gating any more -- categoriseConversationButton is always
+            // usable (0 found just means only the reply gets categorised), so it's always the
+            // default focus target.
+            document.getElementById("categoriseConversationButton").focus();
         }
         if (step === "stepPick") document.getElementById("fosFilterBox").focus();
     }
@@ -734,7 +733,12 @@
     }
 
     let selectedProjectName = null;
-    let originalMessage = null; // populated best-effort for reply/forward, see findOriginalMessage
+
+    function applyConversationCount(messages) {
+        document.getElementById("confirmOriginalLine").textContent = messages.length > 0
+            ? `Found ${messages.length} message(s) in your Inbox for this conversation -- all will be categorised along with the reply.`
+            : "No other messages found in your Inbox for this conversation -- only the reply will be categorised.";
+    }
 
     function selectProject(name, el) {
         selectedProjectName = name;
@@ -745,48 +749,20 @@
         const originalContext = document.getElementById("confirmOriginalContext");
         if (isReplyLike) {
             originalContext.style.display = "block";
-            document.getElementById("confirmOriginalLine").innerHTML = "&#129525; <b>Original</b> &mdash; looking it up...";
-            // Disabled until the lookup resolves either way -- don't let "Save Both" be
-            // clicked before we actually know whether there's an original to attach.
-            document.getElementById("saveBothButton").disabled = true;
-
-            const applyOriginalMessage = (msg) => {
-                originalMessage = msg;
-                if (msg) {
-                    const from = (msg.from && msg.from.emailAddress && (msg.from.emailAddress.name || msg.from.emailAddress.address)) || "unknown sender";
-                    const when = msg.receivedDateTime ? new Date(msg.receivedDateTime).toLocaleDateString() : "";
-                    // TEMPORARY diagnostic line (2026-10-25) -- remove once the inReplyTo path is
-                    // confirmed working live.
-                    const diag = `<div style="font-size:10px;color:#B3401F">DIAG: ${lastOriginalLookupMethod || "(no method recorded)"}</div>`;
-                    document.getElementById("confirmOriginalLine").innerHTML =
-                        `&#129525; <b>Original</b> &mdash; "${msg.subject || sendContext.subject}" from ${from}${when ? ", " + when : ""}${diag}`;
-                    document.getElementById("saveBothButton").disabled = false;
-                    // Save Both is the default action once it's actually usable -- move
-                    // focus to it, but only if focus is still sitting on the fallback
-                    // (Reply Only) from showStep's landing choice, not if the user already
-                    // deliberately moved away from it.
-                    if (document.activeElement && document.activeElement.id === "saveReplyOnlyButton") {
-                        document.getElementById("saveBothButton").focus();
-                    }
-                } else {
-                    const why = lastOriginalLookupResult && lastOriginalLookupResult.reason
-                        ? ` (${lastOriginalLookupResult.reason})`
-                        : "";
-                    document.getElementById("confirmOriginalLine").innerHTML =
-                        `Original message not found -- only the reply can be filed.${why}` +
-                        `<div style="font-size:10px;color:#B3401F">DIAG: ${lastOriginalLookupMethod || "(no method recorded)"}</div>`;
-                    document.getElementById("saveBothButton").disabled = true;
-                }
-            };
+            document.getElementById("confirmOriginalLine").textContent = "Finding messages in your Inbox for this conversation...";
 
             // Reuses the same lookup already kicked off (silently) for suggestions -- avoids a
             // second Graph round-trip in the common case. If that silent attempt came back empty
-            // (no cached token yet, rather than a genuine "no original" result), retry once here
+            // (no cached token yet, rather than a genuine "nothing found" result), retry once here
             // with an interactive-capable token, since picking a project is a deliberate user
-            // action that justifies a consent prompt if one's actually still needed.
-            startOriginalMessageLookup().then(msg => {
-                if (msg) { applyOriginalMessage(msg); return; }
-                findOriginalMessage(true).then(applyOriginalMessage);
+            // action that justifies a consent prompt if one's actually still needed. The retried
+            // promise replaces the cached one so the actual Categorise Conversation click (and
+            // anything else calling startConversationLookup() after this) sees the up-to-date
+            // result too, instead of the original possibly-empty one.
+            startConversationLookup().then(messages => {
+                if (messages.length > 0) { applyConversationCount(messages); return; }
+                conversationMessagesPromise = fetchConversationMessages(true);
+                conversationMessagesPromise.then(applyConversationCount);
             });
         } else {
             originalContext.style.display = "none";
@@ -797,8 +773,8 @@
 
     function handleConfirmButtonKeydown(e) {
         const order = isReplyLike
-            ? ["saveBothButton", "categoriseConversationButton", "saveReplyOnlyButton"]
-            : ["saveBothButton"];
+            ? ["categoriseConversationButton", "saveReplyOnlyButton"]
+            : ["categoriseConversationButton"];
         const i = order.indexOf(e.target.id);
         if (e.key === "ArrowDown" && i < order.length - 1) {
             e.preventDefault();
@@ -809,135 +785,61 @@
         }
     }
 
-    // "What am I replying to": primarily an EXACT match via inReplyTo (added 2026-10-25),
-    // falling back to the old best-effort conversationId heuristic when that's not available.
+    // Finds every message in this conversation sitting in the signed-in user's Inbox (root only,
+    // no subfolders -- Graph's folder-scoped children listing doesn't recurse by default, which
+    // is exactly what's wanted here). Replaces the old "guess which one is the original" approach
+    // (a conversationId search across the whole mailbox, picking the most recent message not sent
+    // by the signed-in user) after confirming live, repeatedly, that it picked the wrong message
+    // whenever a thread had more than one candidate -- e.g. a self-forward sitting in Sent Items
+    // instead of the real Inbox item. Scoping to Inbox and returning every match instead of
+    // guessing at one removes the identification problem entirely: there's no "right" item to
+    // pick, just "everything currently in your Inbox for this thread," all of which get
+    // categorized together.
     //
-    // sendContext.inReplyToMessageId is set by taskpane.html before this dialog ever opens
-    // (dialogs have no Office.context.mailbox of their own, so they can't read it directly) --
-    // it comes from Office.js's LoadedMessageCompose.inReplyTo, which carries the ORIGINAL
-    // message's actual internetMessageId (confirmed via its underlying MAPI property,
-    // PidTagInReplyToId), not an approximation. Looking that exact ID up via Graph
-    // ($filter=internetMessageId eq ...) is immune to the old heuristic's known failure modes:
-    // confirmed live 2026-10-25 that "most recent non-self message in this conversationId" had
-    // picked a self-forward sitting in Sent Items instead of the actual Inbox original, and
-    // Microsoft's own docs note inReplyTo survives a subject edit, which conversationId does not
-    // reliably. Only documented for replies, not confirmed for forwards -- if it's not set (or
-    // the lookup finds nothing), this falls through to the conversationId search below exactly
-    // as before, so forwards (and any other case where it's absent) still work, just with the
-    // old approximation.
+    // A parallel attempt to use Office.js's LoadedMessageCompose.inReplyTo for an exact match
+    // (an internetMessageId, not an approximation) was tried and abandoned 2026-10-26: confirmed
+    // live, across both forwards and a genuine reply, that it came back null with no error every
+    // time in classic Outlook for Windows -- Microsoft's own documented client support for
+    // requirement set 1.15, which that API needs, doesn't list classic Windows Outlook at all.
     //
-    // conversationId fallback: approximates "the original" as the most recent message in the
-    // same conversation that wasn't sent by the signed-in user themselves (their own prior
-    // replies also share the conversationId). Good enough for the common case; if it can't find
-    // anything, "Save Both" is disabled above rather than filing something wrong.
-    //
-    // $select includes toRecipients/ccRecipients/bodyPreview (added 2026-10-21) so the same
-    // lookup also feeds fetchSuggestions() -- previously that only had subject+conversationId
-    // to go on, a much weaker signal than File Email's from/to/cc/body-driven suggestions
-    // against the same /api/suggest backend. isUserAction is passed through rather than fixed:
-    // the early, suggestions-driven call must stay silent (startOriginalMessageLookup() below),
-    // while selectProject()'s own fallback call may prompt interactively, since by then the user
-    // has taken a deliberate action.
-    // lastOriginalLookupResult records *why* the most recent call came back empty (no
-    // conversationId at all, no token, zero Graph matches, or matches that were all sent by the
-    // signed-in user) -- added 2026-10-21 so selectProject()'s "not found" message can say which
-    // of those actually happened, confirmed live to matter: a reply to a genuine external sender
-    // still came back "not found", which this alone can't explain without knowing whether Graph
-    // returned zero messages for the conversationId (points at a conversationId mismatch) or
-    // returned messages that were all attributed to the signed-in user (points at the "not sent
-    // by me" matching logic itself, or a shared/delegate-mailbox from-address mismatch).
-    let lastOriginalLookupResult = null;
-    // TEMPORARY diagnostic (2026-10-25), remove once the inReplyTo path is confirmed working live:
-    // records which method actually produced the result, and the raw inReplyToMessageId received
-    // from the opener, so this can be surfaced directly in the dialog's own UI without DevTools.
-    let lastOriginalLookupMethod = null;
-
-    const ORIGINAL_MESSAGE_SELECT = "id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime";
-
-    async function findOriginalMessage(isUserAction) {
+    // $select includes toRecipients/ccRecipients/bodyPreview so the same lookup also feeds
+    // fetchSuggestions() (richer than subject+conversationId alone). isUserAction is passed
+    // through rather than fixed: the early, suggestions-driven call must stay silent
+    // (startConversationLookup() below), while selectProject()'s own call may prompt
+    // interactively, since by then the user has taken a deliberate action.
+    async function fetchConversationMessages(isUserAction) {
+        if (!sendContext.conversationId) return [];
         try {
             const token = await signInAndGetToken(mailWriteRequest, isUserAction);
-            if (!token) {
-                lastOriginalLookupResult = { reason: "could not get permission to check (no token)" };
-                return null;
-            }
-
-            if (sendContext.inReplyToMessageId) {
-                try {
-                    const exactUrl = "https://graph.microsoft.com/v1.0/me/messages?$filter=" +
-                        encodeURIComponent(`internetMessageId eq '${sendContext.inReplyToMessageId}'`) +
-                        `&$top=1&$select=${ORIGINAL_MESSAGE_SELECT}`;
-                    const exactData = await graphGet(exactUrl, token);
-                    const exactMatch = (exactData.value || [])[0];
-                    if (exactMatch) {
-                        lastOriginalLookupMethod = `exact inReplyTo match (${sendContext.inReplyToMessageId})`;
-                        return exactMatch;
-                    }
-                    lastOriginalLookupMethod = `inReplyTo was "${sendContext.inReplyToMessageId}" but no message with that internetMessageId was found -- fell back to conversationId`;
-                } catch (err) {
-                    console.error("Exact inReplyTo lookup failed, falling back to conversation search:", err);
-                    lastOriginalLookupMethod = `exact lookup threw (${err.message || err}) -- fell back to conversationId`;
-                }
-                // Falls through deliberately -- inReplyTo was set but didn't resolve to a message
-                // (deleted since, or some other edge case). The conversationId search below is
-                // still worth trying rather than giving up immediately.
-            } else {
-                lastOriginalLookupMethod = sendContext.inReplyToDiagError
-                    ? `getInReplyToMessageId() threw on the opener side: "${sendContext.inReplyToDiagError}" -- used conversationId fallback`
-                    : "no inReplyToMessageId was received (Outlook gave null, no error) -- used conversationId fallback directly";
-            }
-
-            if (!sendContext.conversationId) {
-                lastOriginalLookupResult = { reason: "no conversationId was available to search with" };
-                return null;
-            }
-            const account = msalInstance.getActiveAccount();
-            const myAddress = (account && account.username || "").toLowerCase();
-            // Confirmed live 2026-10-21: filtering /me/messages by conversationId while also
-            // sorting by receivedDateTime hits Graph's own "InefficientFilter" error ("The
-            // restriction or sort order is too complex for this operation"). First attempted fix
-            // (ConsistencyLevel: eventual + $count=true, "advanced query parameters") did NOT
-            // resolve it -- confirmed live, identical error persisted. Root cause per Graph's own
-            // docs (List messages): when $filter and $orderby are combined, every property in
-            // $orderby must also appear in $filter, in matching order -- receivedDateTime was
-            // only ever in $orderby here, never in $filter, which breaks that rule outright and
-            // isn't something advanced query parameters can override. Fixed properly by dropping
-            // $orderby entirely and sorting the (small, $top=25) result set client-side instead --
-            // there's no ordering requirement left to violate.
-            const url = "https://graph.microsoft.com/v1.0/me/messages?$filter=" +
+            if (!token) return [];
+            const messages = [];
+            let url = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$filter=" +
                 encodeURIComponent(`conversationId eq '${sendContext.conversationId}'`) +
-                `&$top=25&$select=${ORIGINAL_MESSAGE_SELECT}`;
-            const data = await graphGet(url, token);
-            const messages = (data.value || []).slice()
-                .sort((a, b) => new Date(b.receivedDateTime) - new Date(a.receivedDateTime));
-            const found = messages.find(m => {
-                const addr = (m.from && m.from.emailAddress && m.from.emailAddress.address || "").toLowerCase();
-                return addr && addr !== myAddress;
-            }) || null;
-            if (!found) {
-                lastOriginalLookupResult = messages.length === 0
-                    ? { reason: `Graph found 0 messages for this conversationId (self=${myAddress || "?"})` }
-                    : { reason: `Graph found ${messages.length} message(s) in this thread, but every one was attributed to ${myAddress || "you"}` };
+                "&$top=50&$select=id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime";
+            while (url) {
+                const page = await graphGet(url, token);
+                messages.push(...(page.value || []));
+                url = page["@odata.nextLink"] || null;
             }
-            return found;
+            return messages;
         } catch (err) {
-            console.error("Could not look up the original message:", err);
-            lastOriginalLookupResult = { reason: `lookup failed: ${err.message || err}` };
-            return null;
+            console.error("Could not look up this conversation's Inbox messages:", err);
+            return [];
         }
     }
 
-    // Kicks off findOriginalMessage() at most once per dialog instance, silently (isUserAction=
-    // false -- this fires proactively alongside fetchSuggestions(), before the user has done
-    // anything, so it must never pop an interactive sign-in prompt). Shared by fetchSuggestions()
-    // and selectProject() so both reuse one Graph call instead of each doing their own.
-    let originalMessagePromise = null;
+    // Kicks off fetchConversationMessages() at most once per dialog instance, silently
+    // (isUserAction=false -- this fires proactively alongside fetchSuggestions(), before the user
+    // has done anything, so it must never pop an interactive sign-in prompt). Shared by
+    // fetchSuggestions() and selectProject() so both reuse one Graph call instead of each doing
+    // their own.
+    let conversationMessagesPromise = null;
 
-    function startOriginalMessageLookup() {
-        if (!originalMessagePromise) {
-            originalMessagePromise = isReplyLike ? findOriginalMessage(false) : Promise.resolve(null);
+    function startConversationLookup() {
+        if (!conversationMessagesPromise) {
+            conversationMessagesPromise = isReplyLike ? fetchConversationMessages(false) : Promise.resolve([]);
         }
-        return originalMessagePromise;
+        return conversationMessagesPromise;
     }
 
     // ---- Shared File Email batch-tracking plumbing (ported from file-email-dialog.html) ----
@@ -1015,11 +917,10 @@
 
     // Fires a categorize-only batch through the exact same bridge endpoint File Email already
     // uses, with no destinationFolderId -- see FileEmailBatch/run.ps1's own branch for this
-    // ("status = categorized-not-staged" when no destination is given). Shared by
-    // fileOriginalMessage() (one item: the original) and categoriseConversation() (every message
-    // in the thread). The batch is durably tracked in storage before the request goes out --
-    // if this dialog closes or crashes mid-request regardless, File Email's own stuck-batch
-    // recovery still picks it up later.
+    // ("status = categorized-not-staged" when no destination is given). Used by
+    // categoriseConversation() for every conversation message found in the Inbox. The batch is
+    // durably tracked in storage before the request goes out -- if this dialog closes or crashes
+    // mid-request regardless, File Email's own stuck-batch recovery still picks it up later.
     //
     // BUG FOUND LIVE 2026-10-21 (historical, kept for context): an earlier version of this flow
     // moved the original into "Emails to File" immediately as part of the same call, racing a
@@ -1067,75 +968,35 @@
         }
     }
 
-    async function fileOriginalMessage(categoryName) {
-        if (!originalMessage) return;
-        document.getElementById("confirmOriginalLine").textContent = "Categorising the original...";
-        document.getElementById("cancelLink").disabled = true;
-        await categorizeBatch(
-            categoryName,
-            [{ restId: originalMessage.id, subject: originalMessage.subject || sendContext.subject }],
-            "confirmOriginalLine"
-        );
-    }
-
-    // "Categorise Conversation": every message in the thread, not just the one found as "the
-    // original" -- a plain conversationId search, no attempt to guess which one is "the
-    // original" the way findOriginalMessage() does, since every match gets categorized anyway.
-    // /me/messages searches the whole mailbox (not folder-scoped), so this naturally picks up
-    // Inbox, Sent Items, and any subfolder the thread's messages happen to sit in.
-    async function fetchConversationMessages(conversationId, token) {
-        let url = "https://graph.microsoft.com/v1.0/me/messages?$filter=" +
-            encodeURIComponent(`conversationId eq '${conversationId}'`) +
-            "&$top=50&$select=id,subject";
-        const messages = [];
-        while (url) {
-            const page = await graphGet(url, token);
-            messages.push(...(page.value || []));
-            url = page["@odata.nextLink"] || null;
-        }
-        return messages;
-    }
-
+    // "Categorise Conversation": every message this conversation has in the Inbox (see
+    // fetchConversationMessages()'s own comment for why this replaced the old single-"original"
+    // guess). Reuses whatever startConversationLookup() already resolved -- the same lookup
+    // selectProject() already triggered to show the count in the confirm step -- rather than
+    // querying Graph a third time for the same thing. The bridge rejects an empty items array
+    // outright, so an empty result just skips the batch call entirely instead of sending one;
+    // the reply itself is categorized separately (see handlePrimaryAction/messageParent), so
+    // there's nothing lost by skipping a call with nothing in it.
     async function categoriseConversation(categoryName) {
-        const statusEl = document.getElementById("confirmOriginalLine");
-        const contextBox = document.getElementById("confirmOriginalContext");
-        contextBox.style.display = "block";
-        statusEl.textContent = "Finding every message in this conversation...";
         document.getElementById("cancelLink").disabled = true;
+        const messages = await startConversationLookup();
+        const items = messages.map(m => ({ restId: m.id, subject: m.subject }));
 
-        if (!sendContext.conversationId) {
-            statusEl.textContent = "Could not categorise the conversation: no conversation to search.";
-            return;
-        }
-        let messages;
-        try {
-            const token = await signInAndGetToken(mailWriteRequest, true);
-            if (!token) throw new Error("Could not get permission to search the mailbox.");
-            messages = await fetchConversationMessages(sendContext.conversationId, token);
-        } catch (err) {
-            console.error("Could not look up the conversation's messages:", err);
-            statusEl.textContent = `Could not categorise the conversation: ${err.message || err}`;
-            return;
-        }
-        if (messages.length === 0) {
-            statusEl.textContent = "No other messages found in this conversation yet.";
+        if (items.length === 0) {
+            document.getElementById("confirmOriginalLine").textContent =
+                "No other messages found in your Inbox for this conversation -- only the reply was categorised.";
             return;
         }
 
-        statusEl.textContent = `Categorising ${messages.length} message(s) in this conversation...`;
-        await categorizeBatch(
-            categoryName,
-            messages.map(m => ({ restId: m.id, subject: m.subject })),
-            "confirmOriginalLine"
-        );
+        document.getElementById("confirmOriginalLine").textContent =
+            `Categorising ${items.length} message(s) in your Inbox for this conversation...`;
+        await categorizeBatch(categoryName, items, "confirmOriginalLine");
     }
 
     // ---- Confirm / Cancel ----
 
     function disableConfirmButtons() {
-        document.getElementById("saveBothButton").disabled = true;
-        document.getElementById("saveReplyOnlyButton").disabled = true;
         document.getElementById("categoriseConversationButton").disabled = true;
+        document.getElementById("saveReplyOnlyButton").disabled = true;
     }
 
     // Brief pause after the real work (categorizeBatch awaits the bridge's full
@@ -1147,7 +1008,11 @@
         }, 700);
     }
 
-    async function handleSave(saveOriginal) {
+    // The only button for a reply/forward (besides "Reply Only"), and the sole action for a
+    // brand-new message (relabeled "Categorise" in Office.onReady -- see its own comment). Tags
+    // the outgoing item immediately via the opener (messageParent), then -- for a reply/forward
+    // only -- also categorises every conversation message already found in the Inbox.
+    async function handlePrimaryAction() {
         disableConfirmButtons();
 
         // Tell the opener right away -- it's the only side that can tag the outgoing
@@ -1155,18 +1020,16 @@
         // anything below.
         messageParent({ action: "save", categoryName: selectedProjectName });
 
-        if (saveOriginal && isReplyLike && originalMessage) {
-            await fileOriginalMessage(selectedProjectName);
+        if (isReplyLike) {
+            await categoriseConversation(selectedProjectName);
         }
         closeDialogSoon();
     }
 
-    // "Categorise Conversation" -- tags the outgoing reply/forward exactly like the other two
-    // buttons, plus every other message already in the thread (see categoriseConversation()).
-    async function handleSaveConversation() {
+    // "Categorise Reply Only" -- tags just the outgoing reply/forward, nothing else.
+    function handleReplyOnly() {
         disableConfirmButtons();
         messageParent({ action: "save", categoryName: selectedProjectName });
-        await categoriseConversation(selectedProjectName);
         closeDialogSoon();
     }
 

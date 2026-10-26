@@ -462,6 +462,40 @@ Graph has no efficient server-side filter on the `categories` property, so
 this needs its own sizing/performance pass before being added. Relying on
 manual staging for now.
 
+**Simplified further, 2026-10-26 — two buttons, Inbox-scoped, inReplyTo
+abandoned**: the three-button design above (Categorise Both / Conversation /
+Reply Only) didn't survive contact with reality. **"Categorise Both"
+(the single-"original" guess) is removed entirely.** `findOriginalMessage()`
+first tried an exact match via Office.js's `LoadedMessageCompose.inReplyTo`
+(an `internetMessageId`, not an approximation) — confirmed live, across both
+forwards and a genuine reply, that it came back null with no error every
+time on classic Outlook for Windows. Microsoft's own documented client
+support table for requirement set 1.15, which that API needs, doesn't list
+classic Windows Outlook at all — a real platform gap, not a bug in this
+code. Before that, the plain `conversationId`-across-the-whole-mailbox
+heuristic was confirmed live to repeatedly pick the wrong message (e.g. a
+self-forward sitting in Sent Items instead of the real Inbox item). Given
+both single-item approaches failed in practice, the fix is to stop picking
+one at all: **"Categorise Conversation" now finds every message this
+conversation has in the signed-in user's Inbox (root only, no subfolders)
+and categorizes all of them** — there's no "right" item to identify, just
+"everything currently there," removing the misidentification problem
+structurally rather than patching the heuristic again. The confirm step
+shows a live count ("Found N message(s) in your Inbox...") instead of a
+single subject/sender preview. Down to two options now: **Categorise
+Conversation** (the reply plus every Inbox match) and **Categorise Reply
+Only** (just the reply) — "Categorise Conversation" also doubles as the
+single action for a brand-new (non-reply) message, relabeled plain
+**Categorise** in that case (`categoriseConversationButton` serves both
+roles; see `handlePrimaryAction()`). `fileOriginalMessage()`,
+`findOriginalMessage()`, `startOriginalMessageLookup()`, and
+`taskpane.html`'s `getInReplyToMessageId()` are gone. Explicitly discussed
+and declined: moving the found Inbox messages (immediately, or deferred
+until the reply is confirmed sent/filed via a `SyncEmails` marker-category
+trigger) — categorize-only, no move at all, is what shipped; a move
+trigger remains a real option to revisit later if manual staging proves too
+manual in practice.
+
 **Incident, 2026-10-07 — sends hanging on "add-in taking longer than
 expected"**: a teammate (classic Outlook for Windows) got stuck on
 Outlook's own slow-add-in warning when sending, with no visible picker
