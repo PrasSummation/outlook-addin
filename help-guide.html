@@ -113,8 +113,8 @@
           <li>Click <b>Add Category &amp; Stage for Filing</b>.</li>
         </ol>
         <p>That's it on your end. This tags the email with the project as an Outlook category and moves it into
-        a folder called <b>Emails to File</b> in your Inbox. It does <i>not</i> file it to SharePoint immediately
-        &mdash; see the next section.</p>
+        the <b>Master Email Management &rarr; Emails Awaiting Sync</b> folder in your Inbox. It does <i>not</i>
+        file it to SharePoint immediately &mdash; see the next section.</p>
         <div class="note tip">Filing multiple emails at once? Select them all first (Ctrl/Shift-click in the
         list), then click File Email once.</div>
       </section>
@@ -123,17 +123,22 @@
         <h2>2. Automatic filing <span class="badge auto">Happens on its own</span></h2>
         <p class="tagline">No button &mdash; runs in the background, about every 5 minutes</p>
         <p>A background process (not part of the Outlook pane itself) checks every staff mailbox's
-        <b>Emails to File</b> folder on a timer. For each email it finds there, it:</p>
+        <b>Master Email Management &rarr; Emails Awaiting Sync</b> folder on a timer. For each email it
+        finds there, it:</p>
         <ol class="steps">
           <li>Works out the project from the category you added.</li>
           <li>Saves a copy of the email into that project's <b>Emails</b> folder on SharePoint.</li>
-          <li>Moves the original out of your Inbox into a <b>Filed</b> folder &mdash; so your inbox stays clean
-          and you can still find it if you need to.</li>
+          <li>Moves the original out of Emails Awaiting Sync into <b>Master Email Management &rarr;
+          Emails Awaiting Sync &rarr; Synced Emails</b> &mdash; so your inbox stays clean and you can
+          still find it if you need to.</li>
         </ol>
         <p>This usually takes a few minutes from when you click File Email. There's nothing to check or
-        trigger &mdash; if it's not in <b>Filed</b> yet, it just hasn't run its next pass.</p>
+        trigger &mdash; if it's not in <b>Synced Emails</b> yet, it just hasn't run its next pass.</p>
         <div class="note">Didn't pick a project when filing? The email just waits harmlessly in
-        <b>Emails to File</b> until it's tagged with one. Nothing is filed incorrectly, and nothing is lost.</div>
+        <b>Emails Awaiting Sync</b> until it's tagged with one. Nothing is filed incorrectly, and nothing
+        is lost. Want to come back to an email later instead of deciding now? Drag it into
+        <b>Master Email Management &rarr; Emails Yet to Label</b> &mdash; that folder is just for your own
+        use, nothing automatic happens to what's in it until you manually file it or use Batch File.</div>
       </section>
 
       <section id="sent-emails">
@@ -154,7 +159,8 @@
           email(s) with the project &mdash; it doesn't move anything. Your own sent reply gets
           filed automatically from there, the same way File Email's does. Any other tagged
           conversation message stays right where it is in your Inbox until you move it into
-          <b>Emails to File</b> yourself, same as any other email you want filed manually.</li>
+          <b>Master Email Management &rarr; Emails Awaiting Sync</b> yourself, same as any other
+          email you want filed manually.</li>
         </ol>
         <div class="note warn">This pops up on <b>every</b> send. If that turns out to be too
         disruptive day-to-day, let us know.</div>

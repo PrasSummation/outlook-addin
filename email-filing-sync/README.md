@@ -8,14 +8,27 @@ couldn't be the cause of a live bug. CLAUDE.md in the parent repo is the up-to-d
 truth for this app's status.
 
 A second, independent Azure Function App — timer-triggered, no HTTP surface at all —
-that watches every staff member's own **"Emails to File"** Outlook folder (the same
-folder File Email's "Confirm" step already categorizes-and-stages emails into, in
-`taskpane.html`) and finishes the job: for each staged email, it resolves the project
-from its Outlook category, saves the email as `.eml` into that project's SharePoint
-`Emails` folder (created if missing), adds `Filed` on top of whatever category it already
-had (the original project category is left exactly as the user set it — see the fix note
-below), and moves it into a local **"Filed"** folder. It runs unattended, continuously,
-with no add-in or browser tab needing to be open.
+that watches every staff member's own **"Master Email Management/Emails Awaiting Sync"**
+Outlook folder (the same folder File Email's "Confirm" step already
+categorizes-and-stages emails into, in `taskpane.html`) and finishes the job: for each
+staged email, it resolves the project from its Outlook category, saves the email as
+`.eml` into that project's SharePoint `Emails` folder (created if missing), adds `Filed`
+on top of whatever category it already had (the original project category is left
+exactly as the user set it — see the fix note below), and moves it into a local
+**"Master Email Management/Emails Awaiting Sync/Synced Emails"** folder. It runs
+unattended, continuously, with no add-in or browser tab needing to be open.
+
+**Folder structure, replacing the old flat "Emails to File"/"Filed" model (2026-10-26):**
+every staff mailbox gets a `Master Email Management` folder under Inbox, created
+automatically if missing, containing `Emails Yet to Label` (a purely manual staging
+folder for users to drag emails into until they have time to file them — nothing in
+this app reads or writes it) and `Emails Awaiting Sync` (replaces "Emails to File"),
+which itself contains `Synced Emails` (replaces "Filed"). `Get-OrCreateEmailManagementFolders`
+in `Modules/EmailFilingSync/EmailFilingSync.psm1` creates the whole hierarchy for a
+mailbox in one call. `SyncEmails/run.ps1` also still reads (read-only, never recreates)
+any OLD flat "Emails to File" folder that still has items in it from before this change
+shipped, so nothing already staged there gets silently stranded — safe to delete that
+fallback once every mailbox's old folder is confirmed empty.
 
 This implements the background-sync design agreed over several prior sessions (see
 `Brief - SharePoint Email Filing (Newforma-style).md`, decisions in its §9), reconciled
@@ -65,14 +78,19 @@ Timer (every 5 min)
                                                         nobody wants their own Sent folder
                                                         emptied out by automation)
 
-     -- "Emails to File" pass (received mail, staged by File Email or auto-move-on-filing) --
-     /users/{upn}/mailFolders/inbox/childFolders?displayName eq 'Emails to File'
-     /users/{upn}/mailFolders/{id}/messages        -- read staged, categorized emails
+     -- "Emails Awaiting Sync" pass (received mail, staged by File Email or auto-move-on-filing) --
+     Get-OrCreateEmailManagementFolders               -- ensures Master Email Management /
+                                                          Emails Yet to Label / Emails Awaiting
+                                                          Sync / Synced Emails all exist
+     /users/{upn}/mailFolders/{awaitingSyncId}/messages  -- read staged, categorized emails
      drives/{ACTIVE|ARCHIVE_DRIVE_ID}/...           -- resolve/create <project>/Emails
      /users/{upn}/messages/{id}/$value              -- fetch raw .eml
      drives/.../items/{emailsFolderId}:/{name}:/content  -- upload
      /users/{upn}/messages/{id} (PATCH categories)  -- add Filed, keep the original category as-is
-     /users/{upn}/messages/{id}/move                -- move into "Filed"
+     /users/{upn}/messages/{id}/move                -- move into "Synced Emails"
+     -- plus, read-only, transitional: the OLD flat "Emails to File" folder if it still has
+        items from before 2026-10-26's folder restructuring --
+     /users/{upn}/mailFolders/inbox/childFolders?displayName eq 'Emails to File'
         │
         ▼ (best-effort, non-blocking, both passes)
      POST {EMAIL_INDEX_BASE_URL}/api/emails          -- notify the index, if reachable
@@ -95,16 +113,16 @@ Consequences worth knowing:
   there's nothing to stage. Wide enough to tolerate a missed run or two without
   needing a backfill; a message that's somehow still unfiled after 3 hours just won't
   be picked up automatically and needs a manual look.
-- **Sent items are never moved.** The Inbox pass empties out "Emails to File" on
+- **Sent items are never moved.** The Inbox pass empties out "Emails Awaiting Sync" on
   purpose (that's the whole point of staging); nobody wants their own *Sent* folder
   silently rearranged, so this pass only tags `Filed` onto the existing message in place.
-- **"File the original" (the "Save Both" option in the dialog) does not go through this
-  Function App at all** — it's a direct, synchronous call from the dialog itself to the
-  Exchange bridge's existing `FileEmailBatch` endpoint (the exact one `taskpane.html`'s
-  File Email already uses), found via a `conversationId` search since there's no direct
-  API for "the message I'm replying to" from a compose item. That part is immediate
-  (same categorize+move-to-"Emails to File" as a manual File Email), not something this
-  timer needs to pick up later.
+- **"Categorise Conversation" (the dialog's option to also tag every conversation message
+  already sitting in the Inbox) categorizes only — it never moves anything itself,** and
+  doesn't go through this Function App at all; it's a direct, synchronous call from the
+  dialog itself to the Exchange bridge's existing `FileEmailBatch` endpoint (the exact one
+  `taskpane.html`'s File Email already uses), in categorize-only mode. The user moves a
+  categorized conversation message into "Emails Awaiting Sync" themselves when ready, same
+  as any other manually-staged email, and this timer picks it up from there.
 
 Each mailbox, and each email within it, is wrapped so one failure doesn't stop the rest
 of the run — a `Write-Error` plus a per-run totals line (`EmailFilingSync: run complete.

@@ -47,7 +47,7 @@ project mailbox.
 | `manage-mailbox-automapping.html` | Standalone page, **not linked from the taskpane UI** either. Reconciles "what Exchange says you have Full Access to" against "what's actually showing in your Outlook folder pane" — these drift apart and neither Graph nor Exchange exposes that comparison directly. Requires the user to import a local JSON export of their actual Outlook mailbox list (`{ mailboxes: [...], exportedAtUtc }`) via a file picker; that export is **not produced by this repo** — it comes from some other local tool/script the user runs against their own Outlook. Also tracks Outlook's ~32-mailbox folder-pane display limit. |
 | `exchange-bridge/` | Azure Function (PowerShell 7.6) — see its own `README.md`, which is the authoritative, detailed doc. Summary below. |
 | `exchange-bridge/README.md` | **Read this in full before touching the bridge.** Covers the two-app-registration trust model, why the originally-planned least-privilege Exchange RBAC didn't work (ended up needing the full Exchange Administrator directory role), the API contract, and a completed setup runbook. |
-| `email-filing-sync/` | A **separate** Azure Function App (own Entra app registration, own resource group — never the bridge's) with a timer-triggered `SyncEmails` (watches every staff mailbox's "Emails to File" folder, files categorized emails into their project's SharePoint `Emails` folder, moves the originals into a local "Filed" folder) and a temporary HTTP-triggered `RemediateCorruptedEmails` (see "2026-10-21/22 content-corruption incident" below — remove once remediation is confirmed complete, see that section). No signed-in user for either — see `email-filing-sync/README.md` for `SyncEmails`'s own design, which is authoritative for that function. **Status as of 2026-10-06: live in production**, including the >4MB upload-session path. This is what the taskpane's removed "Sync Emails" button/local desktop Filer used to do manually — it's now fully automatic. |
+| `email-filing-sync/` | A **separate** Azure Function App (own Entra app registration, own resource group — never the bridge's) with a timer-triggered `SyncEmails` (watches every staff mailbox's "Master Email Management/Emails Awaiting Sync" folder — replaced the old flat "Emails to File" 2026-10-26 — files categorized emails into their project's SharePoint `Emails` folder, moves the originals into "Master Email Management/Emails Awaiting Sync/Synced Emails", formerly the flat "Filed" folder) and a temporary HTTP-triggered `RemediateCorruptedEmails` (see "2026-10-21/22 content-corruption incident" below — remove once remediation is confirmed complete, see that section). No signed-in user for either — see `email-filing-sync/README.md` for `SyncEmails`'s own design, which is authoritative for that function. **Status as of 2026-10-06: live in production**, including the >4MB upload-session path. This is what the taskpane's removed "Sync Emails" button/local desktop Filer used to do manually — it's now fully automatic. |
 | `README.md` (repo root) | Just a one-line stub — not useful, don't rely on it. |
 | *(elsewhere)* | The email **index and search** backend (indexing + the API `email-search.html` calls) lives in its own private repo, `PrasSummation/email-index` (split out of this repo's former `prototypes/email-index/`). Read its `HANDOFF.md` before touching the search page or its backend. It shares this repo's Entra app registration and GitHub Pages origin. |
 | `logo-symbol-*.png` | Add-in icons referenced by the manifest and page headers. |
@@ -495,6 +495,27 @@ until the reply is confirmed sent/filed via a `SyncEmails` marker-category
 trigger) — categorize-only, no move at all, is what shipped; a move
 trigger remains a real option to revisit later if manual staging proves too
 manual in practice.
+
+**Folder restructuring, 2026-10-26 — "Master Email Management" replaces the flat
+"Emails to File"/"Filed" model**: every staff mailbox now gets, under Inbox,
+`Master Email Management` containing `Emails Yet to Label` (purely manual —
+a place for staff to drag emails until they have time to file them, nothing
+in this codebase reads or writes it), and `Emails Awaiting Sync` (the
+`SyncEmails` staging-folder pass's new source, replacing "Emails to File")
+containing `Synced Emails` (the new destination, replacing "Filed"). The
+whole hierarchy is created automatically for any mailbox missing it —
+`Get-OrCreateEmailManagementFolders` in `EmailFilingSync.psm1`, called by
+`SyncEmails` every run. `file-email-dialog.html` and `batch-file-dialog.html`
+both got the same nested-resolve treatment for the folder they stage into
+before handing a batch to `FileEmailBatch`. **Transitional safety net,
+read-only, never recreated:** `SyncEmails` still also checks the OLD flat
+"Emails to File" folder for anything left over from before this shipped, so
+nothing already staged there gets silently stranded — delete that fallback
+block once every mailbox's old folder is confirmed empty. Deliberately *not*
+done: a bulk migration script moving old-folder contents into the new
+structure, or renaming the (unrelated) `"Filed"` Outlook *category* string —
+neither was asked for, and the transitional read keeps old data flowing
+without one.
 
 **Incident, 2026-10-07 — sends hanging on "add-in taking longer than
 expected"**: a teammate (classic Outlook for Windows) got stuck on
