@@ -23,14 +23,12 @@ Import-Module "$PSScriptRoot/../Modules/EmailFilingSync/EmailFilingSync.psm1" -F
 # live, `$select=...,size` fails with "Could not find a property named 'size' on type
 # 'Microsoft.OutlookServices.Message'" on EVERY message query in this tenant, not just the
 # folder-scoped ones tried first. A HEAD request against /messages/{id}/$value (hoping for a
-# Content-Length without downloading the body) also isn't supported (405). Switching to
-# Invoke-WebRequest below avoids Invoke-RestMethod's own JSON/XML-oriented content-type sniffing
-# (the direct cause of the 2026-10-08 corruption incident), but still needs the same explicit
-# byte[]-vs-string branch the original code had -- confirmed live the same day that
-# Invoke-WebRequest's .Content isn't reliably byte[] either on this runtime. A proper circuit
-# breaker that doesn't depend on a property this tenant doesn't have (e.g. a retry-count tracked
-# via categories, or summing attachment sizes some other way) is a deliberate follow-up, not yet
-# built.
+# Content-Length without downloading the body) also isn't supported (405). The raw-content fetch
+# below has since moved off PowerShell cmdlets entirely (Invoke-RestMethod -> Invoke-WebRequest ->
+# HttpClient, see that fetch's own comment for the full history and why), which incidentally also
+# resolved the byte[]-vs-string ambiguity those cmdlets had. A proper circuit breaker that doesn't
+# depend on a property this tenant doesn't have (e.g. a retry-count tracked via categories, or
+# summing attachment sizes some other way) is a deliberate follow-up, not yet built.
 
 Write-Host "EmailFilingSync: run started $(Get-Date -Format o)"
 
@@ -45,6 +43,19 @@ try {
     Write-Error "EmailFilingSync: could not complete run setup (token/staff list/folder list) -- aborting this run: $($_.Exception.Message)"
     return
 }
+
+# Dedicated HttpClient for fetching a message's raw MIME body ($value), used below instead of
+# Invoke-WebRequest. Found 2026-10-26: even a plain `$x = (Invoke-WebRequest ...).Content`
+# assignment -- which should fully capture the response per normal PowerShell semantics -- was
+# still individually tracing every byte of a large email's raw content to Application Insights
+# (confirmed via the Function.SyncEmails.User trace category: ~80,000 trace lines for one email),
+# enough alone to spike host CPU and trigger a DrainMode restart before the run could finish. Exact
+# mechanism unconfirmed, but it's specific to PowerShell's cmdlet pipeline -- a raw HttpClient call
+# never touches that machinery, sidestepping the whole class of issue regardless of cause. One
+# instance reused for the whole run rather than per-call, per standard HttpClient guidance (avoids
+# socket exhaustion under load).
+$httpClient = [System.Net.Http.HttpClient]::new()
+$httpClient.DefaultRequestHeaders.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new("Bearer", $token)
 
 $totals = [ordered]@{
     mailboxesChecked       = 0
@@ -129,13 +140,19 @@ foreach ($user in $staff) {
                 $labelsAsFound = @($msg.categories)
 
                 if (-not $isDuplicate) {
-                    # Invoke-WebRequest instead of Invoke-RestMethod, added 2026-10-21 -- see the
-                    # main pass below for the full story and the correction to this comment's
-                    # original (wrong) claim that .Content is always byte[] here.
-                    $rawContent = (Invoke-WebRequest -Method Get `
-                        -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)/`$value" `
-                        -Headers @{ Authorization = "Bearer $token" } -ErrorAction Stop).Content
-                    $originalBytes = if ($rawContent -is [byte[]]) { $rawContent } else { [System.Text.Encoding]::GetEncoding(28591).GetBytes([string]$rawContent) }
+                    # HttpClient instead of Invoke-WebRequest, added 2026-10-26 -- see the shared
+                    # $httpClient's own comment near the top of this file for why.
+                    $valueUri = "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)/`$value"
+                    $httpResponse = $httpClient.GetAsync($valueUri).GetAwaiter().GetResult()
+                    try {
+                        if (-not $httpResponse.IsSuccessStatusCode) {
+                            $errBody = $httpResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                            throw "Graph GET `$value failed: $([int]$httpResponse.StatusCode) $($httpResponse.ReasonPhrase) -- $errBody"
+                        }
+                        $originalBytes = $httpResponse.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+                    } finally {
+                        $httpResponse.Dispose()
+                    }
                     $stampedBytes = Add-SummationLabelsHeader -MimeBytes $originalBytes -Labels $labelsAsFound
 
                     if ($stampedBytes.Length -gt 4MB) {
@@ -319,26 +336,24 @@ foreach ($user in $staff) {
             $labelsAsFound = @($msg.categories)
 
             if (-not $isDuplicate) {
-                # Invoke-WebRequest instead of Invoke-RestMethod, added 2026-10-21: avoids
-                # Invoke-RestMethod's own JSON/XML-oriented content-type sniffing, which caused
-                # the 2026-10-08 corruption incident (one message, an Aconex auto-reply, came back
-                # as a real byte[] instead of text; re-encoding that through GetBytes() -- which
-                # has no byte[] overload -- silently coerced it to a string via PowerShell's
-                # default array-to-string join, uploading that garbage as the "email"). CORRECTION
-                # the same day: Invoke-WebRequest's own .Content is *not* reliably byte[] either on
-                # this runtime -- confirmed live, a text-ish response came back as a plain string
-                # and PowerShell's own [byte[]]-typed parameter binder on Add-SummationLabelsHeader
-                # then tried (and failed loudly) to auto-coerce that string itself. Still explicitly
-                # branching on the actual return type, same as the original fix, just applied here
-                # instead -- there is no cmdlet in this runtime that reliably returns raw bytes
-                # unconditionally, so the explicit check stays required regardless of which one is
-                # used. (The avoided redundant string-copy this comment used to claim as a clean
-                # memory win no longer applies when the string branch is taken, but Invoke-WebRequest
-                # is still kept over Invoke-RestMethod for not attempting JSON/XML parsing at all.)
-                $rawContent = (Invoke-WebRequest -Method Get `
-                    -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)/`$value" `
-                    -Headers @{ Authorization = "Bearer $token" } -ErrorAction Stop).Content
-                $originalBytes = if ($rawContent -is [byte[]]) { $rawContent } else { [System.Text.Encoding]::GetEncoding(28591).GetBytes([string]$rawContent) }
+                # History: Invoke-RestMethod (JSON/XML-oriented content-type sniffing corrupted a
+                # real byte[] Aconex auto-reply into text, 2026-10-08) -> Invoke-WebRequest (.Content
+                # still wasn't reliably byte[] either, needed an explicit byte[]-vs-string branch) ->
+                # HttpClient, added 2026-10-26 (see the shared $httpClient's own comment near the top
+                # of this file for why). ReadAsByteArrayAsync() always returns a real byte[]
+                # unconditionally, so the explicit branch the Invoke-WebRequest version needed no
+                # longer applies -- not an oversight, it's genuinely unnecessary now.
+                $valueUri = "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)/`$value"
+                $httpResponse = $httpClient.GetAsync($valueUri).GetAwaiter().GetResult()
+                try {
+                    if (-not $httpResponse.IsSuccessStatusCode) {
+                        $errBody = $httpResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                        throw "Graph GET `$value failed: $([int]$httpResponse.StatusCode) $($httpResponse.ReasonPhrase) -- $errBody"
+                    }
+                    $originalBytes = $httpResponse.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+                } finally {
+                    $httpResponse.Dispose()
+                }
                 $stampedBytes = Add-SummationLabelsHeader -MimeBytes $originalBytes -Labels $labelsAsFound
 
                 if ($stampedBytes.Length -gt 4MB) {
@@ -426,4 +441,5 @@ foreach ($user in $staff) {
     }
 }
 
+$httpClient.Dispose()
 Write-Host "EmailFilingSync: run complete. $($totals | ConvertTo-Json -Compress)"
