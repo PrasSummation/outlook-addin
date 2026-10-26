@@ -39,6 +39,7 @@ project mailbox.
 | `commands.js` / `commands.html` | UI-less ribbon/event command functions — see its own header comments for the two different ways Outlook clients load this file. Holds `onMessageSendHandler` (the **File on Send** feature, live as of 2026-10-06 — see its own section below; replaced an earlier phase-1 probe) and `fileEmailDialogHandler` (the ribbon's dedicated File Email button — detects the selection and opens `file-email-dialog.html`, duplicating taskpane.html's own copy of that same detection logic). |
 | `file-on-send-dialog.html` | The File on Send project picker, opened by `commands.js`'s `onMessageSendHandler` via `displayDialogAsync` when a message is sent. Built from the separately-approved mockup at https://claude.ai/artifact/EqTMRsGos3VHXtspmZPXpp. See "File on Send is live" below. |
 | `batch-file-dialog.html` | Batch File Folder (added 2026-10-07): works through every email in a whole folder at once, each row getting its own project (or Skip), or one project applied to all via a bulk checkbox. Opened from the taskpane's own tile via `openUrlInBrowser()` into a real OS browser tab, **not** an Office.js dialog (changed 2026-10-13) — see "Batch File Folder" below. |
+| `mailbox-sync.html` | Mailbox Sync (added 2026-10-26): a manual sweep for emails anywhere in Inbox (recursively) or Sent Items that already carry a project category but were never staged into "Emails Awaiting Sync" — closes the gap File on Send deliberately leaves open. Opened the same `openUrlInBrowser()`-into-a-real-tab way as Batch File Folder, same reasoning — see "Mailbox Sync" below. |
 | `complete-action.html` | Standalone execution page. Does the actual long-running work (SharePoint writes, mailbox creation) for the three taskpane wizards. See "The handoff pattern" below — this file exists specifically so closing the taskpane mid-action doesn't abort the action. |
 | `help-guide.html` | Standalone page, linked from the taskpane footer ("Help Guide"). Staff-facing walkthrough of the four things people actually use day to day: File Email (manual), the automatic background filing pass, sent-email auto-save (not live yet), and Email Search. Update this whenever one of those workflows changes. |
 | `email-search.html` | The hosted email index/search page, linked from the taskpane's **Email Search** button. Generated from the `email-index` repo's own prototype `search.html` by a scratch script there — **edits to one must be mirrored in the other by hand**, this repo doesn't regenerate it. MSAL sign-in against this repo's same app registration, calls the hosted Function App described in the email-index repo's `HANDOFF.md`. |
@@ -929,6 +930,65 @@ pass, rather than one-at-a-time via File Email. Opens `batch-file-dialog.html`.
   early close costs you unsent work. A large table (742+ rows, each with its own input and
   shared datalist) is a plausible contributor to host/WebView memory pressure over a long
   session, but unconfirmed; worth revisiting with real telemetry if this still recurs.
+
+## Mailbox Sync (2026-10-26)
+
+A new taskpane tile (`mailboxSyncButton`, alongside Batch File Folder — no new ribbon button, no
+manifest change) that closes a gap File on Send deliberately leaves open: File on Send tags a
+sent reply/forward/new email with a project category but never moves anything (a deliberate
+decision — see "File on Send is live" below), and any OTHER tagged message in the conversation
+it found stays wherever it was too. Mailbox Sync is a manual, user-triggered sweep that finds
+every email anywhere in Inbox (recursively through its subfolders) or Sent Items that already
+carries a project-shaped category but was never staged, and moves each one into "Master Email
+Management/Emails Awaiting Sync" — the same destination File Email stages into — so the existing
+`SyncEmails` timer then files it from there. It never talks to SharePoint or the exchange-bridge
+itself; it only moves emails via Graph.
+
+- **Opens `mailbox-sync.html` via `openUrlInBrowser()` into a real OS browser tab, not an
+  Office.js dialog** — same reasoning as Batch File Folder (see that section above): a sweep
+  across a whole Inbox is exactly the kind of long-running operation Outlook's own pane-teardown
+  behavior could kill mid-run if it were a dialog instead of an independent browser process. No
+  selection to detect first (unlike Batch File Folder, which needs one selected email to find
+  *which* folder to work through) — Mailbox Sync scans the whole mailbox, so it opens with no
+  context param at all.
+- **Scope, deliberately**: Inbox and every subfolder underneath it, walked recursively via
+  `/childFolders`, plus Sent Items (not recursively — "sent folder" was asked for, not its
+  subfolders). The whole "Master Email Management" subtree (`Emails Yet to Label`/`Emails
+  Awaiting Sync`/`Synced Emails`) is excluded from the walk entirely, by display name, the moment
+  it's encountered as a child of Inbox — it's the destination/staging area itself, so anything
+  already staged or already synced must never be re-swept back into Awaiting Sync. Drafts/Junk/
+  Deleted Items/Outbox are never reached by this walk at all, since they're siblings of Inbox in
+  the mailbox tree, not descendants of it.
+- **Matching**: a message qualifies if any of its categories matches the same project-code shape
+  used everywhere else in this codebase (`/^[a-zA-Z]{5}\d{5}[_\s-]/`, mirroring
+  `EmailFilingSync.psm1`'s `$ProjectCodePattern`) AND it doesn't already carry the `"Filed"`
+  completion-marker category. There's no server-side Graph filter for "any category matching
+  this shape" against an unbounded set of real project names (539 of them, per
+  `Get-ProjectFolderEntries`) — doing one filtered query per possible project code would be far
+  more expensive than it sounds. Instead every scanned folder is paged with a cheap
+  `$select=id,subject,categories` and filtered client-side; this doesn't attempt to resolve the
+  category to a real, currently-existing project folder at all (unlike File Email/Batch File
+  Folder's own suggestion/validation) — that's `SyncEmails`'s job once the email lands in
+  Awaiting Sync, and it already reports "no matching project folder" there if the category
+  doesn't resolve to anything real.
+- **Live progress, not a silent scan-then-report**: each matched email is logged (and moved) as
+  soon as it's found, not after the whole mailbox has been collected first — folders scanned,
+  emails checked, moved, and failed counts update continuously, since a large Inbox makes this a
+  genuinely multi-minute operation. Moves are dispatched through a small concurrency gate
+  (`MS_MOVE_CONCURRENCY = 4`, same enqueue/pump shape as `batch-file-dialog.html`'s own
+  suggestion queue) rather than fired unbounded as matches are found, and each move's result is
+  actually awaited and checked (succeeded/failed) before being counted — **not** the old
+  fire-and-forget-without-checking-results pattern Batch File Folder's own Confirm step used to
+  have (see that section's write-up on `fileGroup`'s dispatch bug above); one failed move is
+  logged and the sweep continues, never aborts the rest of the mailbox.
+- **Not done, deliberately**: no attempt to detect or warn about an email the user might
+  specifically want to keep in Inbox forever without filing — if that's a real need, it doesn't
+  exist as a concept anywhere else in this app either (File Email/File on Send would already have
+  staged it), so Mailbox Sync doesn't introduce a new gap here, just inherits the existing one.
+- **Naming**: CLAUDE.md's file inventory separately notes the old, retired taskpane "Sync Emails"
+  button/local desktop Filer ("it's now fully automatic") — this is a different, narrower tool
+  (find-and-stage already-labelled stragglers, not do the filing itself), but reuses a similar
+  name on purpose, per explicit instruction, despite that history.
 
 ## Reclassify project + multiselect bulk actions (2026-10-08)
 

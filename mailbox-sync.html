@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Mailbox Sync</title>
+  <script type="text/javascript" src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
+  <style>
+    :root{
+      --green:#408F4E; --green-dark:#2D6B38; --green-pale:#EDF7EE;
+      --grey-900:#2B2B2B; --grey-600:#646464; --grey-400:#909090;
+      --grey-500:#787878; --grey-300:#B4B4B4; --grey-200:#DCDCDC; --grey-100:#EFEFEF; --grey-50:#F7F7F7;
+      --font-display:'Bahnschrift','DIN Alternate','Segoe UI',sans-serif;
+      --font-body:'Calibri','Segoe UI',system-ui,sans-serif;
+      --font-mono:'Consolas','Courier New',monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;padding:0;background:#fff;font-family:var(--font-body);
+         font-size:13px;line-height:1.5;color:var(--grey-600);-webkit-font-smoothing:antialiased}
+    a{color:var(--green-dark);text-decoration:none}
+    a:hover{color:var(--green);text-decoration:underline}
+
+    #brandBar{background:var(--grey-900);padding:14px 20px;display:flex;align-items:center;gap:10px}
+    #brandBar img{width:26px;height:26px}
+    #brandBar .word{font-family:var(--font-display);font-size:14px;font-weight:600;color:#fff;letter-spacing:.14em}
+    #brandBar .sub{font-size:10.5px;color:var(--grey-400);letter-spacing:.05em}
+
+    #signInPrompt{padding:60px 24px;text-align:center}
+    #signInPrompt p{margin:0 0 20px;font-size:13px;color:var(--grey-600)}
+    #signInButton{padding:10px 24px;font:600 13px var(--font-body);color:#fff;background:var(--green);
+      border:1px solid var(--green);border-radius:4px;cursor:pointer}
+    #signInButton:hover{background:var(--green-dark)}
+
+    #appBody{max-width:780px;margin:0 auto;padding:16px 22px 26px}
+
+    button{display:block;width:auto;margin:0 0 9px;padding:11px 22px;
+      font:600 13px/1.2 var(--font-body);letter-spacing:.02em;color:#fff;
+      background:var(--green);border:1px solid var(--green);border-radius:6px;cursor:pointer}
+    button:hover{background:var(--green-dark);border-color:var(--green-dark)}
+    button:disabled{background:var(--grey-100);border-color:var(--grey-200);color:var(--grey-500);cursor:not-allowed}
+    .link-button{appearance:none;border:none;background:none;color:var(--grey-600);
+      font:600 11.5px/1.2 var(--font-body);cursor:pointer;padding:6px 2px;text-align:left;width:auto;display:inline-block}
+    .link-button:hover{color:var(--grey-900);text-decoration:underline}
+
+    .summary-box{border:1px solid var(--grey-200);border-radius:8px;padding:14px;font-size:12.5px;background:var(--grey-50);margin-bottom:14px}
+    .summary-box .row{margin-bottom:6px}
+    .summary-box .row:last-child{margin-bottom:0}
+    .summary-box .label{font-weight:600;color:var(--grey-900)}
+    .summary-box.warn{border-color:#EAD3A3;background:#FFF8E1;color:#9A6A1E}
+
+    #msIntro p{font-size:13px;color:var(--grey-600);margin:0 0 14px}
+    #msIntro ul{margin:0 0 18px;padding-left:20px;font-size:12.5px}
+    #msIntro li{margin-bottom:6px}
+
+    #msProgressBox{font-size:12.5px}
+    #msCounts{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:4px}
+    #msCounts .stat{display:flex;flex-direction:column}
+    #msCounts .stat b{font-size:17px;color:var(--grey-900);font-family:var(--font-display)}
+    #msCounts .stat span{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--grey-400)}
+
+    #msLogWrap{max-height:360px;overflow-y:auto;border:1px solid var(--grey-200);border-radius:8px;margin:14px 0}
+    #msLog{width:100%;border-collapse:collapse;font-size:12px}
+    #msLog thead th{position:sticky;top:0;background:var(--grey-50);text-align:left;padding:7px 9px;
+      font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--grey-400);border-bottom:1px solid var(--grey-200)}
+    #msLog td{padding:6px 9px;border-bottom:1px solid var(--grey-100);vertical-align:top}
+    #msLog tr:last-child td{border-bottom:none}
+    .ms-folder{color:var(--grey-400);font-size:10.5px}
+    .ms-subject{color:var(--grey-900);max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .ms-status{white-space:nowrap}
+    .ms-status.moved{color:var(--green-dark)}
+    .ms-status.failed{color:#B3401F}
+    #msEmptyLog{color:var(--grey-400);font-size:12px;padding:14px;text-align:center}
+  </style>
+</head>
+<body>
+  <div id="brandBar">
+    <img src="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" alt="Summation" />
+    <div>
+      <div class="word">SUMMATION</div>
+      <div class="sub">Mailbox Sync</div>
+    </div>
+  </div>
+
+  <div id="signInPrompt">
+    <p>Please sign in to run Mailbox Sync.</p>
+    <button id="signInButton">Sign In</button>
+  </div>
+
+  <div id="appBody" style="display:none;">
+    <div id="msStepIntro">
+      <p>
+        Finds emails anywhere in your Inbox (including its subfolders) or Sent Items that already
+        have a project category applied, but were never moved into
+        <b>Master Email Management &rarr; Emails Awaiting Sync</b> for automatic filing — e.g.
+        anything tagged via <b>Categorise Reply</b>/<b>Categorise Conversation</b> on send, or
+        labelled some other way and left in place.
+      </p>
+      <ul>
+        <li>Every match gets <b>moved</b> into Emails Awaiting Sync, same as File Email does — nothing
+        is filed to SharePoint directly by this tool, the existing automatic sync picks it up from there.</li>
+        <li>The <b>Master Email Management</b> folder itself (Emails Yet to Label / Emails Awaiting
+        Sync / Synced Emails) is never scanned — nothing already staged or already filed gets touched.</li>
+        <li>Anything already tagged <b>Filed</b> is left alone, even if it also carries a project category.</li>
+      </ul>
+      <div id="msIntroError" class="summary-box warn" style="display:none;"></div>
+      <button id="msStartButton">Start Mailbox Sync</button>
+    </div>
+
+    <div id="msStepRunning" style="display:none;">
+      <div class="summary-box" id="msProgressBox">
+        <div class="row" id="msPhaseLine">Starting...</div>
+        <div class="row" id="msCounts">
+          <div class="stat"><b id="msCountFolders">0</b><span>Folders scanned</span></div>
+          <div class="stat"><b id="msCountChecked">0</b><span>Emails checked</span></div>
+          <div class="stat"><b id="msCountMoved">0</b><span>Moved</span></div>
+          <div class="stat"><b id="msCountFailed">0</b><span>Failed</span></div>
+        </div>
+      </div>
+      <div id="msLogWrap">
+        <table id="msLog">
+          <thead><tr><th>Folder</th><th>Subject</th><th>Status</th></tr></thead>
+          <tbody id="msLogBody"></tbody>
+        </table>
+        <div id="msEmptyLog">No matches found yet...</div>
+      </div>
+    </div>
+
+    <div id="msStepDone" style="display:none;">
+      <div class="summary-box" id="msDoneSummary"></div>
+      <button id="msCloseButton">Close</button>
+      <button id="msAnotherButton" class="link-button">Run Mailbox Sync Again</button>
+    </div>
+  </div>
+
+  <script>
+    // Mailbox Sync: a manual sweep for emails anywhere in Inbox (recursively) or Sent Items that
+    // already carry a project category but were never staged into "Emails Awaiting Sync" --
+    // closes the one gap File on Send deliberately leaves open (it tags the sent reply/forward
+    // with a project but never moves anything, see commands.js's onMessageSendHandler and
+    // help-guide.html's "File on Send" section), plus anything else a user hand-labelled and
+    // left in place. This tool only MOVES matches into Emails Awaiting Sync -- it never files
+    // anything to SharePoint itself; the existing SyncEmails timer does that from there, exactly
+    // as if File Email had staged it.
+    //
+    // Opened via openUrlInBrowser() into a real OS browser tab, not an Office.js dialog -- same
+    // reasoning as Batch File Folder (see its own header comment and CLAUDE.md's "Batch File
+    // Folder" section): a long-running scan across the whole Inbox is exactly the kind of
+    // operation Outlook's own pane-teardown behavior could kill mid-run if it were a dialog
+    // instead of an independent browser process.
+
+    const PROJECT_CATEGORY_PATTERN = /^[a-zA-Z]{5}\d{5}[_\s-]/;
+    const MASTER_FOLDER_NAME = "Master Email Management";
+    const MS_MOVE_CONCURRENCY = 4;
+
+    const msalConfig = {
+      auth: {
+        clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
+        authority: "https://login.microsoftonline.com/ecb5f458-9548-4e8b-96f3-904f1828f931",
+        redirectUri: window.location.origin + window.location.pathname
+      },
+      cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+    };
+
+    const graphRequest = { scopes: ["User.Read"] };
+    const mailWriteRequest = { scopes: ["Mail.ReadWrite", "MailboxSettings.ReadWrite"] };
+
+    let msalInstance;
+
+    // Same close-guard pattern as Batch File Folder/File Email -- warn before an in-flight scan
+    // is abandoned by closing this window. Unlike the bridge-dispatched batches those pages
+    // track, a move already sent here has already landed server-side by the time this page
+    // would know about it (a plain Graph POST, not a fire-and-forget chunk), so there's nothing
+    // to resume -- the guard exists purely so a user doesn't close mid-run by accident and wonder
+    // why only half their mailbox got checked.
+    let actionInProgress = false;
+    window.addEventListener("beforeunload", (e) => {
+        if (actionInProgress) { e.preventDefault(); e.returnValue = ""; }
+    });
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    window.addEventListener("load", () => {
+        document.getElementById("signInButton").addEventListener("click", handleLogin);
+        document.getElementById("msStartButton").addEventListener("click", handleStart);
+        document.getElementById("msCloseButton").addEventListener("click", () => window.close());
+        document.getElementById("msAnotherButton").addEventListener("click", resetToIntro);
+
+        msalInstance = new msal.PublicClientApplication(msalConfig);
+        attemptSilentSignIn();
+    });
+
+    function showApp(show) {
+        document.getElementById("appBody").style.display = show ? "block" : "none";
+        document.getElementById("signInPrompt").style.display = show ? "none" : "block";
+    }
+
+    async function signInAndGetToken(request, isUserAction) {
+        const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+        if (account) {
+            try {
+                const silentResponse = await msalInstance.acquireTokenSilent({ ...request, account });
+                return silentResponse.accessToken;
+            } catch (error) {
+                if (error instanceof msal.InteractionRequiredAuthError && isUserAction) {
+                    const interactiveResponse = await msalInstance.acquireTokenPopup(request);
+                    return interactiveResponse.accessToken;
+                }
+                throw error;
+            }
+        }
+        if (isUserAction) {
+            const loginResponse = await msalInstance.loginPopup(request);
+            msalInstance.setActiveAccount(loginResponse.account);
+            return loginResponse.accessToken;
+        }
+        return null;
+    }
+
+    async function handleLogin() {
+        try {
+            const loginResponse = await msalInstance.loginPopup(graphRequest);
+            msalInstance.setActiveAccount(loginResponse.account);
+            showApp(true);
+        } catch (err) {
+            console.error("Sign in failed:", err);
+        }
+    }
+
+    async function attemptSilentSignIn() {
+        try {
+            const token = await signInAndGetToken(graphRequest, false);
+            showApp(!!token);
+        } catch (err) {
+            showApp(false);
+        }
+    }
+
+    // ---- Graph helpers (ported from batch-file-dialog.html -- see its own comment on the
+    // retry wrapper; a sweep across a whole Inbox means dozens-to-hundreds of sequential calls,
+    // same reasoning applies here) ----
+
+    const GRAPH_MAX_RETRIES = 5;
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function graphBackoffMs(attempt) {
+        return Math.min(1000 * Math.pow(2, attempt), 16000);
+    }
+
+    async function graphFetchWithRetry(url, token, options = {}, attempt = 0) {
+        let response;
+        try {
+            response = await fetch(url, { ...options, headers: { Authorization: `Bearer ${token}`, ...(options.headers || {}) } });
+        } catch (networkErr) {
+            if (attempt >= GRAPH_MAX_RETRIES) throw networkErr;
+            await sleep(graphBackoffMs(attempt));
+            return graphFetchWithRetry(url, token, options, attempt + 1);
+        }
+        if ((response.status === 429 || response.status === 503 || response.status === 504) && attempt < GRAPH_MAX_RETRIES) {
+            const retryAfter = parseFloat(response.headers.get("Retry-After"));
+            await sleep(!isNaN(retryAfter) ? retryAfter * 1000 : graphBackoffMs(attempt));
+            return graphFetchWithRetry(url, token, options, attempt + 1);
+        }
+        return response;
+    }
+
+    async function graphGet(url, token) {
+        const response = await graphFetchWithRetry(url, token);
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    async function graphPost(url, token, body) {
+        const response = await graphFetchWithRetry(url, token, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Graph API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        return response.json();
+    }
+
+    // Resolves (creating if missing) a mail folder under the given parent -- "inbox" by default.
+    // Ported verbatim from file-email-dialog.html/batch-file-dialog.html -- mirrors the
+    // server-side Get-OrCreateMailFolder in EmailFilingSync.psm1.
+    async function getOrCreateMailFolder(displayName, token, parentId) {
+        const parent = parentId || "inbox";
+        const existing = await graphGet(
+            `https://graph.microsoft.com/v1.0/me/mailFolders/${parent}/childFolders?$filter=${encodeURIComponent(`displayName eq '${displayName}'`)}`,
+            token
+        );
+        if (existing.value && existing.value.length > 0) return existing.value[0].id;
+
+        const response = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${parent}/childFolders`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ displayName })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Could not create "${displayName}": ${response.status} ${errorText}`);
+        }
+        const created = await response.json();
+        return created.id;
+    }
+
+    async function getOrCreateEmailsAwaitingSyncFolderId(token) {
+        const masterId = await getOrCreateMailFolder("Master Email Management", token);
+        return getOrCreateMailFolder("Emails Awaiting Sync", token, masterId);
+    }
+
+    // ---- Category matching ----
+
+    function findProjectCategory(categories) {
+        return (categories || []).find(c => PROJECT_CATEGORY_PATTERN.test(c)) || null;
+    }
+
+    function isAlreadyFiled(categories) {
+        return (categories || []).includes("Filed");
+    }
+
+    // ---- Folder enumeration: Inbox + every subfolder, recursively, excluding the whole
+    // "Master Email Management" subtree (never scanned -- it's the destination/staging area
+    // itself, and the only thing under it worth finding, an already-staged or already-synced
+    // email, would be actively wrong to re-move). Inbox's own children are always
+    // user-created folders in this mailbox layout -- Drafts/Sent/Junk/Deleted Items live as
+    // siblings of Inbox, not underneath it, so this walk never reaches them. ----
+
+    async function collectScanFolders(token, onDiscover) {
+        const inbox = await graphGet("https://graph.microsoft.com/v1.0/me/mailFolders/inbox?$select=id,displayName", token);
+        const folders = [{ id: inbox.id, displayName: "Inbox" }];
+        if (onDiscover) onDiscover(folders.length);
+
+        async function walk(parentId, pathPrefix) {
+            const data = await graphGet(
+                `https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(parentId)}/childFolders` +
+                "?$select=id,displayName,childFolderCount&$top=999",
+                token
+            );
+            for (const child of (data.value || [])) {
+                if (child.displayName === MASTER_FOLDER_NAME) continue; // never scan the staging/destination subtree
+                const path = `${pathPrefix}/${child.displayName}`;
+                folders.push({ id: child.id, displayName: path });
+                if (onDiscover) onDiscover(folders.length);
+                if (child.childFolderCount > 0) await walk(child.id, path);
+            }
+        }
+        await walk(inbox.id, "Inbox");
+
+        const sentItems = await graphGet("https://graph.microsoft.com/v1.0/me/mailFolders/sentitems?$select=id,displayName", token);
+        folders.push({ id: sentItems.id, displayName: "Sent Items" });
+        if (onDiscover) onDiscover(folders.length);
+        return folders;
+    }
+
+    // ---- Scanning one folder: pages through every message, reporting each project-categorized,
+    // not-yet-Filed match via onMatch as soon as it's found (rather than collecting everything
+    // first) -- the whole point of this page is to show live progress on what is, for a large
+    // Inbox, a genuinely long-running sweep. ----
+
+    async function scanFolder(folder, token, onChecked, onMatch) {
+        let url = `https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(folder.id)}/messages` +
+            "?$select=id,subject,categories&$top=100";
+        while (url) {
+            const page = await graphGet(url, token);
+            for (const msg of (page.value || [])) {
+                onChecked();
+                const projectCategory = findProjectCategory(msg.categories);
+                if (projectCategory && !isAlreadyFiled(msg.categories)) {
+                    onMatch(folder, msg, projectCategory);
+                }
+            }
+            url = page["@odata.nextLink"] || null;
+        }
+    }
+
+    // ---- UI wiring ----
+
+    function showMsStep(step) {
+        document.getElementById("msStepIntro").style.display = step === "intro" ? "block" : "none";
+        document.getElementById("msStepRunning").style.display = step === "running" ? "block" : "none";
+        document.getElementById("msStepDone").style.display = step === "done" ? "block" : "none";
+    }
+
+    function resetToIntro() {
+        document.getElementById("msLogBody").innerHTML = "";
+        document.getElementById("msEmptyLog").style.display = "block";
+        showMsStep("intro");
+    }
+
+    let msCounts = { folders: 0, checked: 0, moved: 0, failed: 0 };
+
+    function renderCounts() {
+        document.getElementById("msCountFolders").textContent = msCounts.folders;
+        document.getElementById("msCountChecked").textContent = msCounts.checked;
+        document.getElementById("msCountMoved").textContent = msCounts.moved;
+        document.getElementById("msCountFailed").textContent = msCounts.failed;
+    }
+
+    function setPhase(text) {
+        document.getElementById("msPhaseLine").textContent = text;
+    }
+
+    function addLogRow(folder, subject, statusText, statusClass) {
+        document.getElementById("msEmptyLog").style.display = "none";
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td class="ms-folder">${escapeHtml(folder.displayName)}</td>` +
+            `<td class="ms-subject" title="${escapeHtml(subject)}">${escapeHtml(subject)}</td>` +
+            `<td class="ms-status ${statusClass}">${escapeHtml(statusText)}</td>`;
+        const body = document.getElementById("msLogBody");
+        body.insertBefore(tr, body.firstChild); // newest first -- matches a "live feed" reading order
+    }
+
+    function handleStart() {
+        return runMailboxSync();
+    }
+
+    async function runMailboxSync() {
+        document.getElementById("msIntroError").style.display = "none";
+        msCounts = { folders: 0, checked: 0, moved: 0, failed: 0 };
+        msMoveActive = 0;
+        msMovePending.length = 0;
+        msMoveAllPromises.length = 0;
+        renderCounts();
+        showMsStep("running");
+        setPhase("Signing in...");
+        actionInProgress = true;
+        try {
+            const token = await signInAndGetToken(mailWriteRequest, true);
+            if (!token) throw new Error("Could not get permission to access your mailbox.");
+
+            setPhase("Resolving the Emails Awaiting Sync folder...");
+            const destinationFolderId = await getOrCreateEmailsAwaitingSyncFolderId(token);
+
+            setPhase("Finding folders to scan (Inbox and its subfolders, Sent Items)...");
+            const folders = await collectScanFolders(token, (count) => {
+                setPhase(`Finding folders to scan... ${count} found so far`);
+            });
+
+            for (const folder of folders) {
+                setPhase(`Scanning "${folder.displayName}"...`);
+                await scanFolder(
+                    folder,
+                    token,
+                    () => { msCounts.checked++; renderCounts(); },
+                    (folder, msg, projectCategory) => {
+                        enqueueMove(folder, msg, projectCategory, destinationFolderId, token);
+                    }
+                );
+                msCounts.folders++;
+                renderCounts();
+            }
+
+            setPhase("Finishing remaining moves...");
+            await Promise.all(msMoveAllPromises);
+
+            setPhase("Done.");
+            showDoneSummary(null);
+        } catch (err) {
+            console.error("Mailbox Sync failed:", err);
+            setPhase("Stopped — an error occurred.");
+            showDoneSummary(err.message);
+        } finally {
+            actionInProgress = false;
+        }
+    }
+
+    // Each match's move is wrapped in its own try/catch so one failure never stops the sweep --
+    // same "log and continue" approach the fork's own feasibility discussion called for. Queued
+    // through a small concurrency gate (same enqueue/pump shape as batch-file-dialog.html's own
+    // suggestion queue) rather than fired unbounded as each match is found -- a heavily-labelled
+    // Inbox could otherwise throw dozens of simultaneous move calls at Graph at once.
+    let msMoveActive = 0;
+    const msMovePending = [];
+    const msMoveAllPromises = [];
+
+    function enqueueMove(folder, msg, projectCategory, destinationFolderId, token) {
+        const promise = new Promise((resolve) => {
+            msMovePending.push({ folder, msg, projectCategory, destinationFolderId, token, resolve });
+        });
+        msMoveAllPromises.push(promise);
+        pumpMoveQueue();
+    }
+
+    function pumpMoveQueue() {
+        while (msMoveActive < MS_MOVE_CONCURRENCY && msMovePending.length > 0) {
+            const job = msMovePending.shift();
+            msMoveActive++;
+            moveMatch(job.folder, job.msg, job.projectCategory, job.destinationFolderId, job.token)
+                .finally(() => { msMoveActive--; job.resolve(); pumpMoveQueue(); });
+        }
+    }
+
+    async function moveMatch(folder, msg, projectCategory, destinationFolderId, token) {
+        const subject = msg.subject || "(no subject)";
+        try {
+            await graphPost(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(msg.id)}/move`, token, {
+                destinationId: destinationFolderId
+            });
+            msCounts.moved++;
+            renderCounts();
+            addLogRow(folder, subject, `Moved (${projectCategory})`, "moved");
+        } catch (err) {
+            msCounts.failed++;
+            renderCounts();
+            addLogRow(folder, subject, `Failed — ${err.message}`, "failed");
+        }
+    }
+
+    function showDoneSummary(errorMessage) {
+        const box = document.getElementById("msDoneSummary");
+        box.className = errorMessage ? "summary-box warn" : "summary-box";
+        box.innerHTML = `
+            <div class="row">${errorMessage ? `Stopped early: ${escapeHtml(errorMessage)}` : "Finished."}</div>
+            <div class="row">${msCounts.folders} folder(s) scanned, ${msCounts.checked} email(s) checked.</div>
+            <div class="row">${msCounts.moved} moved into Emails Awaiting Sync${msCounts.failed ? `, ${msCounts.failed} failed` : ""}.</div>
+            ${msCounts.moved > 0 ? '<div class="row">The automatic sync (every ~5 minutes) will file these from there, same as File Email.</div>' : ""}
+        `;
+        showMsStep("done");
+    }
+  </script>
+</body>
+</html>
