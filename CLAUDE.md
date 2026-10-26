@@ -517,6 +517,33 @@ structure, or renaming the (unrelated) `"Filed"` Outlook *category* string —
 neither was asked for, and the transitional read keeps old data flowing
 without one.
 
+**Found/fixed, 2026-10-26 — the "unrolled byte[]" PowerShell gotcha struck a
+second time, this time as a host-crashing CPU spike, not silent corruption**:
+while verifying the folder restructuring above actually worked in production,
+`SyncEmails` runs kept dying ~90 seconds in (`DrainMode mode enabled` /
+`Stopping the listener`, visible in Application Insights as a preceding
+`Host CPU threshold exceeded` warning), never reaching their `run complete`
+log line. Root cause: `Add-SummationLabelsHeader` in `EmailFilingSync.psm1`
+did `return $combined` on a `byte[]` — the exact same missing-unary-comma
+pattern as `ConvertFrom-CorruptedBytes` in the 2026-10-21/22 corruption
+incident above, in a different function that the remediation pass back then
+didn't think to check. This time the symptom was different because the
+array is *much* bigger (a whole email's raw MIME bytes, not a short decoded
+buffer): the Azure Functions PowerShell worker traces every unrolled
+pipeline object individually regardless of whether the caller's plain
+assignment (`$stampedBytes = Add-SummationLabelsHeader ...`) later
+reassembles them, so filing one email with real content emitted roughly one
+Application Insights trace line *per byte* — enough on its own to spike host
+CPU and trigger a platform-level restart before the run could finish. Fixed
+the same way: `return ,$combined`. **Lesson for next time**: grep
+`EmailFilingSync.psm1` for `return \$[a-zA-Z]+$` (no leading comma) whenever
+touching it — two other hits exist (`Get-GraphAllPages`'s `$items`,
+`Get-ProjectFolderEntries`'s `$entries`), both arrays of Graph objects rather
+than raw bytes, lower-impact since every current call site happens to
+re-wrap the result in `@(...)` or a plain assignment, but the same
+trace-flood mechanism applies at a smaller scale — not fixed yet, deliberately
+out of scope for this pass.
+
 **Incident, 2026-10-07 — sends hanging on "add-in taking longer than
 expected"**: a teammate (classic Outlook for Windows) got stuck on
 Outlook's own slow-add-in warning when sending, with no visible picker
@@ -1508,7 +1535,10 @@ a perfectly correct preview — a method call's own argument binding coerces `ob
 silently serialized the wrapped array as something that was not the real bytes. Fixed with the
 unary comma operator: `return ,$bytes`. **Confirmed live, end to end**: `SUPER26102_Babylon`'s
 filed email now reads correctly both via the Graph API and the local OneDrive-synced copy,
-immediately, no propagation delay.
+immediately, no propagation delay. **This exact gotcha struck again 2026-10-26** in a different
+function (`Add-SummationLabelsHeader`) — see the "Found/fixed, 2026-10-26" entry under the folder
+restructuring section above; worth a full grep of `EmailFilingSync.psm1` for this pattern before
+trusting any new code added to it.
 
 **Status as of 2026-10-22**: bulk remediation has been RUN and is complete. After the individual
 test-file confirmations, a Node.js driver (byte-budgeted batches of ~800KB/5 files, 4-way
