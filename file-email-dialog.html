@@ -1233,14 +1233,19 @@
         renderFeStatusText(`<div class="row">Filing "${categoryName}" — continuing in the background.</div>`);
         feTiming("UI shows 'continuing in the background'");
 
-        // Auto-close disabled 2026-10-07 while the AppDomains manifest fix is still
-        // propagating (see CLAUDE.md) -- leaving this window open on purpose so pending-
-        // batch outcomes and errors stay visible instead of disappearing immediately.
-        // The parent-initiated close plumbing (messageParent({action:"close"}) and the
-        // taskpane.html/commands.js listeners for it) is still in place and working, just
-        // not called here; re-add the two lines below to turn it back on:
-        //   messageParent({ action: "close" });
-        //   setTimeout(() => { try { Office.context.ui.closeContainer(); } catch (err) { window.close(); } }, 1500);
+        // Re-enabled 2026-10-27 (disabled 2026-10-07 while the AppDomains manifest fix was
+        // still propagating -- see CLAUDE.md's "File Email is a dialog, not a wizard"; that fix
+        // has long since landed, and the whole point of the fire-and-forget design above is
+        // that nothing after this point needs the user to wait around for it). The background
+        // categorize+move keeps running server-side regardless of whether this window still
+        // exists (same guarantee postFeBatch's own comment relies on, confirmed live per
+        // CLAUDE.md's "closing File Email's dialog turned out not to need any of this waiting
+        // at all"). A failure there still surfaces later via the "Recent File Email batches"
+        // notice next time File Email opens, so closing now doesn't silently lose anything --
+        // it just means the background completion timing rows below this point in the timing
+        // box will never actually be seen, since the page closes before they can fire.
+        messageParent({ action: "close" });
+        setTimeout(() => { try { Office.context.ui.closeContainer(); } catch (err) { window.close(); } }, 1500);
     }
   </script>
 </body>

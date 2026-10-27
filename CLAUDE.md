@@ -383,6 +383,43 @@ interactive-consent popup getting blocked because it wasn't a direct click) clea
 the real Confirm-time call — which *does* have a genuine user gesture — gets a clean retry rather
 than inheriting a cached rejection.
 
+**Timing diagnostics + the actual remaining cost, same investigation**: with the above fixes
+live, a real test showed "Filing X — continuing in the background" now rendering in ~200ms (down
+from several seconds) — but the dialog still visibly sat around for another ~1.5s before the
+*background* bridge call (categorize + move, `FileEmailBatch`) actually finished. Added on-page
+timing diagnostics (not just `console.log`, since this is an Office.js dialog inside Outlook's own
+WebView where a normal user can't easily attach DevTools) rendered right into the result step,
+marking: prefetch start/settle (relative to page load), pre-flight settle, batch-recorded,
+UI-shows-message, and — once it actually lands — the background call's token-acquisition,
+response, and full-completion times, all relative to when Confirm was clicked.
+
+That data pinned the remaining ~1.5s squarely on `FileEmailBatch` itself, not on this dialog's own
+JS. Investigated whether that's reducible: it does 3 sequential Graph calls per email (read
+current categories → PATCH the merged set → move to the destination folder). The read is
+load-bearing, not incidental — Graph's category PATCH *replaces* the whole array rather than
+merging, and this exact codebase has already been burned once by reusing a stale categories
+snapshot instead of a fresh read right before writing (see `SyncEmails`'s own comment on this).
+PATCH-then-move can't combine into one Graph call, and categorizing before moving (not the
+reverse) is itself relied upon elsewhere (the bridge's own "already-filed" retry-detection logic
+assumes that fixed order). Checked the bridge's hosting region (Australia East — correct for an
+AU tenant, not a mismatch) and confirmed `Import-Module ... -Force` on every invocation is
+negligible (the module is 51 lines). Conclusion: ~1.5s for 3 necessary, correctly-ordered,
+sequential Graph round-trips is close to an honest floor for this architecture — no safe code
+change found that meaningfully cuts it further.
+
+**Given that, re-enabled auto-close (2026-10-27)** — originally disabled 2026-10-07 while the
+`AppDomains` manifest fix was still propagating (long since landed) and specifically to keep
+pending-batch outcomes/errors visible instead of disappearing immediately. Since the remaining
+background time can't be meaningfully shortened, there's no more "wait and watch" value in
+keeping the dialog open through it: `messageParent({action:"close"})` + the 1.5s self-close
+fallback are back in `handleFeConfirmInner`, right after the "continuing in the background"
+message renders. The background categorize+move still runs to completion server-side regardless
+(confirmed live per the "Follow-up" note above), and a failure still surfaces later via the
+"Recent File Email batches" notice next time File Email opens — closing now doesn't silently lose
+anything, it just means the timing box's background-completion rows will never actually be seen
+in normal use, since the page closes before they fire. Re-disable by commenting those two lines
+back out (same as before) if this ever needs revisiting.
+
 ## File on Send is live (2026-10-06)
 
 Replaces the earlier `onMessageSendHandler` phase-1 probe (which only
