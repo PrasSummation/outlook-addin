@@ -1209,15 +1209,12 @@
         addFeBatchToStorage(batchEntry);
         feTiming("Batch recorded locally (localStorage)");
 
-        // Fire the actual categorize+move request, but don't make the user wait here for
-        // it to finish -- the bridge keeps it running to completion on its own regardless
-        // of whether this dialog is even still open (see postFeBatch's own comment), and
-        // the batch is already durably tracked in localStorage just above. Whatever
-        // happens (success, failure, or no response at all) gets reported the next time
-        // any File Email dialog opens, via the pending-batch check -- same mechanism
-        // that's always covered the "dialog closed before the response landed" case, now
-        // just deliberately used every time instead of only when it happens by accident.
-        postFeBatch(batchEntry)
+        // Fire the actual categorize+move request, but don't make the UI wait here for it to
+        // finish before showing "continuing in the background" -- the batch is already durably
+        // tracked in localStorage just above, so even a genuinely lost response is recoverable
+        // via the pending-batch check. The auto-close below, however, DOES wait for this chain
+        // to settle -- see its own comment for why that's load-bearing, not just cautious.
+        const backgroundBatch = postFeBatch(batchEntry)
             .then((result) => {
                 removeFeBatchFromStorage(batchId);
                 return finalizeFeBatchResult(batchEntry, result);
@@ -1233,19 +1230,22 @@
         renderFeStatusText(`<div class="row">Filing "${categoryName}" — continuing in the background.</div>`);
         feTiming("UI shows 'continuing in the background'");
 
-        // Re-enabled 2026-10-27 (disabled 2026-10-07 while the AppDomains manifest fix was
-        // still propagating -- see CLAUDE.md's "File Email is a dialog, not a wizard"; that fix
-        // has long since landed, and the whole point of the fire-and-forget design above is
-        // that nothing after this point needs the user to wait around for it). The background
-        // categorize+move keeps running server-side regardless of whether this window still
-        // exists (same guarantee postFeBatch's own comment relies on, confirmed live per
-        // CLAUDE.md's "closing File Email's dialog turned out not to need any of this waiting
-        // at all"). A failure there still surfaces later via the "Recent File Email batches"
-        // notice next time File Email opens, so closing now doesn't silently lose anything --
-        // it just means the background completion timing rows below this point in the timing
-        // box will never actually be seen, since the page closes before they can fire.
-        messageParent({ action: "close" });
-        setTimeout(() => { try { Office.context.ui.closeContainer(); } catch (err) { window.close(); } }, 1500);
+        // Found live 2026-10-27, right after re-enabling auto-close: closing *immediately* here
+        // (parallel with, not after, postFeBatch above) destroys this dialog's entire JS
+        // execution context -- including postFeBatch's own in-flight MSAL token acquisition,
+        // which hadn't even finished yet -- before the actual fetch() to the bridge was ever
+        // sent. Confirmed live: the email was neither categorized nor moved, and its tracked
+        // batch sat as "still processing" indefinitely, because nothing was ever dispatched for
+        // it to process. postFeBatch's own "the bridge keeps it running regardless of whether
+        // this dialog is open" guarantee only applies once Azure Functions has actually received
+        // the request -- closing before that moment doesn't interrupt a running request, it
+        // prevents one from ever being made. Fix: wait for `backgroundBatch` (success or
+        // failure) before closing at all, so the close can never land earlier than the moment
+        // the real work is actually done.
+        backgroundBatch.finally(() => {
+            messageParent({ action: "close" });
+            setTimeout(() => { try { Office.context.ui.closeContainer(); } catch (err) { window.close(); } }, 1500);
+        });
     }
   </script>
 </body>

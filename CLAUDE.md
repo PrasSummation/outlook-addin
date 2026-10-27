@@ -411,14 +411,24 @@ change found that meaningfully cuts it further.
 `AppDomains` manifest fix was still propagating (long since landed) and specifically to keep
 pending-batch outcomes/errors visible instead of disappearing immediately. Since the remaining
 background time can't be meaningfully shortened, there's no more "wait and watch" value in
-keeping the dialog open through it: `messageParent({action:"close"})` + the 1.5s self-close
-fallback are back in `handleFeConfirmInner`, right after the "continuing in the background"
-message renders. The background categorize+move still runs to completion server-side regardless
-(confirmed live per the "Follow-up" note above), and a failure still surfaces later via the
-"Recent File Email batches" notice next time File Email opens — closing now doesn't silently lose
-anything, it just means the timing box's background-completion rows will never actually be seen
-in normal use, since the page closes before they fire. Re-disable by commenting those two lines
-back out (same as before) if this ever needs revisiting.
+keeping the dialog open through it.
+
+**First attempt broke filing entirely, caught live within minutes**: closed immediately,
+in parallel with (not after) kicking off the fire-and-forget `postFeBatch` call. This destroys
+the dialog's whole JS execution context — including `postFeBatch`'s own in-flight MSAL token
+acquisition, which hadn't even settled yet — before the actual `fetch()` to the bridge was ever
+sent. Confirmed live: the email was neither categorized nor moved, and its tracked batch sat as
+"still processing" indefinitely in the pending-batches notice, because nothing was ever
+dispatched for the bridge to process in the first place. The existing "the bridge keeps a batch
+running regardless of whether this dialog is still open" guarantee (relied on throughout this
+file and `batch-file-dialog.html`) only ever applied from the moment Azure Functions actually
+*receives* the request — closing before that moment doesn't interrupt work in progress, it
+prevents the request from ever being made. **Fix**: the close is now chained onto
+`backgroundBatch.finally(...)` — i.e. it waits for the fire-and-forget chain to actually settle
+(success or failure) before calling `messageParent({action:"close"})` at all, so it can never
+land earlier than the real work being done. This means the dialog still takes the full ~1.5–1.8s
+(the bridge floor established above) to actually close, but that's the correct trade-off: a
+close that can race ahead of the request it's supposed to follow isn't safe at any speed.
 
 ## File on Send is live (2026-10-06)
 
