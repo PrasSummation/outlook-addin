@@ -35,6 +35,8 @@
     #syncStatus:hover{color:#fff;text-decoration:underline}
     #syncStatus.changed{color:#9FD6A8}
     #syncStatus.bad{color:#F2B24D}
+    #keywordsLink{flex:none;font-size:11.5px;color:var(--grey-300);white-space:nowrap}
+    #keywordsLink:hover{color:#fff;text-decoration:underline}
     #syncBtn,#rebuildKeywordsBtn{flex:none;width:30px;height:30px;border:1px solid #555;border-radius:4px;background:none;color:var(--grey-200);font-size:15px;line-height:1}
     #syncBtn:hover,#rebuildKeywordsBtn:hover{border-color:var(--green);color:#fff}
     #syncBtn.spin,#rebuildKeywordsBtn.spin{animation:spin .9s linear infinite}
@@ -202,6 +204,7 @@
       <option value="relevance">Best match</option>
     </select>
     <a id="syncStatus" href="email-index-status.html" target="_blank" rel="noopener" title="The index checks both Hub libraries for new, changed and deleted emails every 5 minutes — click for the full status dashboard"></a>
+    <a id="keywordsLink" href="project-keywords.html" target="_blank" rel="noopener" title="See what words/phrases the suggestion engine has learned per project">Keywords</a>
     <button id="rebuildKeywordsBtn" title="Rebuild the content-based suggestion keywords now, instead of waiting for the next scheduled run">&#8635;</button>
     <span id="who"></span>
   </header>

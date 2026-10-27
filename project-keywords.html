@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Project Keywords</title>
+  <script type="text/javascript" src="https://alcdn.msauth.net/browser/2.14.2/js/msal-browser.min.js"></script>
+  <style>
+    :root{
+      --green:#408F4E; --green-dark:#2D6B38; --green-pale:#EDF7EE;
+      --grey-900:#2B2B2B; --grey-600:#646464; --grey-400:#909090;
+      --grey-500:#787878; --grey-300:#B4B4B4; --grey-200:#DCDCDC; --grey-100:#EFEFEF; --grey-50:#F7F7F7;
+      --font-display:'Bahnschrift','DIN Alternate','Segoe UI',sans-serif;
+      --font-body:'Calibri','Segoe UI',system-ui,sans-serif;
+      --font-mono:'Consolas','Courier New',monospace;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0}
+    body{display:flex;flex-direction:column;font-family:var(--font-body);
+         font-size:13px;line-height:1.5;color:var(--grey-600);-webkit-font-smoothing:antialiased;background:#fff}
+    a{color:var(--green-dark);text-decoration:none}
+    a:hover{color:var(--green);text-decoration:underline}
+
+    #brandBar{flex:none;background:var(--grey-900);padding:14px 20px;display:flex;align-items:center;gap:10px}
+    #brandBar img{width:26px;height:26px}
+    #brandBar .word{font-family:var(--font-display);font-size:14px;font-weight:600;color:#fff;letter-spacing:.14em}
+    #brandBar .sub{font-size:10.5px;color:var(--grey-400);letter-spacing:.05em}
+
+    #signInPrompt{padding:60px 24px;text-align:center}
+    #signInPrompt p{margin:0 0 20px;font-size:13px;color:var(--grey-600)}
+    #signInButton{padding:10px 24px;font:600 13px var(--font-body);color:#fff;background:var(--green);
+      border:1px solid var(--green);border-radius:4px;cursor:pointer}
+    #signInButton:hover{background:var(--green-dark)}
+
+    #appBody{flex:1;display:flex;min-height:0}
+
+    #pkList{flex:none;width:320px;border-right:1px solid var(--grey-200);display:flex;flex-direction:column;min-height:0}
+    #pkListHead{flex:none;padding:12px 14px;border-bottom:1px solid var(--grey-200)}
+    #pkListHead p{margin:0 0 10px;font-size:11.5px;color:var(--grey-500)}
+    #pkFilter{width:100%;padding:7px 9px;border:1.5px solid var(--grey-200);border-radius:4px;
+      font:400 13px var(--font-body);color:var(--grey-900)}
+    #pkFilter:focus{outline:none;border-color:var(--green)}
+    #pkRows{flex:1;overflow-y:auto}
+    .pk-row{display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;
+      border-bottom:1px solid var(--grey-100);cursor:pointer}
+    .pk-row:hover{background:var(--grey-50)}
+    .pk-row.active{background:var(--green-pale)}
+    .pk-row .name{color:var(--grey-900);font-weight:600;font-size:12.5px;display:block;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .pk-row .meta{color:var(--grey-400);font-size:11px;display:block;margin-top:2px}
+    #pkEmpty{padding:20px 14px;color:var(--grey-400);font-size:12px}
+
+    #pkDetail{flex:1;min-width:0;overflow-y:auto;padding:22px 28px}
+    #pkDetailEmpty{color:var(--grey-400);font-size:13px;padding:40px 0;text-align:center}
+    #pkDetailHead h1{font-family:var(--font-display);font-size:18px;color:var(--grey-900);margin:0 0 4px}
+    #pkDetailHead .code{font-family:var(--font-mono);font-size:11.5px;color:var(--grey-400)}
+    #pkDetailMeta{margin:10px 0 20px;font-size:12px;color:var(--grey-500);
+      border:1px solid var(--grey-200);background:var(--grey-50);border-radius:8px;padding:10px 14px}
+    #pkTermsNote{font-size:12px;color:var(--grey-500);margin:0 0 12px}
+    #pkTermsWrap{border:1px solid var(--grey-200);border-radius:8px;overflow:hidden}
+    #pkTerms{width:100%;border-collapse:collapse;font-size:12.5px}
+    #pkTerms thead th{text-align:left;padding:8px 12px;font-size:10px;letter-spacing:.07em;
+      text-transform:uppercase;color:var(--grey-400);background:var(--grey-50);border-bottom:1px solid var(--grey-200)}
+    #pkTerms td{padding:7px 12px;border-bottom:1px solid var(--grey-100)}
+    #pkTerms tr:last-child td{border-bottom:none}
+    .pk-term{color:var(--grey-900);font-family:var(--font-mono)}
+    .pk-bar-cell{width:50%}
+    .pk-bar-track{background:var(--grey-100);border-radius:3px;height:8px;overflow:hidden}
+    .pk-bar-fill{background:var(--green);height:100%}
+    .pk-weight{font-family:var(--font-mono);color:var(--grey-500);text-align:right;width:70px}
+    #pkNoTerms{color:var(--grey-400);font-size:12.5px;padding:20px 0}
+  </style>
+</head>
+<body>
+  <div id="brandBar">
+    <img src="https://prassummation.github.io/outlook-addin/logo-symbol-32x32.png" alt="Summation" />
+    <div>
+      <div class="word">SUMMATION</div>
+      <div class="sub">Project Keywords</div>
+    </div>
+  </div>
+
+  <div id="signInPrompt">
+    <p>Please sign in to view project keywords.</p>
+    <button id="signInButton">Sign In</button>
+  </div>
+
+  <div id="appBody" style="display:none;">
+    <div id="pkList">
+      <div id="pkListHead">
+        <p>What the email-filing suggestion engine has learned from already-filed emails, per
+        project. Projects are listed by how many filed emails fed into them.</p>
+        <input type="text" id="pkFilter" placeholder="Filter by project name or code..." />
+      </div>
+      <div id="pkRows"><div id="pkEmpty">Loading projects...</div></div>
+    </div>
+    <div id="pkDetail">
+      <div id="pkDetailEmpty">Select a project on the left to see its keywords.</div>
+      <div id="pkDetailContent" style="display:none;">
+        <div id="pkDetailHead"></div>
+        <div id="pkDetailMeta"></div>
+        <p id="pkTermsNote">These are the terms that most distinguish this project's filed emails
+        from every other project's — a new incoming email's subject/body is checked against this
+        list as one of three suggestion signals (the other two are "same conversation already
+        filed here" and "same people have emailed into this project before").</p>
+        <div id="pkTermsWrap">
+          <table id="pkTerms">
+            <thead><tr><th>Term</th><th class="pk-bar-cell"></th><th>Weight</th></tr></thead>
+            <tbody id="pkTermsBody"></tbody>
+          </table>
+          <div id="pkNoTerms" style="display:none;">No terms yet for this project — it hasn't had
+          enough filed emails with substantial content for the suggestion engine to learn from.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Read-only visibility into the content-based suggestion signal (email-index's keywords.py,
+    // SPEC_ContentBasedProjectSuggestions.md) -- lets staff actually see what's driving "content
+    // similar to past emails here" suggestions instead of it being an opaque black box. View-only
+    // for now; manual add/suppress of terms is a deliberately separate, later piece of work (see
+    // CLAUDE.md's write-up on this page for the full discussion).
+    //
+    // Standalone page, same pattern as email-search.html/email-index-status.html -- own MSAL
+    // sign-in, no Office.js context needed at all (nothing here touches a mailbox or SharePoint).
+
+    const API_URL = "https://summation-email-index.azurewebsites.net";
+    const msalInstance = new msal.PublicClientApplication({
+      auth: {
+        clientId: "80497ed0-ecd5-475e-97e0-5c9e90fb8a0d",
+        authority: "https://login.microsoftonline.com/ecb5f458-9548-4e8b-96f3-904f1828f931",
+        redirectUri: window.location.origin + window.location.pathname
+      },
+      cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+    });
+    const indexRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/EmailIndex.Access"] };
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    window.addEventListener("load", () => {
+        document.getElementById("signInButton").addEventListener("click", handleLogin);
+        document.getElementById("pkFilter").addEventListener("input", () => renderProjectList(document.getElementById("pkFilter").value));
+        attemptSilentSignIn();
+    });
+
+    function showApp(show) {
+        document.getElementById("appBody").style.display = show ? "flex" : "none";
+        document.getElementById("signInPrompt").style.display = show ? "none" : "block";
+    }
+
+    async function signInAndGetToken(isUserAction) {
+        const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+        if (account) {
+            try {
+                return (await msalInstance.acquireTokenSilent({ ...indexRequest, account })).accessToken;
+            } catch (error) {
+                if (error instanceof msal.InteractionRequiredAuthError && isUserAction) {
+                    return (await msalInstance.acquireTokenPopup(indexRequest)).accessToken;
+                }
+                throw error;
+            }
+        }
+        if (isUserAction) {
+            const loginResponse = await msalInstance.loginPopup(indexRequest);
+            msalInstance.setActiveAccount(loginResponse.account);
+            return loginResponse.accessToken;
+        }
+        return null;
+    }
+
+    async function handleLogin() {
+        try {
+            const token = await signInAndGetToken(true);
+            if (token) { showApp(true); loadProjectList(); }
+        } catch (err) {
+            console.error("Sign in failed:", err);
+        }
+    }
+
+    async function attemptSilentSignIn() {
+        try {
+            const token = await signInAndGetToken(false);
+            if (token) { showApp(true); loadProjectList(); } else { showApp(false); }
+        } catch (err) {
+            showApp(false);
+        }
+    }
+
+    async function api(path) {
+        const token = await signInAndGetToken(true);
+        if (!token) throw new Error("Could not get permission to access the email index.");
+        const response = await fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok) {
+            const text = await response.text().catch(() => "");
+            throw new Error(`Request failed: ${response.status} ${text}`);
+        }
+        return response.json();
+    }
+
+    let pkProjects = [];
+    let pkActiveCode = null;
+
+    async function loadProjectList() {
+        const rowsEl = document.getElementById("pkRows");
+        try {
+            const data = await api("/api/keywords");
+            pkProjects = data.projects || [];
+            renderProjectList(document.getElementById("pkFilter").value);
+        } catch (err) {
+            console.error("Could not load the project list:", err);
+            rowsEl.innerHTML = `<div id="pkEmpty">Couldn't load the project list: ${escapeHtml(err.message)}</div>`;
+        }
+    }
+
+    function renderProjectList(filterText) {
+        const rowsEl = document.getElementById("pkRows");
+        const term = (filterText || "").trim().toLowerCase();
+        const matches = term
+            ? pkProjects.filter(p => p.projectCode.toLowerCase().includes(term) || (p.projectName || "").toLowerCase().includes(term))
+            : pkProjects;
+        if (matches.length === 0) {
+            rowsEl.innerHTML = `<div id="pkEmpty">${pkProjects.length === 0 ? "No projects have any suggestion data yet." : "No matching project."}</div>`;
+            return;
+        }
+        rowsEl.innerHTML = matches.map(p => `
+            <button type="button" class="pk-row${p.projectCode === pkActiveCode ? " active" : ""}" data-code="${escapeHtml(p.projectCode)}">
+                <span class="name">${escapeHtml(p.projectName || p.projectCode)}</span>
+                <span class="meta">${p.termCount} term${p.termCount === 1 ? "" : "s"} — learned from ${p.sourceEmailCount} filed email${p.sourceEmailCount === 1 ? "" : "s"}</span>
+            </button>`).join("");
+        rowsEl.querySelectorAll(".pk-row").forEach(btn => {
+            btn.addEventListener("click", () => selectProject(btn.dataset.code));
+        });
+    }
+
+    async function selectProject(code) {
+        pkActiveCode = code;
+        renderProjectList(document.getElementById("pkFilter").value);
+        document.getElementById("pkDetailEmpty").style.display = "none";
+        const content = document.getElementById("pkDetailContent");
+        content.style.display = "block";
+        document.getElementById("pkDetailHead").innerHTML = `<h1>Loading...</h1>`;
+        document.getElementById("pkDetailMeta").innerHTML = "";
+        document.getElementById("pkTermsBody").innerHTML = "";
+        document.getElementById("pkNoTerms").style.display = "none";
+        try {
+            const data = await api(`/api/keywords?project=${encodeURIComponent(code)}`);
+            renderProjectDetail(data);
+        } catch (err) {
+            console.error("Could not load this project's keywords:", err);
+            document.getElementById("pkDetailHead").innerHTML = `<h1>Error</h1>`;
+            document.getElementById("pkDetailMeta").innerHTML = `Couldn't load this project: ${escapeHtml(err.message)}`;
+        }
+    }
+
+    function formatBuiltAt(iso) {
+        if (!iso) return "never";
+        try {
+            return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+        } catch (err) { return iso; }
+    }
+
+    function renderProjectDetail(data) {
+        document.getElementById("pkDetailHead").innerHTML =
+            `<h1>${escapeHtml(data.projectName || data.projectCode)}</h1><span class="code">${escapeHtml(data.projectCode)}</span>`;
+        document.getElementById("pkDetailMeta").innerHTML =
+            `Learned from <b>${data.sourceEmailCount || 0}</b> filed email${data.sourceEmailCount === 1 ? "" : "s"} — ` +
+            `terms last refreshed ${escapeHtml(formatBuiltAt(data.builtAt))}. Refreshes automatically every 5 minutes ` +
+            `as new emails are filed.`;
+
+        const terms = data.terms || [];
+        const tbody = document.getElementById("pkTermsBody");
+        if (terms.length === 0) {
+            tbody.innerHTML = "";
+            document.getElementById("pkNoTerms").style.display = "block";
+            return;
+        }
+        document.getElementById("pkNoTerms").style.display = "none";
+        const maxWeight = Math.max(...terms.map(t => t.weight), 0.0001);
+        tbody.innerHTML = terms.map(t => `
+            <tr>
+                <td class="pk-term">${escapeHtml(t.term)}</td>
+                <td class="pk-bar-cell"><div class="pk-bar-track"><div class="pk-bar-fill" style="width:${Math.max(2, Math.round(t.weight / maxWeight * 100))}%"></div></div></td>
+                <td class="pk-weight">${t.weight.toFixed(2)}</td>
+            </tr>`).join("");
+    }
+  </script>
+</body>
+</html>
