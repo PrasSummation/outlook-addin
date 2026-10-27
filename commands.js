@@ -61,48 +61,6 @@ const FILE_ON_SEND_ENABLED = true;
 // email-filing-sync's sync.ps1) -- 5 letters + 5 digits + "_" or "-", e.g. "SUPER26099_...".
 const PROJECT_CATEGORY_PATTERN = /^[a-zA-Z]{5}\d{5}[_-]/;
 
-// DIAGNOSTIC HELPERS, added 2026-10-16. The compose/send handlers below no longer call these --
-// the compose-time filing chain they were added to debug is confirmed working end to end as of
-// 2026-10-20 (see CLAUDE.md). Still used by fileEmailDialogHandlerDiag further down, which
-// remains a live, separate diagnostic (File Email's multi-select question) -- remove this block
-// too once that one is resolved and that diagnostic button comes out of the manifest.
-let diagNotificationExists = false;
-function diagNotify(message) {
-  console.log("DIAG:", message); // free on clients that do have a console (web/new Outlook/Mac)
-  try {
-    const item = Office.context.mailbox.item;
-    if (!item || !item.notificationMessages) return;
-    const details = {
-      type: Office.MailboxEnums.ItemNotificationMessageType.InformationalMessage,
-      message: "DIAG: " + message,
-      icon: "icon-16",
-      persistent: true
-    };
-    if (diagNotificationExists) {
-      item.notificationMessages.replaceAsync("summation_diag", details);
-    } else {
-      item.notificationMessages.addAsync("summation_diag", details, (result) => {
-        if (result.status === Office.AsyncResultStatus.Succeeded) diagNotificationExists = true;
-      });
-    }
-  } catch (err) {
-    console.error("diagNotify threw:", err);
-  }
-}
-
-// Races a promise against a timer so a diagnostic run fails fast and visibly instead of
-// hanging until Outlook's own multi-minute platform timeout -- the exact failure mode that
-// made the original File Email multi-select bug look like total silence.
-function withTimeout(promise, ms, label) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(label + " did not resolve within " + ms + "ms")), ms);
-    promise.then(
-      (v) => { clearTimeout(timer); resolve(v); },
-      (e) => { clearTimeout(timer); reject(e); }
-    );
-  });
-}
-
 function onMessageSendHandler(event) {
   if (!FILE_ON_SEND_ENABLED) {
     event.completed({ allowEvent: true });
@@ -251,50 +209,8 @@ Office.actions.associate("onMessageComposeHandler", onMessageComposeHandler);
 // The button now opens taskpane.html?view=fileEmail directly, the same dormant path the V1.0
 // fallback already used throughout; no JS here needed any more.
 
-// DIAGNOSTIC, 2026-10-16: re-tests the retired ExecuteFunction + multi-select + displayDialogAsync
-// combo in isolation, with bounded timeouts and diagNotify markers at every step, to pin down
-// exactly where it hangs rather than rely on inference from Microsoft's docs alone. Wired to a
-// separate, clearly-labeled diagnostic-only ribbon button (Summation.FileEmailDiagButton,
-// manifest2.xml) so the real File Email button stays on its fixed ShowTaskpane path throughout
-// this test -- selecting multiple messages and clicking THIS button is the test; the regular
-// File Email button is not involved. Remove this function, its associate() call, and its
-// manifest button together once the multi-select question is settled either way.
-function fileEmailDialogHandlerDiag(event) {
-  diagNotificationExists = false; // notifications are per-item -- this invocation is a fresh item
-  diagNotify("fileEmailDialogHandlerDiag invoked");
-
-  const getSelected = new Promise((resolve, reject) => {
-    Office.context.mailbox.getSelectedItemsAsync((result) => {
-      if (result.status === Office.AsyncResultStatus.Succeeded) resolve(result.value);
-      else reject(result.error || new Error("getSelectedItemsAsync failed"));
-    });
-  });
-
-  withTimeout(getSelected, 8000, "getSelectedItemsAsync")
-    .then((selected) => {
-      const count = (selected || []).length;
-      diagNotify("getSelectedItemsAsync resolved with " + count + " item(s)");
-
-      const url = "https://prassummation.github.io/outlook-addin/file-email-dialog.html?context=" +
-        encodeURIComponent(JSON.stringify({ mode: count > 1 ? "multi" : "single", items: [] }));
-
-      const openDialog = new Promise((resolve, reject) => {
-        Office.context.ui.displayDialogAsync(url, { height: 70, width: 40 }, (asyncResult) => {
-          if (asyncResult.status === Office.AsyncResultStatus.Failed) reject(asyncResult.error);
-          else resolve(asyncResult.value);
-        });
-      });
-      return withTimeout(openDialog, 8000, "displayDialogAsync");
-    })
-    .then((dialog) => {
-      diagNotify("displayDialogAsync succeeded -- dialog opened, closing it now (diagnostic only)");
-      try { dialog.close(); } catch (err) { /* ignore */ }
-      event.completed();
-    })
-    .catch((err) => {
-      diagNotify("FAILED: " + (err && err.message ? err.message : String(err)));
-      event.completed();
-    });
-}
-
-Office.actions.associate("fileEmailDialogHandlerDiag", fileEmailDialogHandlerDiag);
+// The File Email multi-select diagnostic (fileEmailDialogHandlerDiag, Summation.FileEmailDiagButton
+// in manifest2.xml) that used to live here is removed (2026-10-27) -- the question it was built to
+// answer (whether the retired ExecuteFunction + multi-select + displayDialogAsync combo hung) is
+// moot now that File Email's own dialog/bridge path has been independently debugged and confirmed
+// working end to end (see CLAUDE.md's File Email auto-close/timing sections).

@@ -125,13 +125,17 @@ using `diagNotify()`/`withTimeout()` (`commands.js`) or `updateStatus()` (`taskp
 the visible-without-DevTools channel, same technique proven out during the SharedRuntime spike
 investigation:
 
-1. **File Email multi-select, re-tested in isolation**: `Summation.FileEmailDiagButton`
-   (manifest2.xml, `MessageReadCommandSurface`) → `fileEmailDialogHandlerDiag` (`commands.js`)
-   reruns the retired ExecuteFunction + multi-select + `displayDialogAsync` combo with an 8s
-   timeout at each step, to directly confirm whether it's `getSelectedItemsAsync` or
-   `displayDialogAsync` that hangs, rather than relying on inference from Microsoft's docs
-   alone. The real File Email button is untouched throughout. Test: select multiple messages,
-   click this diagnostic button, read the banners.
+1. **RESOLVED, diagnostic removed 2026-10-27**: File Email multi-select, re-tested in isolation
+   via `Summation.FileEmailDiagButton` (manifest2.xml, `MessageReadCommandSurface`) →
+   `fileEmailDialogHandlerDiag` (`commands.js`), which reran the retired ExecuteFunction +
+   multi-select + `displayDialogAsync` combo with an 8s timeout at each step. Never actually
+   resolved the original multi-select question either way — superseded by File Email's own
+   dialog/bridge path being independently debugged and confirmed working end to end this same
+   day (see "File Email is a dialog, not a wizard" below: the auto-close race, the manual
+   Close-button race, and the bridge timing investigation). Removed the button
+   (`manifest2.xml`), its handler, and the now-unused `diagNotify()`/`withTimeout()` helpers
+   (`commands.js`) together, per the user's explicit instruction once File Email was confirmed
+   working.
 2. **File on Send's Smart Alerts redesign**, not yet live-tested at all: `onMessageSendHandler`
    now posts a marker at entry, after `categories.getAsync()` resolves (showing the actual
    category list), and right before calling `event.completed()` with the Take Action options —
@@ -258,10 +262,10 @@ changes landed in the same pass:
   live-tested** — reproduce on a reply to an already-filed thread and confirm it files without the
   picker appearing at all.
 
-Items 1 (File Email multi-select diag button) and 2 (File on Send Smart Alerts, still
-`FILE_ON_SEND_ENABLED = false`) remain open — don't remove `fileEmailDialogHandlerDiag` or its
-manifest button, or `diagNotify()`/`withTimeout()` (still used by that handler), until those are
-separately resolved.
+Item 1 is now resolved and removed (above). Item 2 (File on Send Smart Alerts) — this note is
+stale: `commands.js` has had `FILE_ON_SEND_ENABLED = true` since 2026-10-21 (see "File on Send:
+Smart Alerts redesign" below), so whatever's still "open" here hasn't been true for a while;
+treat this whole section as historical background, not current status.
 
 ## File Email is a dialog, not a wizard (changed 2026-10-06)
 
