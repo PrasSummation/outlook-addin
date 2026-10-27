@@ -43,7 +43,7 @@ project mailbox.
 | `complete-action.html` | Standalone execution page. Does the actual long-running work (SharePoint writes, mailbox creation) for the three taskpane wizards. See "The handoff pattern" below — this file exists specifically so closing the taskpane mid-action doesn't abort the action. |
 | `help-guide.html` | Standalone page, linked from the taskpane footer ("Help Guide"). Staff-facing walkthrough of the four things people actually use day to day: File Email (manual), the automatic background filing pass, sent-email auto-save (not live yet), and Email Search. Update this whenever one of those workflows changes. |
 | `email-search.html` | The hosted email index/search page, linked from the taskpane's **Email Search** button. Generated from the `email-index` repo's own prototype `search.html` by a scratch script there — **edits to one must be mirrored in the other by hand**, this repo doesn't regenerate it. MSAL sign-in against this repo's same app registration, calls the hosted Function App described in the email-index repo's `HANDOFF.md`. |
-| `project-keywords.html` (added 2026-10-27) | Read-only viewer for the content-based suggestion engine's per-project keyword profiles (`GET /api/keywords` on the email-index Function App) — own MSAL sign-in, linked from `email-search.html`'s top bar ("Keywords"). View-only; manual add/suppress of terms is a deliberately separate, not-yet-built follow-up (see email-index's `HANDOFF.md` §8). |
+| `project-keywords.html` (added 2026-10-27, manual add/suppress added same day) | Viewer and curator for the content-based suggestion engine's per-project keyword profiles (email-index Function App: `GET /api/keywords`, `POST`/`DELETE /api/keywords/manual`, `POST`/`DELETE /api/keywords/suppress`) — own MSAL sign-in, linked from `email-search.html`'s top bar ("Keywords"). Staff can add their own words/phrases per project and suppress an auto-derived term they don't want used; see this file's own dated write-up below for the full design (durable tables separate from the auto-rebuilt `project_keywords`, phrase matching with no special syntax). Authoritative detail lives in email-index's `HANDOFF.md`. |
 | `manage-shared-mailbox-members.html` | Standalone page, **no longer linked from the taskpane UI** (its button was removed 2026-10-06 — shared mailboxes are being retired). Still reachable by direct URL if ever needed for an existing mailbox. Bulk two-pane UI: pick project mailbox(es) + pick staff, Confirm does a true diff (grant newly-checked, revoke newly-unchecked, no-op otherwise) with live per-member status. |
 | `manage-mailboxes.html` | Standalone page, **not linked from the taskpane UI** — reached only by navigating directly to its URL. Single-user self-service: grant/revoke your own Full Access on one mailbox at a time, split Sustainability/Energy. |
 | `manage-mailbox-automapping.html` | Standalone page, **not linked from the taskpane UI** either. Reconciles "what Exchange says you have Full Access to" against "what's actually showing in your Outlook folder pane" — these drift apart and neither Graph nor Exchange exposes that comparison directly. Requires the user to import a local JSON export of their actual Outlook mailbox list (`{ mailboxes: [...], exportedAtUtc }`) via a file picker; that export is **not produced by this repo** — it comes from some other local tool/script the user runs against their own Outlook. Also tracks Outlook's ~32-mailbox folder-pane display limit. |
@@ -915,6 +915,44 @@ banner, which never blocks or resumes a send at all. **Not yet live-tested.**
 - Still outstanding (see the spec's own §8 open questions): no real-world tuning yet on how
   relational vs. content scores combine, nor on the new `keyword_timer`'s 6-hour rebuild
   schedule in `email-index` — both are first-cut defaults, not measured.
+
+**Visibility + manual curation, added 2026-10-27**: until now the content-keyword signal was a
+complete black box — a project's top-30 terms (`project_keywords`) were entirely auto-derived
+from already-filed email content, re-ranked wholesale every `keyword_timer` run, with no way for
+staff to see them or correct a bad one. `project-keywords.html` (this repo, linked from
+`email-search.html`'s top bar) now does both:
+- **Viewing**: `GET /api/keywords` (email-index) lists every project with either auto-derived
+  terms or a manually-added one (the union matters — a brand-new project seeded with a manual
+  keyword before it has any filed emails would otherwise never appear in the picker), and
+  `?project=<code>` returns that project's current top terms/weights plus its manual and
+  suppressed lists.
+- **Suppressing an auto term**: an "×" next to each term row calls `POST /api/keywords/suppress`
+  — removes it from `project_keywords` immediately (not waiting for the next rebuild) and records
+  it in a new `project_keywords_suppressed` table that `keywords.py`'s own rebuild SQL excludes
+  from re-scoring, so a suppressed term doesn't just get hidden once, it stays gone and doesn't
+  consume one of the limited top-30 slots either. `DELETE /api/keywords/suppress` un-suppresses,
+  taking effect on the next rebuild (not instant — re-deriving the correct rank/weight needs the
+  full rebuild SQL, not worth replicating for an undo).
+- **Adding manual keywords**: a text box per project (`POST /api/keywords/manual`) accepts one
+  word or phrase per line. **No special phrase syntax** — every entry, single word or multi-word,
+  is normalized through the exact same `clean_text()` pipeline real email content goes through,
+  then matched in `suggest_projects()` as a literal substring of the incoming email's cleaned
+  subject+body, not token-set membership like the auto signal. That's deliberately different
+  matching logic from the auto content-signal (which can only ever match single words) — it's
+  what makes a phrase like "design review" work as one unit with zero parsing complexity. A match
+  contributes once per project regardless of how many of its phrases matched, at a flat weight
+  (`MANUAL_TERM_WEIGHT = 50`) — stronger than the auto content/person signal caps (40 each) since
+  a human explicitly curating "this phrase means this project" should outrank a statistical
+  signal, but still below an exact thread match (80), which should keep winning regardless.
+- **Why two new tables, not edits to `project_keywords` itself**: that table is deleted and
+  rebuilt wholesale from `project_term_counts` on every `keyword_timer` run (every 5 minutes) —
+  anything written directly into it would be silently wiped on the very next pass.
+  `project_keywords_manual` and `project_keywords_suppressed` are durable, untouched by the
+  rebuild, and checked separately (one at live-scoring time, one inside the rebuild's own SQL).
+- **Not done, deliberately**: no bulk import/export of keyword lists, no audit UI beyond the
+  `added_by`/`suppressed_by` columns already recorded, and no attempt to let a manual phrase also
+  influence the auto-derived top-30 ranking (it's a fully independent signal, scored separately in
+  `suggest_projects`) — none of these were asked for.
 
 ## Batch File Folder (2026-10-07)
 
