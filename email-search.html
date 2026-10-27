@@ -896,6 +896,11 @@
       renderProg();
     });
 
+    // Confirm button was set to "Working..." (and disabled) when the batch started, but was
+    // never reset once it finished -- left it permanently reading "Working..." even after the
+    // progress text above it already said "N of N processed", making a completed reclassify
+    // look stuck. Found 2026-10-27 alongside the index-notify auth bug.
+    $("rcConfirm").textContent = "Done";
     $("rcCancel").textContent = "Close";
     multiSelected.clear();
     runSearch();

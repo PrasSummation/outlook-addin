@@ -24,12 +24,22 @@ using namespace System.Net
 # document libraries, so this always copies to the destination then deletes the original,
 # which works the same whether the destination is the same library (Active/Archive) or not.
 #
-# indexAccessToken notifies email-index immediately after each move (POST /api/emails, the
-# same call email-filing-sync already makes on every filing) so the email shows up under its
-# new project right away rather than waiting for the next sync_timer pass. That call is
-# best-effort: email-index's own delta scan will pick up the new file (and clean out the old,
-# now-deleted one) within a few minutes regardless, so a failed notify here just means a short
-# extra wait, not a lost email.
+# Notifies email-index immediately after each move (POST /api/emails, the same call
+# email-filing-sync already makes on every filing) so the email shows up under its new project
+# right away rather than waiting for the next sync_timer pass. That call is best-effort:
+# email-index's own delta scan will pick up the new file (and clean out the old, now-deleted
+# one) within a few minutes regardless, so a failed notify here just means a short extra wait,
+# not a lost email.
+#
+# Uses EMAIL_INDEX_SYNC_KEY (X-Service-Key header), the SAME shared secret email-filing-sync
+# uses, NOT indexAccessToken -- found 2026-10-27, after a user reported Reclassify silently not
+# updating search results: /api/emails is @service_guarded on email-index's side (shared-secret
+# only, "never used for anything a browser calls" by design -- see email-index's own
+# function_app.py), so every notify call here had been getting a deterministic 401 since this
+# feature was first built (2026-10-08) and silently swallowed as a non-retryable 4xx -- the
+# move itself always succeeded, but the index was never told, so it only ever caught up via
+# sync_timer's own slower backstop scan. indexAccessToken is still accepted in the request body
+# for backward compatibility with the current frontend, but no longer used for this call.
 
 param($Request, $TriggerMetadata)
 
@@ -134,7 +144,8 @@ function Send-IndexNotify {
     # one more short (5s), single-attempt POST to durably queue the payload if those exhaust --
     # ~23s/item worst case, still comfortably inside the per-item budget above.
     param($Item, [string]$NewItemId, [string]$WebUrl, [int64]$Size)
-    if (-not $indexAccessToken -or -not $indexBaseUrl) { return }
+    $serviceKey = $env:EMAIL_INDEX_SYNC_KEY
+    if (-not $serviceKey -or -not $indexBaseUrl) { return }
     $relativePath = "$targetBranchPath/$targetFolderName/Emails/$($Item.fileName)"
     $payload = @{
         messageId      = $Item.messageId
@@ -162,7 +173,7 @@ function Send-IndexNotify {
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         try {
             Invoke-RestMethod -Method Post -Uri "$indexBaseUrl/api/emails" `
-                -Headers @{ Authorization = "Bearer $indexAccessToken"; "Content-Type" = "application/json" } `
+                -Headers @{ "X-Service-Key" = $serviceKey; "Content-Type" = "application/json" } `
                 -Body $payload -TimeoutSec 8 -ErrorAction Stop | Out-Null
             return
         } catch {
@@ -183,7 +194,7 @@ function Send-IndexNotify {
     # sync_timer's much slower full-library backstop.
     try {
         Invoke-RestMethod -Method Post -Uri "$indexBaseUrl/api/emails/pending" `
-            -Headers @{ Authorization = "Bearer $indexAccessToken"; "Content-Type" = "application/json" } `
+            -Headers @{ "X-Service-Key" = $serviceKey; "Content-Type" = "application/json" } `
             -Body $payload -TimeoutSec 5 -ErrorAction Stop | Out-Null
     } catch {
         Write-Warning "ReclassifyEmailBatch: durably queuing the failed notify also failed for batch $batchId / messageId $($Item.messageId) -- relying on sync_timer's backstop. $($_.Exception.Message)"
