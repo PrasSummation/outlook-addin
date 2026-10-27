@@ -992,7 +992,14 @@
         if (!bridgeToken) throw new Error("Could not get permission to call the bridge.");
         feTiming("Background: bridge/mailbox tokens acquired");
 
-        const response = await fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
+        // Timed out too (added 2026-10-27, alongside the auto-close fix above): with no bound
+        // here, a genuinely hung bridge call would mean `backgroundBatch` (handleFeConfirmInner)
+        // never settles, so the auto-close's own .finally() would never fire either -- leaving
+        // the dialog stuck open with only the manual Close button (now disabled for exactly this
+        // window) as a way out. 60s comfortably covers a realistic File Email selection (this
+        // endpoint isn't chunked like Batch File Folder's is, so a large multi-select does take
+        // proportionally longer -- ~1.5s/item per the bridge timing investigation above).
+        const response = await withTimeout(fetch(`${BRIDGE_URL}/api/file-email-batch/${entry.batchId}`, {
             method: "POST",
             headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1001,7 +1008,7 @@
                 destinationFolderId: entry.destinationFolderId,
                 items: entry.items
             })
-        });
+        }), 60000, "postFeBatch fetch");
         feTiming("Background: bridge response received");
         if (!response.ok) {
             const errorText = await response.text();
@@ -1229,6 +1236,24 @@
 
         renderFeStatusText(`<div class="row">Filing "${categoryName}" — continuing in the background.</div>`);
         feTiming("UI shows 'continuing in the background'");
+
+        // Found 2026-10-27, same session as the auto-close fix below: the manual Close button
+        // sat there the whole time this message was shown, with its own unconditional, unguarded
+        // close handler -- clicking it mid-flight is the exact same destroy-the-JS-context-
+        // before-the-request-is-sent race as the auto-close bug, just human-triggered instead of
+        // automatic. Strong suspect for further "still processing" batches reported even after
+        // the auto-close fix landed (not directly observed being clicked, but it's the only other
+        // unguarded close path left, and the symptom matches exactly). Disabled for the duration
+        // of backgroundBatch; re-enabled as a genuine escape hatch if it's taking unusually long
+        // (the bridge call below now also has its own timeout, so this is a backstop, not the
+        // primary defense).
+        const closeButton = document.getElementById("feCloseButton");
+        closeButton.disabled = true;
+        const reenableTimer = setTimeout(() => { closeButton.disabled = false; }, 20000);
+        backgroundBatch.finally(() => {
+            clearTimeout(reenableTimer);
+            closeButton.disabled = false;
+        });
 
         // Found live 2026-10-27, right after re-enabling auto-close: closing *immediately* here
         // (parallel with, not after, postFeBatch above) destroys this dialog's entire JS

@@ -430,7 +430,17 @@ land earlier than the real work being done. This means the dialog still takes th
 (the bridge floor established above) to actually close, but that's the correct trade-off: a
 close that can race ahead of the request it's supposed to follow isn't safe at any speed.
 
-## File on Send is live (2026-10-06)
+**Second source of the same race, found the same day**: more "still processing" batches were
+reported even after the fix above landed. The manual `feCloseButton` had its own unconditional,
+unguarded close handler, active the whole time "continuing in the background" is shown — clicking
+it mid-flight is the identical destroy-the-JS-context-before-the-request-is-sent race, just
+human-triggered instead of automatic. (Not directly observed being clicked, but it's the only
+other unguarded close path left, and the symptom matches exactly.) Fixed by disabling that button
+for the duration of `backgroundBatch`, with a 20s timed re-enable as an escape hatch in case
+something is genuinely stuck. Also added a 60s `withTimeout` around `postFeBatch`'s own bridge
+`fetch()` (previously unbounded) — without it, a truly hung bridge call would mean
+`backgroundBatch` never settles, so neither the auto-close nor the Close-button re-enable would
+ever fire, trapping the dialog open with no way out at all.
 
 Replaces the earlier `onMessageSendHandler` phase-1 probe (which only
 proved `OnMessageSend` fires and always let the send through unchanged)
