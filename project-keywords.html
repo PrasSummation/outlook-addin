@@ -68,6 +68,39 @@
     .pk-bar-fill{background:var(--green);height:100%}
     .pk-weight{font-family:var(--font-mono);color:var(--grey-500);text-align:right;width:70px}
     #pkNoTerms{color:var(--grey-400);font-size:12.5px;padding:20px 0}
+
+    .pk-x-cell{width:26px;padding-left:4px !important;padding-right:10px !important}
+    .pk-x-btn{display:block;width:18px;height:18px;border:none;background:none;color:var(--grey-400);
+      font-size:15px;line-height:1;cursor:pointer;padding:0;border-radius:3px}
+    .pk-x-btn:hover{color:#B3401F;background:#FFF3F0}
+
+    .pk-section{margin-top:26px}
+    .pk-section-title{font-family:var(--font-display);font-size:13.5px;color:var(--grey-900);margin:0 0 4px}
+    .pk-section-note{font-size:11.5px;color:var(--grey-500);margin:0 0 10px}
+    #pkManualInput{width:100%;max-width:420px;padding:7px 9px;border:1.5px solid var(--grey-200);
+      border-radius:4px;font:400 12.5px/1.4 var(--font-body);color:var(--grey-900);resize:vertical}
+    #pkManualInput:focus{outline:none;border-color:var(--green)}
+    #pkManualAddBtn{margin-top:8px;padding:7px 18px;font:600 12.5px var(--font-body);color:#fff;
+      background:var(--green);border:1px solid var(--green);border-radius:4px;cursor:pointer}
+    #pkManualAddBtn:hover{background:var(--green-dark)}
+    #pkManualAddBtn:disabled{background:var(--grey-100);border-color:var(--grey-200);color:var(--grey-500);cursor:default}
+    #pkManualError{color:#B3401F;font-size:11.5px;margin-top:6px}
+
+    .pk-chip-list{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+    .pk-chip{display:inline-flex;align-items:center;gap:6px;background:var(--green-pale);color:var(--green-dark);
+      border-radius:12px;padding:4px 6px 4px 12px;font-size:12px}
+    .pk-chip button{flex:none;width:16px;height:16px;border-radius:50%;border:none;padding:0;
+      background:var(--green-dark);color:#fff;font-size:10px;line-height:16px;text-align:center;cursor:pointer}
+    .pk-chip button:hover{background:#C8102E}
+    .pk-chip-empty{color:var(--grey-400);font-size:12px;margin-top:8px}
+
+    .pk-suppressed-row{display:flex;align-items:center;justify-content:space-between;gap:10px;
+      padding:6px 0;border-bottom:1px solid var(--grey-100);font-size:12px;color:var(--grey-500)}
+    .pk-suppressed-row:last-child{border-bottom:none}
+    .pk-suppressed-row .term{font-family:var(--font-mono);color:var(--grey-900)}
+    .pk-restore-btn{flex:none;background:none;border:none;padding:0;color:var(--green-dark);
+      font-size:11.5px;cursor:pointer}
+    .pk-restore-btn:hover{text-decoration:underline}
   </style>
 </head>
 <body>
@@ -104,22 +137,43 @@
         filed here" and "same people have emailed into this project before").</p>
         <div id="pkTermsWrap">
           <table id="pkTerms">
-            <thead><tr><th>Term</th><th class="pk-bar-cell"></th><th>Weight</th></tr></thead>
+            <thead><tr><th>Term</th><th class="pk-bar-cell"></th><th>Weight</th><th></th></tr></thead>
             <tbody id="pkTermsBody"></tbody>
           </table>
           <div id="pkNoTerms" style="display:none;">No terms yet for this project — it hasn't had
           enough filed emails with substantial content for the suggestion engine to learn from.</div>
+        </div>
+
+        <div class="pk-section">
+          <h2 class="pk-section-title">Your added keywords</h2>
+          <p class="pk-section-note">Type one word or phrase per line, then click Add. A
+          multi-word phrase (e.g. "design review") is matched as that whole phrase — no quotes
+          or special formatting needed, it's checked the same way either way.</p>
+          <textarea id="pkManualInput" rows="2" placeholder="e.g.&#10;stantec&#10;design review"></textarea>
+          <button type="button" id="pkManualAddBtn">Add</button>
+          <div id="pkManualError" style="display:none;"></div>
+          <div id="pkManualList" class="pk-chip-list"></div>
+          <div id="pkManualEmpty" class="pk-chip-empty" style="display:none;">Nothing added yet.</div>
+        </div>
+
+        <div class="pk-section" id="pkSuppressedSection" style="display:none;">
+          <h2 class="pk-section-title">Suppressed terms</h2>
+          <p class="pk-section-note">Terms excluded from this project's suggestions, even if the
+          suggestion engine would otherwise learn them from filed emails.</p>
+          <div id="pkSuppressedList"></div>
         </div>
       </div>
     </div>
   </div>
 
   <script>
-    // Read-only visibility into the content-based suggestion signal (email-index's keywords.py,
-    // SPEC_ContentBasedProjectSuggestions.md) -- lets staff actually see what's driving "content
-    // similar to past emails here" suggestions instead of it being an opaque black box. View-only
-    // for now; manual add/suppress of terms is a deliberately separate, later piece of work (see
-    // CLAUDE.md's write-up on this page for the full discussion).
+    // Visibility into, and manual curation of, the content-based suggestion signal (email-index's
+    // keywords.py, SPEC_ContentBasedProjectSuggestions.md) -- lets staff see what's driving
+    // "content similar to past emails here" suggestions, add their own words/phrases per project
+    // (api.add_manual_keyword, scored in suggest_projects alongside the auto-derived terms), and
+    // suppress an auto-derived term they don't want used (api.suppress_keyword) -- added
+    // 2026-10-27, see CLAUDE.md's write-up on this page for the original view-only design and why
+    // manual/suppressed terms live in their own tables instead of project_keywords directly.
     //
     // Standalone page, same pattern as email-search.html/email-index-status.html -- own MSAL
     // sign-in, no Office.js context needed at all (nothing here touches a mailbox or SharePoint).
@@ -142,6 +196,7 @@
     window.addEventListener("load", () => {
         document.getElementById("signInButton").addEventListener("click", handleLogin);
         document.getElementById("pkFilter").addEventListener("input", () => renderProjectList(document.getElementById("pkFilter").value));
+        document.getElementById("pkManualAddBtn").addEventListener("click", handleAddManual);
         attemptSilentSignIn();
     });
 
@@ -199,6 +254,22 @@
         return response.json();
     }
 
+    async function apiMutate(path, method, body) {
+        const token = await signInAndGetToken(true);
+        if (!token) throw new Error("Could not get permission to access the email index.");
+        const response = await fetch(`${API_URL}${path}`, {
+            method,
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        });
+        if (!response.ok) {
+            let message = `${response.status}`;
+            try { message = (await response.json()).error || message; } catch (err) { /* non-JSON error body */ }
+            throw new Error(message);
+        }
+        return response.json();
+    }
+
     let pkProjects = [];
     let pkActiveCode = null;
 
@@ -224,11 +295,16 @@
             rowsEl.innerHTML = `<div id="pkEmpty">${pkProjects.length === 0 ? "No projects have any suggestion data yet." : "No matching project."}</div>`;
             return;
         }
-        rowsEl.innerHTML = matches.map(p => `
+        rowsEl.innerHTML = matches.map(p => {
+            const label = p.projectName && p.projectName !== p.projectCode
+                ? `${p.projectCode} — ${p.projectName}` : p.projectCode;
+            const manualNote = p.manualCount ? `, ${p.manualCount} added` : "";
+            return `
             <button type="button" class="pk-row${p.projectCode === pkActiveCode ? " active" : ""}" data-code="${escapeHtml(p.projectCode)}">
-                <span class="name">${escapeHtml(p.projectName || p.projectCode)}</span>
-                <span class="meta">${p.termCount} term${p.termCount === 1 ? "" : "s"} — learned from ${p.sourceEmailCount} filed email${p.sourceEmailCount === 1 ? "" : "s"}</span>
-            </button>`).join("");
+                <span class="name">${escapeHtml(label)}</span>
+                <span class="meta">${p.termCount} term${p.termCount === 1 ? "" : "s"}${manualNote} — learned from ${p.sourceEmailCount} filed email${p.sourceEmailCount === 1 ? "" : "s"}</span>
+            </button>`;
+        }).join("");
         rowsEl.querySelectorAll(".pk-row").forEach(btn => {
             btn.addEventListener("click", () => selectProject(btn.dataset.code));
         });
@@ -269,7 +345,12 @@
             `terms last refreshed ${escapeHtml(formatBuiltAt(data.builtAt))}. Refreshes automatically every 5 minutes ` +
             `as new emails are filed.`;
 
-        const terms = data.terms || [];
+        renderAutoTerms(data.terms || []);
+        renderManualTerms(data.manualTerms || []);
+        renderSuppressedTerms(data.suppressedTerms || []);
+    }
+
+    function renderAutoTerms(terms) {
         const tbody = document.getElementById("pkTermsBody");
         if (terms.length === 0) {
             tbody.innerHTML = "";
@@ -283,7 +364,115 @@
                 <td class="pk-term">${escapeHtml(t.term)}</td>
                 <td class="pk-bar-cell"><div class="pk-bar-track"><div class="pk-bar-fill" style="width:${Math.max(2, Math.round(t.weight / maxWeight * 100))}%"></div></div></td>
                 <td class="pk-weight">${t.weight.toFixed(2)}</td>
+                <td class="pk-x-cell"><button type="button" class="pk-x-btn" data-term="${escapeHtml(t.term)}" title="Exclude this term from suggestions">×</button></td>
             </tr>`).join("");
+        tbody.querySelectorAll(".pk-x-btn").forEach(btn => {
+            btn.addEventListener("click", () => handleSuppress(btn.dataset.term));
+        });
+    }
+
+    function renderManualTerms(terms) {
+        const list = document.getElementById("pkManualList");
+        const empty = document.getElementById("pkManualEmpty");
+        if (terms.length === 0) {
+            list.innerHTML = "";
+            empty.style.display = "block";
+            return;
+        }
+        empty.style.display = "none";
+        list.innerHTML = terms.map(t => `
+            <span class="pk-chip">${escapeHtml(t.term)}<button type="button" data-term="${escapeHtml(t.term)}" aria-label="Remove">×</button></span>`).join("");
+        list.querySelectorAll("button").forEach(btn => {
+            btn.addEventListener("click", () => handleRemoveManual(btn.dataset.term));
+        });
+    }
+
+    function renderSuppressedTerms(terms) {
+        const section = document.getElementById("pkSuppressedSection");
+        const list = document.getElementById("pkSuppressedList");
+        if (terms.length === 0) {
+            section.style.display = "none";
+            list.innerHTML = "";
+            return;
+        }
+        section.style.display = "block";
+        list.innerHTML = terms.map(t => `
+            <div class="pk-suppressed-row">
+                <span class="term">${escapeHtml(t.term)}</span>
+                <button type="button" class="pk-restore-btn" data-term="${escapeHtml(t.term)}">Restore</button>
+            </div>`).join("");
+        list.querySelectorAll(".pk-restore-btn").forEach(btn => {
+            btn.addEventListener("click", () => handleUnsuppress(btn.dataset.term));
+        });
+    }
+
+    async function reloadActiveProject() {
+        if (!pkActiveCode) return;
+        try {
+            const data = await api(`/api/keywords?project=${encodeURIComponent(pkActiveCode)}`);
+            renderProjectDetail(data);
+        } catch (err) {
+            console.error("Could not refresh this project's keywords:", err);
+        }
+    }
+
+    async function handleSuppress(term) {
+        if (!pkActiveCode) return;
+        try {
+            await apiMutate("/api/keywords/suppress", "POST", { projectCode: pkActiveCode, term });
+            await reloadActiveProject();
+        } catch (err) {
+            console.error("Could not suppress this term:", err);
+            alert(`Could not suppress "${term}": ${err.message}`);
+        }
+    }
+
+    async function handleUnsuppress(term) {
+        if (!pkActiveCode) return;
+        try {
+            await apiMutate("/api/keywords/suppress", "DELETE", { projectCode: pkActiveCode, term });
+            await reloadActiveProject();
+        } catch (err) {
+            console.error("Could not restore this term:", err);
+            alert(`Could not restore "${term}": ${err.message}`);
+        }
+    }
+
+    async function handleRemoveManual(term) {
+        if (!pkActiveCode) return;
+        try {
+            await apiMutate("/api/keywords/manual", "DELETE", { projectCode: pkActiveCode, term });
+            await reloadActiveProject();
+        } catch (err) {
+            console.error("Could not remove this keyword:", err);
+            alert(`Could not remove "${term}": ${err.message}`);
+        }
+    }
+
+    async function handleAddManual() {
+        if (!pkActiveCode) return;
+        const input = document.getElementById("pkManualInput");
+        const errorEl = document.getElementById("pkManualError");
+        const addBtn = document.getElementById("pkManualAddBtn");
+        errorEl.style.display = "none";
+        const entries = input.value.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+        if (entries.length === 0) return;
+        addBtn.disabled = true;
+        const failures = [];
+        for (const term of entries) {
+            try {
+                await apiMutate("/api/keywords/manual", "POST", { projectCode: pkActiveCode, term });
+            } catch (err) {
+                failures.push(`"${term}": ${err.message}`);
+            }
+        }
+        addBtn.disabled = false;
+        if (failures.length > 0) {
+            errorEl.textContent = `Couldn't add ${failures.length === entries.length ? "any of these" : "some of these"}: ${failures.join("; ")}`;
+            errorEl.style.display = "block";
+        }
+        if (failures.length < entries.length) input.value = "";
+        await reloadActiveProject();
     }
   </script>
 </body>
