@@ -46,15 +46,23 @@
 // for whether the native Smart Alert actually offers "Send Anyway" (confirms PromptUser is live,
 // not a stale cached SoftBlock manifest) the next time a send is intercepted.
 //
-// EMERGENCY KILL SWITCH -- history: first tripped 2026-10-16 after a live-blocking incident --
-// the Smart Alerts dialog showed correctly (Choose project / Don't Send), but there was no way
-// to send through untagged (SendMode="SoftBlock" gave no "Send Anyway"), and "Choose project" ->
-// task pane -> file-on-send-dialog.html -> categories.addAsync wasn't completing the
-// categorization, leaving the user stuck unable to send at all. Flipping this to false restores
-// "every send allowed through immediately, untagged" while a fix is worked out -- deploys in
-// ~10 minutes via commands.js's own CDN cache, no manifest re-upload needed, since OnMessageSend's
-// LaunchEvent registration itself doesn't need to change for this switch alone.
-const FILE_ON_SEND_ENABLED = true;
+// KILL SWITCH -- history: first tripped 2026-10-16 after a live-blocking incident -- the Smart
+// Alerts dialog showed correctly (Choose project / Don't Send), but there was no way to send
+// through untagged (SendMode="SoftBlock" gave no "Send Anyway"), and "Choose project" -> task
+// pane -> file-on-send-dialog.html -> categories.addAsync wasn't completing the categorization,
+// leaving the user stuck unable to send at all. Flipping this to false restores "every send
+// allowed through immediately, untagged" -- deploys in ~10 minutes via commands.js's own CDN
+// cache, no manifest re-upload needed, since OnMessageSend's LaunchEvent registration itself
+// doesn't need to change for this switch alone.
+//
+// DISABLED AGAIN 2026-10-28, this time by deliberate request, not an incident -- the send-time
+// Smart Alert (Send Anyway / Choose project / Don't Send) is turned off entirely; every send now
+// goes through immediately and untagged, same as this flag's "off" state has always meant. Left
+// as a flag rather than deleting onMessageSendHandler's body, so re-enabling later is a one-line
+// revert, not a rewrite. Does NOT affect the separate, non-blocking compose-time InsightMessage
+// nudge (onMessageComposeHandler below) -- that banner can still appear while composing; it was
+// never gated by this flag and nothing about this change touches it.
+const FILE_ON_SEND_ENABLED = false;
 
 // Shared by onMessageSendHandler and onMessageComposeHandler: matches the project-category
 // naming convention this codebase already uses everywhere else (email-index's keywords.py,
