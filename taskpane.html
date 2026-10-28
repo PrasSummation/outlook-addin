@@ -174,7 +174,7 @@
   <div id="appBody" style="display: none;">
     <div id="topActions">
       <div class="section-label">Actions</div>
-      <button id="newProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.5"><path d="M7 2v10M2 7h10"/></svg></span><span class="txt"><b>New BD project</b><i>Allocate the next number, file this email, and create the project mailbox</i></span></span></button>
+      <button id="newProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#408F4E" stroke-width="1.5"><path d="M7 2v10M2 7h10"/></svg></span><span class="txt"><b>New BD project</b><i>Allocate the next number and file this email into a new project folder</i></span></span></button>
       <button id="convertProjectButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2 7h10M8.5 3.5 12 7l-3.5 3.5"/></svg></span><span class="txt"><b>Change BD to Active project</b><i>Move an Archive folder into Active</i></span></span></button>
       <button id="convertToArchiveButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M12 7H2M5.5 3.5 2 7l3.5 3.5"/></svg></span><span class="txt"><b>Convert Active to Archive</b><i>Move a project folder from Active into Archive</i></span></span></button>
       <button id="fileEmailButton"><span class="tile"><span class="ico"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#646464" stroke-width="1.5"><path d="M2 2.5h10v9H2z"/><path d="M2 3l5 4 5-4"/></svg></span><span class="txt"><b>File Email</b><i>Tag selected email(s) with a project and stage them for filing</i></span></span></button>
@@ -332,7 +332,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.21";
+    const APP_VERSION = "11.22";
 
     let msalInstance;
     let folderEntries = [];
@@ -1112,7 +1112,6 @@
                 <div class="row"><span class="label">Branch:</span> ${archivePath}</div>
                 <div class="row"><span class="label">Structure:</span> ${isSustainability ? "Full copy of the SUPER00000_Project_Template folder" : "Blank folder with a single empty BD subfolder (no Energy template exists)"}</div>
                 <div class="row"><span class="label">Filed into ${npState.bdRelativePath}:</span> ${filedDescription}</div>
-                <div class="row"><span class="label">Shared mailbox:</span> ${deriveMailboxAddress(folderName)} will be created, with Full Access granted to all Summation staff.</div>
             </div>
         `;
         if (npState.warnings && npState.warnings.length) {

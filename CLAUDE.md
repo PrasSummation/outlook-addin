@@ -66,12 +66,13 @@ only *collects* parameters, then a hand-off (see below) to
    project template (or creates a blank folder + `BD` subfolder for Energy,
    which has no template) into Archive, files the triggering email +
    attachments into it via Graph (`fileEmailAndAttachmentsViaGraph` —
-   downloads the message by `internetMessageId`, not via Office.js), **then
-   creates a real Exchange shared mailbox and grants Full Access to every
-   current Summation staff member** as the last step
-   (`createProjectMailboxAndGrantAllStaff`). This mailbox-creation step was
-   deliberately moved here from "Change BD to Active project" — see git log
-   message `ee40a53`.
+   downloads the message by `internetMessageId`, not via Office.js). **No
+   longer creates a shared mailbox** — see "Mailbox creation removed from New
+   BD Project" (2026-10-28) below; this wizard used to also create a real
+   Exchange shared mailbox and grant Full Access to every current Summation
+   staff member as a last step (`createProjectMailboxAndGrantAllStaff`,
+   itself moved here from "Change BD to Active project" per git log message
+   `ee40a53`), but that step is now gone entirely.
 2. **Change BD to Active project** — copies a folder from the Archive drive
    to the Active drive (`copyFolderAcrossDrives`, polls a SharePoint copy
    monitor), then deletes the Archive original once the copy is confirmed
@@ -83,14 +84,19 @@ A fourth wizard, **Create Shared Mailbox** (standalone, not tied to a
 folder), was removed from the taskpane 2026-10-06 — shared mailboxes are
 being phased out in favor of filing straight to SharePoint. Its
 `complete-action.html` handler (`runCreateSharedMailbox`, case
-`"createSharedMailbox"`) was deleted too, but the shared helpers it used
+`"createSharedMailbox"`) was deleted too; its shared helpers
 (`createSharedMailboxViaBridge`, `createProjectMailboxAndGrantAllStaff`,
-`grantAccessToStaffWithRetry`, `getAllStaffMembers`) were **kept** — New BD
-Project (above) still uses them to create that project's mailbox. There is
-also still an older, simpler **"Create New Shared Mailbox"** button for
-personal Inbox subfolders (`createSharedMailbox()` in `taskpane.html`,
-around the `csmFolderList`/`createMailboxButton` area) — unrelated to either
-of the above, not removed, left alone.
+`grantAccessToStaffWithRetry`, `getAllStaffMembers`) were **kept at the
+time** because New BD Project (above) still used them — **that's no longer
+true as of 2026-10-28** (see below), so all four of those
+`complete-action.html` functions are gone now too. There is still an older,
+simpler **"Create New Shared Mailbox"** button for personal Inbox subfolders
+(`createSharedMailbox()` in `taskpane.html`, around the
+`csmFolderList`/`createMailboxButton` area) — unrelated to either of the
+above, not removed, left alone; it has its own separate, `taskpane.html`-only
+copies of `createSharedMailboxViaBridge`/`deriveMailboxAddress` (no shared JS
+between pages in this repo, per the file inventory above), which were not
+touched.
 
 Two more taskpane features that aren't full wizards:
 - **Search Shared Mailbox Online -legacy** — just opens a project mailbox in
@@ -118,6 +124,66 @@ Removed 2026-10-06, **no longer in the taskpane at all**:
   used (confirmed 2026-10-13)** — if it's still installed on someone's PC it
   does nothing useful anymore and can be uninstalled; don't point anyone at
   it or its installer for current email filing.
+
+## Mailbox creation removed from New BD Project (2026-10-28)
+
+User-directed legacy removal: **New BD Project no longer creates a shared
+mailbox or grants any staff access**, at all, as its final step. This was the
+last place in the taskpane that still created a project mailbox at
+folder-creation time (per git log `ee40a53`, it had already been moved here
+once, from "Change BD to Active project") — shared mailboxes have been on a
+general phase-out path since 2026-10-06 (see "Removed 2026-10-06" above:
+Create Shared Mailbox wizard gone, Manage Shared Mailbox Members unlinked,
+Search Shared Mailbox Online renamed "-legacy"), and the user decided to
+finish that phase-out for New BD Project specifically rather than leave it as
+the one remaining mailbox-creation path.
+
+**What changed:**
+- `complete-action.html`'s `runCreateBdProject` no longer calls
+  `createProjectMailboxAndGrantAllStaff` as its last step — the function
+  (which drove the whole create-mailbox-then-grant-to-every-staff-member
+  flow, including the "Stop Waiting" retry loop) is deleted, along with the
+  other functions that existed only to support it: `createSharedMailboxViaBridge`,
+  `getAllStaffMembers`, `grantMailboxPermissionViaBridge`,
+  `grantAccessToStaffWithRetry`, `waitUnless`, `deriveMailboxAddress`, and the
+  result-rendering helper `renderGrantResultsHtml`. The `#stopRetryButton`
+  element/CSS (only ever used by this flow) is gone too.
+  `renderCreateBdProjectResult` is simplified to drop its `mailboxResult`
+  parameter and the mailbox/grants summary box it rendered — it still renders
+  the folder-created and email/attachments-filed summary exactly as before.
+  Also dropped: the now-unused `BRIDGE_URL` constant and the `bridgeRequest`
+  MSAL scope object, and `Directory.Read.All` off `graphRequest`'s scope list
+  (only ever needed for `getAllStaffMembers`'s `/users` lookup).
+- `taskpane.html`: the New BD Project tile's subtitle no longer promises to
+  "create the project mailbox" (now: "Allocate the next number and file this
+  email into a new project folder"), and the wizard's Confirm-step summary no
+  longer shows the "Shared mailbox: ... will be created" row. `taskpane.html`
+  itself still has its own, separate copies of `deriveMailboxAddress` and
+  `createSharedMailboxViaBridge` used only by the unrelated standalone
+  "Create New Shared Mailbox" button (`createSharedMailbox()`,
+  `csmFolderList`/`createMailboxButton`) — confirmed via grep that this
+  feature is untouched and still fully intact.
+- **Backend (`exchange-bridge`) left entirely alone, deliberately.**
+  `POST /api/shared-mailboxes` and `POST /api/mailbox-permissions/grant` are
+  still live and still called by other pages that remain in active use:
+  `manage-mailboxes.html`, `manage-shared-mailbox-members.html`,
+  `manage-mailbox-automapping.html` (per-page own copies of
+  `grantMailboxPermissionViaBridge`), and `taskpane.html`'s own standalone
+  Create New Shared Mailbox button. Deleting an Azure Function is much harder
+  to reverse than deleting a client-side call site, and these routes are
+  genuinely still needed elsewhere — no backend change was made or
+  considered necessary.
+
+**Known gap this leaves, flagged not solved**: a newly-created BD project
+folder now gets **no shared mailbox and no staff access grant at all**,
+automatically, from anywhere in this codebase — the only place that used to
+do this has had the step removed outright, not relocated. If project
+mailboxes are still wanted going forward, the current workaround is the
+standalone **"Create New Shared Mailbox"** button in the taskpane (manual,
+one mailbox/one folder at a time) followed by **Manage Shared Mailbox
+Members** (`manage-shared-mailbox-members.html`, still reachable by direct
+URL) to grant staff access — or whatever else the user decides; this was
+explicitly left as the user's call, not solved as part of this removal.
 
 ## Diagnostic round in progress (added 2026-10-16, remove once resolved)
 

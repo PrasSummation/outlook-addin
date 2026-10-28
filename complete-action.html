@@ -45,9 +45,6 @@
     .warning-box{border:1px solid #E78707;background:#FFF8E1;color:#7A5B00;border-radius:4px;
       padding:10px;font-size:12.5px;margin-bottom:10px}
 
-    #stopRetryButton{padding:8px 16px;font:600 12.5px var(--font-body);color:#fff;background:var(--grey-500);
-      border:1px solid var(--grey-500);border-radius:4px;cursor:pointer;margin-bottom:14px;display:none}
-    #stopRetryButton:hover{opacity:.9}
     .small-button{padding:5px 10px;font-size:11px;color:#fff;background:var(--green);
       border:1px solid var(--green);border-radius:4px;cursor:pointer;display:inline-block}
     .small-button:hover{background:var(--green-dark)}
@@ -73,12 +70,10 @@
       <p>This continues an action started from the Summation Assistant sidebar — safe to leave this tab running in the background, and safe to close the sidebar now.</p>
     </div>
     <div id="status">Looking for a pending action...</div>
-    <button id="stopRetryButton" title="Show the result now with whatever access grants have succeeded so far; any still failing can be retried later via Manage Shared Mailbox Members.">Stop Waiting</button>
     <div id="resultSummary"></div>
   </div>
 
   <script>
-    const BRIDGE_URL = "https://summation-exchange-bridge-e6e5gsendkdxdwf5.australiaeast-01.azurewebsites.net";
     const ACTIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5wp-OK02_E3RbZkRH_jE_Lr";
     const ARCHIVE_DRIVE_ID = "b!6LWosCcMRkupf-n3ZowwIVyhngMkW-pOtIqfTmHpQ5zGiD4R7k2PQZMwL6mUreXS";
     const TEMPLATE_PATH = "Sustainability/Perth/SUPER00000_Project_Template";
@@ -100,8 +95,7 @@
       cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
     };
 
-    const graphRequest = { scopes: ["User.Read", "Mail.Read", "Directory.Read.All"] };
-    const bridgeRequest = { scopes: ["api://80497ed0-ecd5-475e-97e0-5c9e90fb8a0d/MailboxBridge.Call"] };
+    const graphRequest = { scopes: ["User.Read", "Mail.Read"] };
     const sitesRequest = { scopes: ["Sites.Selected"] };
 
     let msalInstance;
@@ -459,164 +453,6 @@
         return results;
     }
 
-    // ---- Bridge / staff helpers (ported from taskpane.html) ----
-
-    function deriveMailboxAddress(mailboxName) {
-        return `${mailboxName.replace(/[^a-zA-Z0-9_]/g, '')}@summation.au`;
-    }
-
-    async function createSharedMailboxViaBridge(mailboxName, token) {
-        const mailbox = deriveMailboxAddress(mailboxName);
-        const response = await fetch(`${BRIDGE_URL}/api/shared-mailboxes`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ mailbox, displayName: mailboxName })
-        });
-        if (response.status === 409) {
-            return { mailbox, alreadyExisted: true };
-        }
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
-        }
-        return { mailbox, alreadyExisted: false };
-    }
-
-    async function getAllStaffMembers(token) {
-        const url = "https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,assignedLicenses,accountEnabled&$top=999";
-        const users = await graphGetAll(url, token);
-        const projectMailboxRegex = /^[a-zA-Z]{5}\d{5}[_-].*@summation\.au$/i;
-        return users
-            .filter(u => u.assignedLicenses.length > 0 && u.accountEnabled !== false)
-            .map(u => ({ name: u.displayName, mail: u.mail || u.userPrincipalName }))
-            .filter(u => u.mail && !projectMailboxRegex.test(u.mail));
-    }
-
-    async function grantMailboxPermissionViaBridge(mailbox, user, token, autoMapping) {
-        const response = await fetch(`${BRIDGE_URL}/api/mailbox-permissions/grant`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ mailbox, user, autoMapping })
-        });
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Bridge error: ${response.status} - ${errorText}`);
-        }
-        return response.json();
-    }
-
-    function waitUnless(ms, isStopped) {
-        return new Promise(resolve => {
-            const start = Date.now();
-            const interval = setInterval(() => {
-                if (isStopped() || Date.now() - start >= ms) {
-                    clearInterval(interval);
-                    resolve();
-                }
-            }, 500);
-        });
-    }
-
-    async function grantAccessToStaffWithRetry(mailbox, fetchStaff, label, statusEl, stopButton) {
-        const result = { grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
-
-        let stopRequested = false;
-        const stopHandler = () => { stopRequested = true; };
-        stopButton.addEventListener("click", stopHandler);
-        stopButton.style.display = "inline-block";
-
-        try {
-            statusEl.textContent = `Looking up ${label}...`;
-            const graphToken = await signInAndGetToken(graphRequest, true);
-            const staff = await fetchStaff(graphToken);
-            const bridgeToken = await signInAndGetToken(bridgeRequest, true);
-
-            const grantState = new Map(staff.map(m => [m.mail, { member: m.name, error: "pending" }]));
-            const BATCH_SIZE = 10;
-            const MAX_ATTEMPTS = 20;
-            const RETRY_DELAY_MS = 15000;
-
-            for (let attempt = 1; attempt <= MAX_ATTEMPTS && !stopRequested; attempt++) {
-                const pending = staff.filter(m => grantState.get(m.mail).error);
-                if (pending.length === 0) break;
-
-                statusEl.textContent = attempt === 1
-                    ? `Granting mailbox access to ${pending.length} team member(s)...`
-                    : `Retrying ${pending.length} failed grant(s) — attempt ${attempt} of ${MAX_ATTEMPTS} (mailbox may still be provisioning)...`;
-
-                for (let i = 0; i < pending.length && !stopRequested; i += BATCH_SIZE) {
-                    const batch = pending.slice(i, i + BATCH_SIZE);
-                    await Promise.all(batch.map(async member => {
-                        try {
-                            await grantMailboxPermissionViaBridge(mailbox, member.mail, bridgeToken, false);
-                            grantState.set(member.mail, { member: member.name, error: null });
-                        } catch (err) {
-                            grantState.set(member.mail, { member: member.name, error: err.message });
-                        }
-                    }));
-                }
-
-                const stillPending = staff.filter(m => grantState.get(m.mail).error);
-                if (stillPending.length === 0 || stopRequested) break;
-
-                if (attempt < MAX_ATTEMPTS) {
-                    statusEl.textContent = `${stillPending.length} of ${staff.length} still failing — waiting to retry (attempt ${attempt + 1} of ${MAX_ATTEMPTS})...`;
-                    await waitUnless(RETRY_DELAY_MS, () => stopRequested);
-                } else {
-                    result.gaveUp = true;
-                }
-            }
-
-            result.stoppedByUser = stopRequested;
-            result.grants = staff.map(m => grantState.get(m.mail));
-        } catch (err) {
-            result.grantsError = err.message;
-        }
-
-        stopButton.removeEventListener("click", stopHandler);
-        stopButton.style.display = "none";
-
-        return result;
-    }
-
-    async function createProjectMailboxAndGrantAllStaff(mailboxName, statusEl, stopButton) {
-        const result = { mailboxName, mailbox: null, mailboxError: null, mailboxAlreadyExisted: false, grants: [], grantsError: null, stoppedByUser: false, gaveUp: false };
-
-        statusEl.textContent = "Creating project mailbox...";
-        try {
-            const bridgeToken = await signInAndGetToken(bridgeRequest, true);
-            if (!bridgeToken) throw new Error("Could not get permission to create mailboxes.");
-            const created = await createSharedMailboxViaBridge(mailboxName, bridgeToken);
-            result.mailbox = created.mailbox;
-            result.mailboxAlreadyExisted = created.alreadyExisted;
-        } catch (err) {
-            result.mailboxError = err.message;
-            return result;
-        }
-
-        const grantResult = await grantAccessToStaffWithRetry(result.mailbox, getAllStaffMembers, "all Summation staff", statusEl, stopButton);
-        Object.assign(result, grantResult);
-        return result;
-    }
-
-    function renderGrantResultsHtml(label, grants, grantsError, stoppedByUser, gaveUp) {
-        if (grantsError) {
-            return `<div class="warning-box">Could not look up ${label} to add: ${grantsError}. Use Manage Shared Mailbox Members once the mailbox is provisioned.</div>`;
-        }
-        const failed = grants.filter(g => g.error);
-        const succeeded = grants.length - failed.length;
-        let html = `<div class="row">Granted ${label} (${grants.length} member(s)) access without automapping — ${succeeded} succeeded, ${failed.length} still failing.</div>`;
-        if (failed.length > 0) {
-            const reason = stoppedByUser
-                ? "You stopped waiting before all grants landed"
-                : gaveUp
-                    ? "Gave up after repeated retries"
-                    : "Still failing";
-            html += `<div class="warning-box">${reason} — this is expected if the mailbox hasn't finished provisioning yet. Retry via Manage Shared Mailbox Members once it's ready. Still pending: ${failed.map(f => f.member).join(", ")}.</div>`;
-        }
-        return html;
-    }
-
     // ---- Action dispatcher ----
 
     async function runPendingAction() {
@@ -703,15 +539,11 @@
         updateStatus("Filing email and attachments...");
         const filingResults = await fileEmailAndAttachmentsViaGraph(ARCHIVE_DRIVE_ID, bdFolderId, internetMessageId, subject, token);
 
-        const statusEl = document.getElementById("status");
-        const stopButton = document.getElementById("stopRetryButton");
-        const mailboxResult = await createProjectMailboxAndGrantAllStaff(folderName, statusEl, stopButton);
-
         updateStatus("Done.");
-        renderCreateBdProjectResult({ folderName, webUrl: projectFolderWebUrl, filingResults }, mailboxResult);
+        renderCreateBdProjectResult({ folderName, webUrl: projectFolderWebUrl, filingResults });
     }
 
-    function renderCreateBdProjectResult(success, mailboxResult) {
+    function renderCreateBdProjectResult(success) {
         const { folderName, webUrl, filingResults } = success;
         let html = `<div class="summary-box">
             <div class="row"><span class="label">Created:</span> ${folderName}</div>
@@ -727,18 +559,6 @@
             html += `<div class="row" style="color:red;">Some items failed to file: ${filingResults.errors.join("; ")}</div>`;
         }
         html += `</div>`;
-
-        if (mailboxResult.mailboxError) {
-            html += `<div class="warning-box">Project mailbox not created: ${mailboxResult.mailboxError}</div>`;
-        } else {
-            html += `<div class="summary-box">
-                <div class="row"><span class="label">Project mailbox:</span> ${mailboxResult.mailbox}</div>
-                <div class="row">${mailboxResult.mailboxAlreadyExisted
-                    ? "This mailbox already existed (from a previous attempt) — skipped creation and went straight to granting access."
-                    : "Created as a real Exchange shared mailbox — ready to use now."}</div>
-                ${renderGrantResultsHtml("all Summation staff", mailboxResult.grants, mailboxResult.grantsError, mailboxResult.stoppedByUser, mailboxResult.gaveUp)}
-            </div>`;
-        }
 
         document.getElementById("resultSummary").innerHTML = html;
         const copyButton = document.getElementById("copyLinkButton");
