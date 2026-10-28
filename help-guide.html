@@ -61,6 +61,49 @@
 
     .back-to-top{font-size:11.5px}
 
+    /* ---- At a Glance infographic ---- */
+    .glance-icon{flex:none;width:30px;height:30px;border-radius:50%;background:var(--green-pale);
+      display:flex;align-items:center;justify-content:center}
+    .glance-icon svg{display:block}
+
+    .flow-hero{display:flex;align-items:center;flex-wrap:wrap;gap:4px 2px;margin:0 0 26px;
+      padding:16px;border:1px solid var(--grey-200);border-radius:10px;background:var(--grey-50)}
+    .flow-step{flex:1 1 140px;min-width:120px;display:flex;flex-direction:column;align-items:center;
+      text-align:center;gap:8px;padding:6px}
+    .flow-step .flow-label{font-size:12px;color:var(--grey-600);line-height:1.35}
+    .flow-step.highlight .glance-icon{background:var(--green);color:#fff}
+    .flow-step.highlight .flow-label{color:var(--grey-900);font-weight:600}
+    .flow-arrow{flex:none;color:var(--grey-300);font-size:18px;padding:0 2px}
+    @media (max-width:640px){
+      .flow-hero{flex-direction:column}
+      .flow-arrow{transform:rotate(90deg);padding:2px 0}
+    }
+
+    .glance-sub{font-family:var(--font-display);font-size:14px;color:var(--grey-900);margin:0 0 10px}
+
+    .folder-tree{border:1px solid var(--grey-200);border-radius:10px;padding:14px 18px;
+      background:#fff;font-size:13px;margin:0 0 26px}
+    .folder-tree .f-row{display:flex;align-items:flex-start;gap:9px;padding:5px 0}
+    .folder-tree .f-row .glance-icon{width:24px;height:24px}
+    .folder-tree .f-row b{color:var(--grey-900)}
+    .folder-tree .f-row span.desc{color:var(--grey-500);font-size:12px}
+    .folder-tree .f-l1{padding-left:0}
+    .folder-tree .f-l2{padding-left:28px}
+    .folder-tree .f-l3{padding-left:56px}
+
+    .way-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:0 0 20px}
+    .way-card{border:1px solid var(--grey-200);border-radius:10px;padding:14px 16px;background:#fff}
+    .way-card .glance-icon{margin-bottom:10px}
+    .way-card b{display:block;color:var(--grey-900);font-size:13.5px;margin-bottom:5px}
+    .way-card p{margin:0;font-size:12px;color:var(--grey-500)}
+    @media (max-width:640px){ .way-cards{grid-template-columns:1fr} }
+
+    .callout-recommend{display:flex;gap:14px;align-items:flex-start;border:1.5px solid var(--green);
+      background:var(--green-pale);border-radius:10px;padding:16px 18px;margin:0 0 26px}
+    .callout-recommend .glance-icon{background:var(--green);color:#fff}
+    .callout-recommend h3{margin:0 0 5px;font-family:var(--font-display);font-size:13.5px;color:var(--green-dark)}
+    .callout-recommend p{margin:0;font-size:13px;color:var(--grey-900)}
+
     @media (max-width:760px){
       #layout{flex-direction:column}
       #toc{position:static;width:100%}
@@ -79,6 +122,7 @@
   <div id="layout">
     <nav id="toc">
       <div class="toc-label">On this page</div>
+      <a href="#at-a-glance"><b>At a Glance</b></a>
       <a href="#overview">Overview</a>
       <a href="#manual-file" class="sub">1. Manual file emails</a>
       <a href="#sync-automation" class="sub">2. Automatic filing</a>
@@ -94,6 +138,129 @@
         a project, how that filing actually reaches SharePoint, what happens to things you send, and how to
         search everything that's ever been filed.</p>
       </div>
+
+      <section id="at-a-glance">
+        <h2>At a Glance <span class="badge auto">60-second overview</span></h2>
+        <p class="tagline">The whole system in one picture. Full detail on any part is in the
+        sections below.</p>
+
+        <div class="flow-hero">
+          <div class="flow-step">
+            <div class="glance-icon" style="color:var(--green-dark)">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 8.3V3a1 1 0 0 1 1-1h5.3L14 7.7 8.7 13 2 8.3Z"/><circle cx="5" cy="5" r="1"/>
+              </svg>
+            </div>
+            <div class="flow-label">You add a <b>project category</b> to an email</div>
+          </div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step">
+            <div class="glance-icon" style="color:var(--green-dark)">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 4.5h4l1.3 1.7H14V12a.5.5 0 0 1-.5.5h-11A.5.5 0 0 1 2 12V4.5Z"/>
+              </svg>
+            </div>
+            <div class="flow-label">It lands in <b>Emails Awaiting Sync</b></div>
+          </div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step">
+            <div class="glance-icon" style="color:var(--green-dark)">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8" cy="8" r="6"/><path d="M8 5v3.2l2.2 1.5"/>
+              </svg>
+            </div>
+            <div class="flow-label">Within <b>~5 minutes</b>, automatically&hellip;</div>
+          </div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step highlight">
+            <div class="glance-icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 8.5l3.3 3.3L13 4.5"/>
+              </svg>
+            </div>
+            <div class="flow-label">&hellip;it's <b>filed on SharePoint</b> and moved to Synced Emails</div>
+          </div>
+        </div>
+
+        <h3 class="glance-sub">The Email Management folders</h3>
+        <div class="folder-tree">
+          <div class="f-row f-l1">
+            <div class="glance-icon" style="color:var(--grey-500)">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5h4l1.3 1.7H14V12a.5.5 0 0 1-.5.5h-11A.5.5 0 0 1 2 12V4.5Z"/></svg>
+            </div>
+            <div><b>Master Email Management</b> <span class="desc">&mdash; the parent folder for everything below, in your Inbox</span></div>
+          </div>
+          <div class="f-row f-l2">
+            <div class="glance-icon" style="color:var(--grey-400)">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5h4l1.3 1.7H14V12a.5.5 0 0 1-.5.5h-11A.5.5 0 0 1 2 12V4.5Z"/></svg>
+            </div>
+            <div><b>Emails Yet to Label</b> <span class="desc">&mdash; your own parking spot. Nothing automatic happens here until you move something out.</span></div>
+          </div>
+          <div class="f-row f-l2">
+            <div class="glance-icon" style="color:var(--green-dark)">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5h4l1.3 1.7H14V12a.5.5 0 0 1-.5.5h-11A.5.5 0 0 1 2 12V4.5Z"/></svg>
+            </div>
+            <div><b>Emails Awaiting Sync</b> <span class="desc">&mdash; labelled and ready. The automatic pass files anything it finds here.</span></div>
+          </div>
+          <div class="f-row f-l3">
+            <div class="glance-icon" style="color:var(--green)">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5h4l1.3 1.7H14V12a.5.5 0 0 1-.5.5h-11A.5.5 0 0 1 2 12V4.5Z"/></svg>
+            </div>
+            <div><b>Synced Emails</b> <span class="desc">&mdash; already filed to SharePoint. Kept here so you can still find it in Outlook.</span></div>
+          </div>
+        </div>
+
+        <h3 class="glance-sub">Three ways to label an email</h3>
+        <div class="way-cards">
+          <div class="way-card">
+            <div class="glance-icon" style="color:var(--grey-600)">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2.5h12v11H2z"/><path d="M2 3.2l6 4.8 6-4.8"/></svg>
+            </div>
+            <b>File Email</b>
+            <p>Pick one or more emails, choose a project, done. Good for a handful of emails
+            right now.</p>
+          </div>
+          <div class="way-card">
+            <div class="glance-icon" style="color:var(--grey-600)">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 2.5h4.5v4.5h-4.5z"/><path d="M9 2.5h4.5v4.5H9z"/><path d="M1.5 9h4.5v4.5h-4.5z"/><path d="M9 9h4.5v4.5H9z"/></svg>
+            </div>
+            <b>Batch File Folder</b>
+            <p>Work through <i>every</i> email in a folder at once, assigning a project to each
+            row. Good for clearing a whole backlog in one sitting.</p>
+          </div>
+          <div class="way-card">
+            <div class="glance-icon" style="color:var(--grey-600)">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2.5l2.5 2.5L6 12.5l-3.5.5.5-3.5L11 2.5Z"/></svg>
+            </div>
+            <b>While composing</b>
+            <p>Writing a reply or new email can show a banner offering to tag it there and
+            then &mdash; entirely optional, never blocks sending.</p>
+          </div>
+        </div>
+
+        <div class="callout-recommend">
+          <div class="glance-icon">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 2a4.3 4.3 0 0 0-2.3 7.9c.3.2.5.6.5 1v.4h3.6v-.4c0-.4.2-.8.5-1A4.3 4.3 0 0 0 8 2Z"/><path d="M6.3 13.3h3.4M6.8 14.7h2.4"/>
+            </svg>
+          </div>
+          <div>
+            <h3>Recommended habit, if you're short on time</h3>
+            <p>Don't stop to decide right now &mdash; just drag the email into
+            <b>Emails Yet to Label</b> as it comes in. Then, every so often, open
+            <b>Batch File Folder</b> on that same folder and work through everything you've
+            parked there in one go.</p>
+          </div>
+        </div>
+
+        <h3 class="glance-sub">Smart project suggestions</h3>
+        <p>Wherever you're asked to pick a project &mdash; File Email, Batch File Folder, or the
+        compose-time banner &mdash; look for <b>Suggested</b> options above the regular list.
+        They're worked out from three things: whether this exact conversation has already been
+        filed somewhere, whether you've emailed these same people before on a project, and
+        whether the wording looks similar to other emails already filed there. One click on a
+        suggestion beats searching, and it gets better over time as more gets filed.</p>
+      </section>
 
       <section id="overview">
         <h2>Overview</h2>
@@ -139,7 +306,7 @@
         is lost. Want to come back to an email later instead of deciding now? Drag it into
         <b>Master Email Management &rarr; Emails Yet to Label</b> &mdash; that folder is just for your own
         use, nothing automatic happens to what's in it until you manually file it or use Batch File.</div>
-        <div class="note tip">Tagged an email with a project somewhere else &mdash; e.g. via File on Send's
+        <div class="note tip">Tagged an email with a project somewhere else &mdash; e.g. via the compose-time
         <b>Categorise Conversation</b>, or by hand &mdash; and it's still just sitting in your Inbox or Sent
         Items instead of <b>Emails Awaiting Sync</b>? Click <b>Mailbox Sync</b> in the Assistant pane: it
         searches your whole Inbox (including subfolders) and Sent Items for anything already labelled this
@@ -147,28 +314,30 @@
       </section>
 
       <section id="sent-emails">
-        <h2>3. File on Send <span class="badge you">You choose, every time</span></h2>
-        <p class="tagline">Pops up automatically whenever you click Send</p>
+        <h2>3. Categorise while composing <span class="badge you">Optional, never blocks sending</span></h2>
+        <p class="tagline">A banner that can appear while you're writing a new email, reply, or forward</p>
         <ol class="steps">
-          <li>Click <b>Send</b> on any email as normal &mdash; a small window pops up before it actually
-          sends, asking you to file it.</li>
-          <li>Search for the project (or click <b>&larr; Back to email</b> to cancel the send entirely and
-          go back to your draft &mdash; nothing is sent or filed if you do this).</li>
+          <li>While composing, you may see a <b>File this email to a project</b> banner near the
+          top of the message. It's entirely optional &mdash; ignore it and send normally if you
+          don't want to deal with it right now.</li>
+          <li>Click <b>Choose project</b> on the banner to open the picker in the Assistant pane,
+          then search for the project (or click <b>&larr; Back to email</b> to close the picker
+          and keep composing &mdash; nothing is tagged if you do this).</li>
           <li>Pick a project. If you're replying or forwarding, you'll see two options:
           <b>Categorise Conversation</b> (tags your reply, plus every message this conversation
-          has sitting in your Inbox right now &mdash; the dialog shows how many it found) or
+          has sitting in your Inbox right now &mdash; the picker shows how many it found) or
           <b>Categorise Reply Only</b> (just your reply). A brand-new email just has one
-          <b>Categorise</b> option. Not a project email? Click
-          <b>Skip &mdash; send without filing</b> instead.</li>
-          <li>That's it &mdash; the window closes and your email sends. This only tags the
-          email(s) with the project &mdash; it doesn't move anything. Your own sent reply gets
-          filed automatically from there, the same way File Email's does. Any other tagged
-          conversation message stays right where it is in your Inbox until you move it into
-          <b>Master Email Management &rarr; Emails Awaiting Sync</b> yourself, same as any other
-          email you want filed manually.</li>
+          <b>Categorise</b> option.</li>
+          <li>That's it &mdash; this only tags the email(s) with the project, it doesn't move
+          anything, and <b>sending is never blocked or delayed</b> by any of this. Your own sent
+          reply gets filed automatically from there, the same way File Email's does. Any other
+          tagged conversation message stays right where it is in your Inbox until you move it
+          into <b>Master Email Management &rarr; Emails Awaiting Sync</b> yourself, same as any
+          other email you want filed manually.</li>
         </ol>
-        <div class="note warn">This pops up on <b>every</b> send. If that turns out to be too
-        disruptive day-to-day, let us know.</div>
+        <div class="note">There's no prompt at the actual moment you click Send &mdash; if you'd
+        rather tag an email after the fact instead of while composing, use <b>File Email</b>
+        (section 1) on the sent copy, or just drag it into <b>Emails Yet to Label</b> for later.</div>
       </section>
 
       <section id="search">
