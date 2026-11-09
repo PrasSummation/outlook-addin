@@ -332,7 +332,7 @@
         document.body.classList.add("no-intro");
     }
 
-    const APP_VERSION = "11.22";
+    const APP_VERSION = "11.23";
 
     let msalInstance;
     let folderEntries = [];
@@ -2064,7 +2064,18 @@
     // parent-initiated close or live-selection-forwarding to wire up here anymore.
 
     async function openBatchFileDialog() {
-        const context = await detectFileEmailSelection();
+        const fullContext = await detectFileEmailSelection();
+        // batch-file-dialog.html only ever reads items[0] (see comment above) -- trim to a
+        // single item before building the URL. Passing the whole multi-selection through
+        // verbatim (as openFileEmailDialog legitimately needs to) made the URL's length scale
+        // with however many emails happened to be selected, since each item carries its own
+        // restId (100+ chars) and subject; a staff member selecting a large batch of emails
+        // before clicking this button hit the browser/OS's URI length limit ("Error: URI Too
+        // Long") when opening the tab, confirmed live 2026-11-09.
+        const context = {
+            mode: fullContext.mode,
+            items: fullContext.items.slice(0, 1)
+        };
         const url = `https://prassummation.github.io/outlook-addin/batch-file-dialog.html?context=${encodeURIComponent(JSON.stringify(context))}`;
         const status = document.getElementById("statusMessage");
         try {

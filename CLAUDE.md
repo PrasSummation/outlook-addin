@@ -1150,6 +1150,23 @@ pass, rather than one-at-a-time via File Email. Opens `batch-file-dialog.html`.
   leaves whatever's already filled in untouched, same "nothing visible gets clobbered" rule as
   everywhere else on this page.
 
+**"Error: URI Too Long" opening the dialog, found and fixed 2026-11-09**: a staff member got a
+browser-level `Error: URI Too Long` instead of Batch File Folder opening at all. Root cause:
+`openBatchFileDialog()` (`taskpane.html`) called `detectFileEmailSelection()` and passed its
+*entire* result straight into the URL — fine for File Email, which genuinely needs every
+selected item, but Batch File Folder (per this section's own header comment) only ever reads
+`items[0]` (confirmed via `batch-file-dialog.html`'s `captureInitialContext`/`bfState.items[0]`
+usage). Each selected email contributes its own ~100+ character `restId` plus subject to the
+JSON-encoded `context` query param, so selecting a large number of emails before clicking the
+tile (a natural thing to do, given the button's own name) scaled the URL's length well past the
+browser/OS's URI length limit. Fixed by trimming the context to a single item
+(`items.slice(0, 1)`) before building the URL — `detectFileEmailSelection()` itself is
+unchanged, and `openFileEmailDialog()`'s own call (which legitimately needs the full selection)
+is untouched. **Not fixed, flagged as a related risk**: `openFileEmailDialog()` could in
+principle hit the same ceiling if someone selected a very large number of emails for File Email
+itself — not changed here since it wasn't reported and (unlike Batch File Folder) actually needs
+every item, but worth keeping in mind if a similar report comes in for File Email.
+
 ## Mailbox Sync (2026-10-26)
 
 A new taskpane tile (`mailboxSyncButton`, alongside Batch File Folder — no new ribbon button, no
