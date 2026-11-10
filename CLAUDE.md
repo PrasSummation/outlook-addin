@@ -563,14 +563,16 @@ yet (per the mockup's own note) — all this code can do is categorize the
 *outgoing* item before it sends. `email-filing-sync`'s `SyncEmails/run.ps1`
 was extended with a new Sent Items pass (runs first, independent of the
 existing "Emails to File" pass) that looks for recently-sent, categorized,
-not-yet-`Filed` messages and files them the same way, but **never moves
-them** — see `email-filing-sync/README.md`'s own new section for the
-full design, including the 3-hour lookback window and the one
+not-yet-`Filed` messages and files them the same way — see
+`email-filing-sync/README.md`'s own new section for the full design,
+including the 3-hour lookback window and the one
 **not-independently-confirmed assumption** this whole half of the feature
 rests on: that a category set via `categories.addAsync` before send
 actually survives onto the sent copy in Sent Items. Standard, documented
 Outlook behavior, but unverified against a real send in this tenant as of
-this writing.
+this writing. **Originally never moved the sent item, only tagged it —
+changed 2026-11-10** (see that dated section below): it now moves into
+"Synced Emails" too, same as the Inbox pass.
 
 **Skip Save, added later the same day**: a "Skip — send without filing"
 link on the pick step messages the parent with `{action:"skip"}`, which
@@ -1166,6 +1168,38 @@ is untouched. **Not fixed, flagged as a related risk**: `openFileEmailDialog()` 
 principle hit the same ceiling if someone selected a very large number of emails for File Email
 itself — not changed here since it wasn't reported and (unlike Batch File Folder) actually needs
 every item, but worth keeping in mind if a similar report comes in for File Email.
+
+## Sent Items pass now moves filed emails into "Synced Emails" (2026-11-10)
+
+User-directed change, reversing a deliberate earlier decision: a staff member noticed a sent
+email that had been filed (SharePoint copy uploaded, `Filed` category added) still just sat in
+Sent Items rather than being relocated the way the Inbox/"Emails Awaiting Sync" pass relocates
+its own filed emails into "Synced Emails". The original design (see "Filing the sent reply
+happens later, server-side" above, and `email-filing-sync/README.md`'s own notes) deliberately
+left sent items in place, reasoning nobody would want their own Sent folder silently rearranged
+by automation — the user decided they do want the move after all, so this flips that specific
+behavior, nothing else about the Sent Items pass.
+
+**What changed, `email-filing-sync/SyncEmails/run.ps1`**:
+- `Get-OrCreateEmailManagementFolders` (which resolves `Synced Emails`' folder id, among others)
+  now runs once at the top of each mailbox's loop iteration, before the Sent Items pass, instead
+  of only being called right before the Inbox/"Emails Awaiting Sync" pass further down — the Sent
+  Items pass needs that same folder id as a move destination now. A failure ensuring these
+  folders now also skips that mailbox's Sent Items pass for the run (it didn't need to depend on
+  this before); a reasonable coupling, since without the destination folder there's nothing to
+  move into anyway.
+- Right after the Sent Items pass's existing `Filed`-category PATCH, a `POST
+  /users/{upn}/messages/{id}/move` to `$syncedEmailsId` was added — the exact same move call the
+  Inbox pass already does, just now also issued from the Sent Items pass's own per-message `try`
+  block, so a move failure is caught and counted the same way (`sentFailed`) as any other failure
+  in that pass.
+
+**Not changed**: the 3-hour lookback window, the duplicate-detection/upload logic, the
+already-filed check, the index-notify call, or anything about the Inbox pass itself.
+`email-filing-sync/README.md`'s architecture diagram and "Sent Items pass" section were updated
+to match. **Not yet live-tested** — reproduce with a real send through File on Send or the
+compose-time banner and confirm the sent copy actually lands in "Master Email
+Management/Emails Awaiting Sync/Synced Emails" rather than staying in Sent Items.
 
 ## Mailbox Sync (2026-10-26)
 

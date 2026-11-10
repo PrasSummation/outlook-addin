@@ -76,6 +76,25 @@ foreach ($user in $staff) {
     $totals.mailboxesChecked++
     $upn = $user.Mail
 
+    # "Master Email Management" / "Emails Awaiting Sync" / "Synced Emails" replace the old flat
+    # "Emails to File" / "Filed" folders (2026-10-26) -- ensured (created if missing) for every
+    # staff mailbox on every run, per-mailbox cost is a handful of cheap filtered GETs once the
+    # hierarchy already exists, since Get-OrCreateMailFolder only POSTs when a folder is actually
+    # missing. "Emails Yet to Label" (a sibling, purely for manual user staging -- nothing here
+    # reads or writes it) is created as part of the same call so it's ready from day one, not
+    # only once some other process happens to touch a given mailbox. Moved ahead of the Sent
+    # Items pass below (2026-11-10) so that pass can move a filed sent email into "Synced
+    # Emails" too, not just the "Emails Awaiting Sync" pass further down.
+    try {
+        $emailManagementFolders = Get-OrCreateEmailManagementFolders -Upn $upn -Token $token
+    } catch {
+        Write-Error "EmailFilingSync: could not ensure the Master Email Management folders for '$upn': $($_.Exception.Message)"
+        $totals.failed++
+        continue
+    }
+    $awaitingSyncId = $emailManagementFolders.AwaitingSyncId
+    $syncedEmailsId = $emailManagementFolders.SyncedEmailsId
+
     # ---- Sent Items pass (File on Send) ----
     # Independent of the "Emails Awaiting Sync" staging pass below -- runs for every staff
     # mailbox every time, regardless of whether that mailbox has anything staged. A sent
@@ -83,9 +102,9 @@ foreach ($user in $staff) {
     # dialog before it's sent, via Office.js categories.addAsync -- there's no "stage it
     # first" step possible for an outgoing message the way there is for Inbox mail. This
     # looks for recently-sent messages carrying a project category that aren't yet tagged
-    # "Filed", and files them the same way as the pass below, but leaves them in place in
-    # Sent Items rather than moving them -- nobody wants their own Sent folder emptied out
-    # by automation the way Inbox staging is.
+    # "Filed", and files them the same way as the pass below, then moves them into "Synced
+    # Emails" too (changed 2026-11-10, user-directed -- previously left in place in Sent
+    # Items; see this block's own move call below for the current behavior).
     try {
         $sentCutoff = (Get-Date).ToUniversalTime().AddHours(-3).ToString("yyyy-MM-ddTHH:mm:ssZ")
         $sentMessages = Get-GraphAllPages -Token $token -Uri (
@@ -200,17 +219,13 @@ foreach ($user in $staff) {
                     $totals.sentAlreadyFiled++
                 }
 
-                # Merge "Filed" into categories WITHOUT moving -- leave the sent item
-                # exactly where the user put it (unlike the Inbox pass below, which moves
-                # the original into a local "Filed" folder to declutter the inbox).
-                #
-                # Re-read categories now rather than reusing $labelsAsFound (captured back
-                # when $messages was first listed, before the duplicate check, the .eml
+                # Merge "Filed" into categories -- same stale-snapshot reasoning as the Inbox
+                # pass below (re-read now rather than reusing $labelsAsFound, captured back
+                # when $sentMessages was first listed, before the duplicate check, the .eml
                 # download/upload and the index notify above -- all of which can take real
-                # time per email). PATCHing that stale snapshot would silently discard any
-                # category change (e.g. a filer tool still finishing its own categorize call)
-                # that landed in between. 2026-10-13: suspected cause of reports of a
-                # just-assigned project category disappearing.
+                # time per email; PATCHing that stale snapshot would silently discard any
+                # category change that landed in between). 2026-10-13: suspected cause of
+                # reports of a just-assigned project category disappearing.
                 $currentCategories = (Invoke-GraphGetOrNull -Token $token -Uri (
                     "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)?`$select=categories"
                 )).categories
@@ -219,6 +234,16 @@ foreach ($user in $staff) {
                 Invoke-RestMethod -Method Patch -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)" `
                     -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" } `
                     -Body (@{ categories = @($mergedCategories) } | ConvertTo-Json) -ErrorAction Stop | Out-Null
+
+                # Move into "Synced Emails" (changed 2026-11-10, user-directed -- previously left
+                # in place in Sent Items "since nobody wants their own Sent folder emptied out by
+                # automation"; the user decided they do want it moved after all, same destination
+                # the Inbox pass below already uses). Graph's move works across any two folders in
+                # the same mailbox regardless of parent, so moving out of Sent Items into a folder
+                # under Inbox is no different mechanically from the Inbox pass's own move.
+                Invoke-RestMethod -Method Post -Uri "https://graph.microsoft.com/v1.0/users/$upn/messages/$($msg.id)/move" `
+                    -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" } `
+                    -Body (@{ destinationId = $syncedEmailsId } | ConvertTo-Json) -ErrorAction Stop | Out-Null
 
             } catch {
                 $errorMessage = $_.Exception.Message
@@ -236,23 +261,6 @@ foreach ($user in $staff) {
         Write-Error "EmailFilingSync: could not complete the Sent Items pass for '$upn': $($_.Exception.Message)"
         $totals.sentFailed++
     }
-
-    # "Master Email Management" / "Emails Awaiting Sync" / "Synced Emails" replace the old flat
-    # "Emails to File" / "Filed" folders (2026-10-26) -- ensured (created if missing) for every
-    # staff mailbox on every run, per-mailbox cost is a handful of cheap filtered GETs once the
-    # hierarchy already exists, since Get-OrCreateMailFolder only POSTs when a folder is actually
-    # missing. "Emails Yet to Label" (a sibling, purely for manual user staging -- nothing here
-    # reads or writes it) is created as part of the same call so it's ready from day one, not
-    # only once some other process happens to touch a given mailbox.
-    try {
-        $emailManagementFolders = Get-OrCreateEmailManagementFolders -Upn $upn -Token $token
-    } catch {
-        Write-Error "EmailFilingSync: could not ensure the Master Email Management folders for '$upn': $($_.Exception.Message)"
-        $totals.failed++
-        continue
-    }
-    $awaitingSyncId = $emailManagementFolders.AwaitingSyncId
-    $syncedEmailsId = $emailManagementFolders.SyncedEmailsId
 
     $messages = @(Get-GraphAllPages -Token $token -Uri (
         "https://graph.microsoft.com/v1.0/users/$upn/mailFolders/$awaitingSyncId/messages" +

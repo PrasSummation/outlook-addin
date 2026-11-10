@@ -66,6 +66,13 @@ Timer (every 5 min)
      /users (app-only)                 -- enumerate staff, same filter as
                                            complete-action.html's getAllStaffMembers()
 
+     Get-OrCreateEmailManagementFolders               -- ensures Master Email Management /
+                                                          Emails Yet to Label / Emails Awaiting
+                                                          Sync / Synced Emails all exist (moved
+                                                          ahead of both passes below, 2026-11-10,
+                                                          so the Sent Items pass can also use
+                                                          Synced Emails as a move destination)
+
      -- Sent Items pass (File on Send), runs first, independent of the pass below --
      /users/{upn}/mailFolders/sentitems/messages?sentDateTime ge <now-3h>
         -- categorized-but-not-"Filed" sent mail (tagged pre-send by the taskpane's
@@ -74,14 +81,12 @@ Timer (every 5 min)
      drives/{ACTIVE|ARCHIVE_DRIVE_ID}/...           -- resolve/create <project>/Emails
      /users/{upn}/messages/{id}/$value              -- fetch raw .eml
      drives/.../items/{emailsFolderId}:/{name}:/content  -- upload
-     /users/{upn}/messages/{id} (PATCH categories)  -- tag Filed, left IN PLACE (not moved --
-                                                        nobody wants their own Sent folder
-                                                        emptied out by automation)
+     /users/{upn}/messages/{id} (PATCH categories)  -- add Filed
+     /users/{upn}/messages/{id}/move                -- move into "Synced Emails" (changed
+                                                        2026-11-10 -- previously left in place
+                                                        in Sent Items, see below)
 
      -- "Emails Awaiting Sync" pass (received mail, staged by File Email or auto-move-on-filing) --
-     Get-OrCreateEmailManagementFolders               -- ensures Master Email Management /
-                                                          Emails Yet to Label / Emails Awaiting
-                                                          Sync / Synced Emails all exist
      /users/{upn}/mailFolders/{awaitingSyncId}/messages  -- read staged, categorized emails
      drives/{ACTIVE|ARCHIVE_DRIVE_ID}/...           -- resolve/create <project>/Emails
      /users/{upn}/messages/{id}/$value              -- fetch raw .eml
@@ -113,9 +118,16 @@ Consequences worth knowing:
   there's nothing to stage. Wide enough to tolerate a missed run or two without
   needing a backfill; a message that's somehow still unfiled after 3 hours just won't
   be picked up automatically and needs a manual look.
-- **Sent items are never moved.** The Inbox pass empties out "Emails Awaiting Sync" on
-  purpose (that's the whole point of staging); nobody wants their own *Sent* folder
-  silently rearranged, so this pass only tags `Filed` onto the existing message in place.
+- **Sent items are now moved into "Synced Emails" too (changed 2026-11-10, user-directed).**
+  Originally this pass only tagged `Filed` onto the existing message in place, on the
+  reasoning that nobody wants their own *Sent* folder silently rearranged the way "Emails
+  Awaiting Sync" is emptied out by design. The user decided they do want it moved after
+  all, to the same "Synced Emails" folder the Inbox pass below already uses — Graph's move
+  works across any two folders in the same mailbox regardless of parent, so relocating out
+  of Sent Items into a folder under Inbox is no different mechanically. This is why
+  `Get-OrCreateEmailManagementFolders` now runs before this pass rather than only before the
+  Inbox pass (see the architecture diagram above) — this pass needs `Synced Emails`' folder
+  id too now.
 - **"Categorise Conversation" (the dialog's option to also tag every conversation message
   already sitting in the Inbox) categorizes only — it never moves anything itself,** and
   doesn't go through this Function App at all; it's a direct, synchronous call from the
